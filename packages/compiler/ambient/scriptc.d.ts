@@ -1,12 +1,14 @@
 /* scriptc's shipped declarations — the ALWAYS-SHIPPED CORE. Programs
- * compile against the REAL TypeScript standard library (lib.es2023, no
- * dyn, no @types): the checker sees the full standard surface, and the
- * LOWERER is the scope fence — any reached use of standard-library surface
+ * compile against the TypeScript ES standard library without lib.dom and
+ * the project's @types/node when present: the checker sees the standard
+ * surface, and the LOWERER is the scope fence — any reached use of it
  * without a lowering is a SC2020 diagnostic at its use site. This file
- * declares only what the es2023 lib does not:
+ * declares only what that ES-only library does not:
  *
  * 1. scriptc's own primitives (comptime, __island_eval).
- * 2. setTimeout/clearTimeout and the Timeout handle (Node/dyn territory the
+ * 2. The RequestInfo type alias, supplied by the default DOM lib in ordinary
+ *    TypeScript projects but absent from @types/node's globals.
+ * 3. setTimeout/clearTimeout and the Timeout handle (Node/dyn territory the
  *    lib files don't cover; plain declarations, so with @types/node present
  *    they MERGE as overloads instead of colliding — the Timeout handle maps
  *    to the numeric timer id either way, and .unref()/.ref()/.hasRef() are
@@ -24,6 +26,12 @@
  * down (its `declare const`/`declare module` forms would collide). The
  * lowering tables recognize the same members either way, by name +
  * provenance. */
+
+/* The default TypeScript DOM lib supplies this name even for Node projects.
+ * scriptc uses the ES lib and @types/node's fetch globals instead, while the
+ * fallback fetch declarations use the same alias. It is only a type: runtime
+ * fetch/Request support remains governed by the lowering fences. */
+type RequestInfo = string | URL | Request;
 
 /* The timer handle — setTimeout's return, mapped to the numeric timer id.
  * unref() drops it from the event loop's keep-alive set (the process may

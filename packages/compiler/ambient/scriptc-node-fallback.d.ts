@@ -779,7 +779,6 @@ interface Request {
   arrayBuffer(): Promise<ArrayBuffer>;
   bytes(): Promise<Uint8Array>;
 }
-type RequestInfo = string | URL | Request;
 interface RequestInit {
   method?: string;
   headers?:
