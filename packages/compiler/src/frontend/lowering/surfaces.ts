@@ -8,7 +8,7 @@ import * as ts from "../ts7/adapter.js";
 import type { Lowerer } from "./lowerer.js";
 import { UNSUPPORTED } from "../../diagnostics/diagnostic.js";
 import { BOOL, BYTES_U8, CHILD_T, CRYPTOHASH_T, CRYPTOHMAC_T, DYN, F64, FILEHANDLE_T, IrExpr, IrLibFn, IrStrIntrinsicMethod, IrType, RUNTIME_ERROR_CLASSES, SPAWNRES_T, STATS_T, STRING, URL_T, VOID, arrayOf } from "../../ir/ir.js";
-import { isNodeTypesPath, requireSpecOf } from "../program.js";
+import { isJsSourceFile, isNodeTypesPath, requireSpecOf } from "../program.js";
 
 /** Statement-level constructs rejected wholesale, keyed by syntax kind. */
 export const UNSUPPORTED_STMT: Partial<Record<ts.SyntaxKind, { code: keyof typeof UNSUPPORTED; feature?: string }>> = {
@@ -1804,6 +1804,18 @@ export const BUILTIN_MODULE_FENCE_HINTS: Record<string, Record<string, string | 
         ? "process"
         : stdlibGlobalNameOf(lowerer, aliasExpr);
     if (name === null) return null;
+    // An explicitly any-typed globalThis binding in dynamic TypeScript
+    // holds the engine's global object. Keep the static alias for JS files
+    // (their bare-global value path uses identity tokens) and for the
+    // `globalThis || global` guard that the static alias path folds.
+    let directInit = init;
+    while (ts.isParenthesizedExpression(directInit)) directInit = directInit.expression;
+    if (
+      name === "globalThis" && lowerer.dynamic && !isJsSourceFile(init.getSourceFile()) &&
+      ts.isIdentifier(directInit) && directInit.text === "globalThis" &&
+      ts.isVariableDeclaration(init.parent) &&
+      (lowerer.typeOf(init.parent.name).flags & ts.TypeFlags.Any) !== 0
+    ) return null;
     // Only alias OBJECT-shaped globals whose members lower by receiver
     // identity (process, console, globalThis itself, and perf_hooks'
     // performance — the mockable-clock idiom snapshots it). Function-valued

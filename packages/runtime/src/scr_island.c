@@ -1488,10 +1488,17 @@ ScrJsval *scr_jsval_get_prop(ScrJsval *o, const ScrStr *name) {
   return isl_cell_new(r);
 }
 
+static void isl_ensure_node_globals(void);
+
 /* A member of the engine's global object by name (Math, parseFloat, ...) —
  * the receiver/callee for the island-backed ambient surface. */
 ScrJsval *scr_jsval_global_get(const ScrStr *name) {
   isl_entry();
+  /* A typed program can explicitly escape through globalThis without an
+   * embedded npm import. Install the same Node globals that an embedded
+   * module sees before returning that object. */
+  if (name->len == 10 && memcmp(name->data, "globalThis", 10) == 0)
+    isl_ensure_node_globals();
   JSValue g = JS_GetGlobalObject(isl_ctx); /* owned */
   JSValue r = JS_GetPropertyStr(isl_ctx, g, name->data); /* owned */
   JS_FreeValue(isl_ctx, g);
@@ -9373,6 +9380,10 @@ static void isl_modules_boot(void) {
   isl_booted = true;
 }
 
+static void isl_ensure_node_globals(void) {
+  if (!isl_booted) isl_modules_boot();
+}
+
 static void isl_install_module_loader(void) {
   JS_SetModuleLoaderFunc(isl_rt, isl_module_normalize, isl_module_load, NULL);
   if (isl_mods) isl_modules_boot();
@@ -9509,7 +9520,7 @@ static void isl_rejections_drop_reason(JSValueConst reason) {
 
 ScrJsval *scr_jsval_import_dyn(const ScrStr *key) {
   isl_entry();
-  if (!isl_booted) isl_modules_boot();
+  isl_ensure_node_globals();
   JSValue promise = JS_LoadModule(isl_ctx, ISL_IMPORT_BASE, key->data);
   if (!JS_IsException(promise)) {
     /* Settlement flows through reaction jobs (each module's own promise

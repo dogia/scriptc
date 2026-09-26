@@ -1091,6 +1091,13 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
             const canonical = stdlibGlobalNameOf(lowerer, expr) ?? expr.text;
             return { kind: "strLit", value: `[builtin ${canonical}]`, type: STRING, loc };
           }
+          // In a dynamic TypeScript build, the real global object is the
+          // escape hatch for host capabilities without static lowering.
+          // Direct globalThis.member uses still take their static surface
+          // paths; an explicit `as any` or `: any` can reach engine ops.
+          if (lowerer.dynamic && expr.text === "globalThis") {
+            return { kind: "jsOp", op: "globalGet", name: "globalThis", args: [], type: JSVAL, loc };
+          }
           // The families with a WHY: each hint states what makes the
           // surface genuinely non-static (or what to use instead).
           const globalHints: Record<string, string | undefined> = {
