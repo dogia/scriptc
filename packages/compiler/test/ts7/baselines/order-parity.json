@@ -7189,6 +7189,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3058-optional-array-chain-join.ts": {
+   "order": [
+    "<repo>/tests/corpus/3058-optional-array-chain-join.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"

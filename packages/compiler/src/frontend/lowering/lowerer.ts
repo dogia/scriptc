@@ -112,7 +112,7 @@ import { lowerUtilModuleCall } from "./lower-inspect.js";
 import { lowerComptime, comptimeBakeable, rejectComptimeCaptures, comptimeValueToIr } from "./lower-comptime.js";
 import { lowerStmts, noteBlockedBindings, isBlockedBinding, lowerScopedBlock, predeclareForwardCapture, predeclareForwardFnDecl, predeclareForwardVar, lowerStmt, lowerVarStatement, lowerDestructuringDecl, lowerDestructuringAssignParts, lowerBindingPattern, lowerJsvalBindingPattern, checkBindingElement, bindPatternTarget, isParseArgsDynCheckerType, lowerVarDeclList, lowerVarDecl, lowerSwitch, lowerTry, lowerExprStatement, lowerForOf, lowerForStatement } from "./lower-stmts.js";
 import { FieldTarget, lowerExpr, maybeNarrow, lowerUnitComparison, lowerNullishCoalesce, lowerCondition, ensureBool, requireTruthyUnion, eqComparableUnion, lowerIntrinsicProperty, lowerArrayLiteral, lowerElementAccess, lowerElementWrite, lowerRecordKeyRead, ensureString, lowerTemplate, lowerAsExpression, lowerPrefixUnary, lowerBinary, lowerCaughtTypeofTest, caughtRead, caughtLocalOf, caughtToString, lowerInstanceOf, lowerRegexLiteral, lowerFieldRead, lowerUnionProperty, fieldTarget, fieldGetExpr, fieldSetStmt, lowerFieldCompound, uniqueSymbolKeyOf } from "./lower-exprs.js";
-import { finishOptionalChain, lowerOptionalChain } from "./expressions/optional-chains.js";
+import { finishOptionalChain, isOptionalChainTail, lowerOptionalChain } from "./expressions/optional-chains.js";
 import { foldedStringKeyOf, lowerDynObjectLiteral, lowerObjectLiteral, lowerShorthandValue, rejectThisInObjectMethod } from "./expressions/object-literals.js";
 import type { ExpandoMember } from "./lower-expando.js";
 import { lowerRecordFieldCall, lowerObjectMethodCall } from "./lower-calls.js";
@@ -3285,7 +3285,18 @@ export class Lowerer {
         if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
           const callbackIndices = hofCallbackIndices(node.expression.name.text, node.arguments.length >= 2);
           const receiverNode = node.expression.expression;
-          const receiver = this.mapTypeOf(this.typeOf(receiverNode));
+          const receiverTs = this.typeOf(receiverNode);
+          let receiver = this.mapTypeOf(receiverTs);
+          // An array method after an optional-chain guard only runs on the
+          // present receiver. The checker includes the chain's short-circuit
+          // undefined in intermediate call types, so use the same narrowed
+          // receiver the method lowerer sees when promoting HOF callbacks.
+          if (
+            callbackIndices !== null && receiver?.kind === "union" &&
+            (node.expression.questionDotToken !== undefined || isOptionalChainTail(this, node))
+          ) {
+            receiver = this.mapTypeOf(this.checker.getNonNullableType(receiverTs));
+          }
           const callback = callbackIndices === null ? undefined : node.arguments[0];
           const tuple = receiver?.kind === "record" && this.shapes.get(receiver.shapeId)?.tuple === true;
           // A JS/evolving-any array may have acquired a precise FLOW type
