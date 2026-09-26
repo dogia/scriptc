@@ -7195,6 +7195,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3059-arguments-property-names.ts": {
+   "order": [
+    "<repo>/tests/corpus/3059-arguments-property-names.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
