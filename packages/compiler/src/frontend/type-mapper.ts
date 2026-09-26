@@ -1,5 +1,6 @@
 import { InternalCompilerError } from "../errors.js";
 import * as ts from "./ts7/adapter.js";
+import { bodyReadsArguments } from "./arguments-usage.js";
 import type { IrRecordShape, IrType, IrUnionDef } from "../ir/ir.js";
 import { arrayOf, BOOL, bytesOf, canConvertToDyn, CHILD_T, CRYPTOHASH_T, CRYPTOHMAC_T, DATE_T, DYN, F64, funcOf, isSupportedArrayElem, isSupportedIndexValue, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, JSVAL, mapOf, NULL_T, PROCSTREAM_T, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, setOf, STRING, SYMBOL_T, typeEquals, typeKey, UNDEFINED_T, VOID } from "../ir/ir.js";
 import { BIGINT_T } from "../ir/ir.js";
@@ -752,30 +753,6 @@ export interface TypeMapperCtx {
    * embedded engine there. */
   moduleNamespaceId?: (type: ts.Type) => string | null;
 }
-
-
-/** lower-calls.ts's bodyReadsArguments, duplicated here (type-mapper.ts must not
- * import from lowering/ — that edge is a module cycle): does the function's
- * OWN body read `arguments`? Nested plain functions/methods own theirs
- * (skipped); arrows see the enclosing one (descended). */
-function bodyReadsArgumentsLocal(fn: { body?: ts.Node | undefined }): boolean {
-  let found = false;
-  if (fn.body === undefined) return false;
-  // Iterative walk (walkPreorder): function bodies can hold pathologically
-  // deep expression chains that a recursive visit would die on.
-  ts.walkPreorder(fn.body, (n) => {
-    if (ts.isIdentifier(n) && n.text === "arguments" && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) {
-      found = true;
-      return "stop";
-    }
-    if ((ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)) && (n as unknown) !== fn) {
-      return "skip"; // own `arguments` scope
-    }
-    return undefined;
-  });
-  return found;
-}
-
 /** A generator type's normalized value channels (Generator<T, TReturn,
  * TNext> and the IteratorResult alias share this):
  * - yield: `never` (a generator that never yields) rides the VOID
@@ -2592,7 +2569,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
       // tsgo never SYNTHESIZES that rest param into the inferred signature
       // (5.9.3 did — the count mismatch above was the whole detector
       // there), so the declaration's own body answers directly.
-      if (sigDecl !== undefined && ts.isFunctionLike(sigDecl) && bodyReadsArgumentsLocal(sigDecl as { body?: ts.Node })) {
+      if (sigDecl !== undefined && ts.isFunctionLike(sigDecl) && bodyReadsArguments(sigDecl as { body?: ts.Node })) {
         return null;
       }
     }
@@ -3975,7 +3952,7 @@ export function describeComponentBlocker(widened: ts.Type, ctx: TypeMapperCtx): 
       sigDecl !== undefined &&
       ts.isFunctionLike(sigDecl) &&
       (sigDecl.parameters.length !== sig.getParameters().length ||
-        bodyReadsArgumentsLocal(sigDecl as { body?: ts.Node }))
+        bodyReadsArguments(sigDecl as { body?: ts.Node }))
     ) {
       return `the function shape is supported, but its signature is variadic ('arguments'-reading), and a compiled signature is fixed-arity`;
     }

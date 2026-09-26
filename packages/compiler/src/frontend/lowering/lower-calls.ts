@@ -4,6 +4,7 @@ import { InternalCompilerError } from "../../errors.js";
  * function/lambda lowering and signature collection, and monomorphizing
  * generic instantiation (bounded by MAX_GENERIC_INSTANCES). */
 import * as ts from "../ts7/adapter.js";
+import { bodyReadsArguments } from "../arguments-usage.js";
 import type { Lowerer } from "./lowerer.js";
 import { lowerGenMethodCall } from "./lower-generators.js";
 import { BIGINT_T, BOOL, CAUGHT, DYN, F64, IrExpr, IrFunction, IrLocal, IrParam, IrStmt, IrType, JSVAL, STRING, SYMBOL_T, SrcLoc, UNDEFINED_T, VOID, arrayOf, canBoxFuncIntoDyn, canConvertToDyn, canDynCheckTo, canMarshalTypedFuncIntoIsland, ffiClassType, ffiSourceParamTypes, funcOf, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isUnitType, shapeHasAccessorSlots, typeEquals } from "../../ir/ir.js";
@@ -36,6 +37,8 @@ import { countedFor, varRef } from "../../ir/build.js";
 import { rejectStaticThis } from "./static-this.js";
 import { fenceNodeModuleMutationCall, lowerRequireCacheKeys } from "./lower-node-module.js";
 import { defaultAfterUndefined, lowerOptionalArgument, lowerStaticallyUndefinedArgument, positionNumber } from "./optional-arguments.js";
+
+export { bodyReadsArguments };
 
 /** How a parameter participates in CALL-SITE COMPLETION (the frontend
  * completes every call to the one full signature, so the IR and backends
@@ -6863,33 +6866,6 @@ function loweredTemplateStrings(
     const funcType = funcTypeFromParamShapes(shapes, ret);
     if (usesArguments) funcType.rest = true;
     return { shapes, funcType };
-  }
-
-/** Does this function's OWN body read `arguments`? Nested plain functions
-   * and methods have their own `arguments` (the walk skips them); arrows
-   * see the enclosing one (the walk descends). Exported for the lowerer's
-   * dynFallbackType: tsgo does not synthesize the `arguments` rest
-   * parameter into inferred signatures (5.9.3 did — its param-count
-   * mismatch was the detector), so the 7 world asks the BODY directly. */
-  export function bodyReadsArguments(fn: { body?: ts.Node | undefined }): boolean {
-    let found = false;
-    if (fn.body === undefined) return false;
-    // Iterative walk (walkPreorder): function bodies can hold pathologically
-    // deep expression chains that a recursive visit would die on.
-    ts.walkPreorder(fn.body, (n) => {
-      if (ts.isIdentifier(n) && n.text === "arguments" && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) {
-        found = true;
-        return "stop";
-      }
-      if (
-        (ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)) &&
-        n !== fn
-      ) {
-        return "skip"; // own `arguments` scope
-      }
-      return undefined;
-    });
-    return found;
   }
 
 /** Lifts an arrow function / function expression / nested declaration /
