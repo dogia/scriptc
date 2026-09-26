@@ -159,6 +159,25 @@ function jsoncSyntaxError(text: string): string | null {
   }
 }
 
+/** Preserve TypeScript 5.9's computed synthetic-default permission from the
+ * project's own module settings. Preflight later forces ESNext/Bundler for
+ * scriptc's checker, so those forced options must not decide which source
+ * import forms were legal in the original project. */
+function projectAllowsSyntheticDefaultImports(options: Record<string, unknown>): boolean {
+  const explicitSyntheticDefaultImports = options["allowSyntheticDefaultImports"];
+  if (explicitSyntheticDefaultImports !== undefined) return explicitSyntheticDefaultImports === true;
+  const moduleKind = options["module"];
+  const explicitEsModuleInterop = options["esModuleInterop"];
+  const esModuleInterop = explicitEsModuleInterop !== undefined
+    ? explicitEsModuleInterop === true
+    : moduleKind === ts.ModuleKind.Node16 ||
+      moduleKind === ts.ModuleKind.Node18 ||
+      moduleKind === ts.ModuleKind.Node20 ||
+      moduleKind === ts.ModuleKind.NodeNext ||
+      moduleKind === ts.ModuleKind.Preserve;
+  return esModuleInterop || moduleKind === ts.ModuleKind.System || options["moduleResolution"] === ts.ModuleResolutionKind.Bundler;
+}
+
 /** The project's tsconfig adoption in the 7 world: tsgo's own config parser
  * (extends chains resolved server-side), the ADOPTED_OPTIONS subset taken,
  * the rest forced, the strictNullChecks floor enforced. */
@@ -181,6 +200,9 @@ function adoptProjectConfig7(
   for (const key of ADOPTED_OPTIONS) {
     const value = parsed.options[key];
     if (value !== undefined) adopted[key] = value;
+  }
+  if (projectAllowsSyntheticDefaultImports(parsed.options)) {
+    adopted["allowSyntheticDefaultImports"] = true;
   }
   // TS 7 accepts `paths`, but no longer accepts `baseUrl` as a compiler
   // option. Translate the established baseUrl+paths spelling into absolute
@@ -2459,21 +2481,15 @@ function preflight7(load: LoadResult): {
         // surface and the lowering keys the same tables
         // (builtinNamespaceModuleOf's default-import twin). JS sources
         // always (Node never asks for interop flags); TS sources when the
-        // adopted interop knobs made the checker accept the spelling
-        // (the `import os from 'os'` spelling under esModuleInterop — the
-        // program TYPECHECKED, so the form is the project's own legal
-        // dialect). A TS project without interop flags keeps the fence:
-        // the SC1012 wording beats the raw TS1259 at the same site. The
-        // callable module objects (assert, events, test) stay allowed
-        // everywhere.
-        const opts = program.getCompilerOptions() as {
-          esModuleInterop?: boolean;
-          allowSyntheticDefaultImports?: boolean;
-        };
-        const interopOn = opts.esModuleInterop === true || opts.allowSyntheticDefaultImports === true;
+        // project's explicit or implied synthetic-default permission accepts
+        // the spelling. A TS project without that permission keeps the
+        // SC1012 fence. The callable module objects (assert, events, test)
+        // stay allowed everywhere.
+        const syntheticDefaultsOn =
+          (program.getCompilerOptions() as { allowSyntheticDefaultImports?: boolean }).allowSyntheticDefaultImports === true;
         const defaultOk =
           builtinDefaultImportModule(spec) !== null ||
-          ((isJsSourceFileName(sf.fileName) || interopOn) && canonicalBuiltinModule(spec) !== null);
+          ((isJsSourceFileName(sf.fileName) || syntheticDefaultsOn) && canonicalBuiltinModule(spec) !== null);
         if (clause.name && !isJson && dep === null && !defaultOk) {
           diags.push(unsupportedDiag("SC1012", locOf7(clause.name)));
         }

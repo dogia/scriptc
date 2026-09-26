@@ -7171,6 +7171,24 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3055-default-builtin-nodenext/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/3055-default-builtin-nodenext/main.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3056-default-builtin-bundler/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/3056-default-builtin-bundler/main.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3057-default-builtin-nodenext-dynamic/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/3057-default-builtin-nodenext-dynamic/main.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
