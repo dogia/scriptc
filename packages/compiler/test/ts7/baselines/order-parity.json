@@ -7277,6 +7277,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3069-tuple-spread.ts": {
+   "order": [
+    "<repo>/tests/corpus/3069-tuple-spread.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
