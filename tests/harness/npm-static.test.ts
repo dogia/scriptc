@@ -122,6 +122,26 @@ describe(`npm-static pilots${sanitize ? " (sanitized)" : ""}`, () => {
     expect(nativeRes.exitCode).toBe(nodeRes.exitCode);
   }, 120_000);
 
+  test.for(["explicit", "auto"] as const)("hoisted CommonJS function exports stay static (%s)", async (mode) => {
+    const entry = join(pilotRoot, "early-export-cli.ts");
+    const npmStatic = mode === "auto" ? "auto" : ["early-export"];
+    const { coverage } = analyze(entry, { npmStatic });
+    expect(coverage.npmStatic).toEqual([{ package: "early-export", status: "static" }]);
+    expect(coverage.preflightFailed).toBe(false);
+    expect(coverage.diagnostics).toHaveLength(0);
+    expect(coverage.runtimeFences ?? []).toHaveLength(0);
+    expect(coverage.stats.statementsFailed).toBe(0);
+
+    const binary = await buildStatic(entry, npmStatic);
+    const [nodeRes, nativeRes] = await Promise.all([
+      runBinary("node", [entry]),
+      runBinary(binary, []),
+    ]);
+    expect(nativeRes.stdout).toEqual(nodeRes.stdout);
+    expect(comparableStderr(nativeRes.stderr)).toEqual(nodeRes.stderr);
+    expect(nativeRes.exitCode).toBe(nodeRes.exitCode);
+  }, 120_000);
+
   test("picocolors compiles fully statically and byte-matches both color branches", async () => {
     const entry = join(pilotRoot, "colors-cli.ts");
     const { coverage } = analyze(entry, { npmStatic: ["picocolors"] });

@@ -835,25 +835,124 @@ function requiresOf7(
   return out;
 }
 
+/** The exact `Object.defineProperty(exports|module.exports, "__esModule",
+ * { value: true })` interop stamp (shared by preflight and the no-op lowering). */
+export function isEsModuleStamp(expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr) || expr.questionDotToken !== undefined) return false;
+  const callee = expr.expression;
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    !ts.isIdentifier(callee.expression) ||
+    callee.expression.text !== "Object" ||
+    !ts.isIdentifier(callee.name) ||
+    callee.name.text !== "defineProperty"
+  ) {
+    return false;
+  }
+  if (expr.arguments.length !== 3) return false;
+  const [recv, nameArg, desc] = expr.arguments as unknown as [ts.Expression, ts.Expression, ts.Expression];
+  const isExports =
+    (ts.isIdentifier(recv) && recv.text === "exports") ||
+    (ts.isPropertyAccessExpression(recv) &&
+      ts.isIdentifier(recv.expression) &&
+      recv.expression.text === "module" &&
+      ts.isIdentifier(recv.name) &&
+      recv.name.text === "exports");
+  if (!isExports) return false;
+  if (!ts.isStringLiteral(nameArg) || nameArg.text !== "__esModule") return false;
+  if (!ts.isObjectLiteralExpression(desc) || desc.properties.length !== 1) return false;
+  const p = desc.properties[0]!;
+  return (
+    ts.isPropertyAssignment(p) &&
+    ts.isIdentifier(p.name) &&
+    p.name.text === "value" &&
+    p.initializer.kind === ts.SyntaxKind.TrueKeyword
+  );
+}
+
+/** Plain CommonJS prologue writes only publish values; in particular,
+ * publishing a hoisted function does not invoke its body. Later runnable
+ * statements may call the export or mutate its receiver, and still need
+ * the conservative TDZ scan over the whole prefix. */
+function pureCjsExport7(program: ts.Program, stmt: ts.Statement): boolean {
+  const cjs = cjsExportAssignmentOf(stmt);
+  if (cjs === null) return false;
+  const sf = stmt.getSourceFile();
+  const plainMember = (left: ts.Expression): boolean => {
+    if (!ts.isPropertyAccessExpression(left) || left.questionDotToken) return false;
+    // A replacement export can have setters or non-writable function
+    // properties. Only the wrapper's original object gets this exception.
+    if (sf.statements.some((s) => cjsExportAssignmentOf(s)?.kind === "table")) return false;
+    if (left.name.text === "__proto__" || left.name.text === "__esModule") return false;
+    let receiver = left.expression;
+    if (isModuleExportsAccess(receiver)) {
+      receiver = receiver.expression;
+      return ts.isIdentifier(receiver) && !sourceBinding7(program, receiver);
+    }
+    return ts.isIdentifier(receiver) && receiver.text === "exports" && !sourceBinding7(program, receiver);
+  };
+  if (cjs.kind === "member") {
+    if (!plainMember(cjs.expr.left)) return false;
+  } else {
+    const receiver = (cjs.expr.left as ts.PropertyAccessExpression).expression as ts.Identifier;
+    if (sourceBinding7(program, receiver)) return false;
+  }
+  let value = cjs.expr.right;
+  // tsc emits chains such as exports.A = exports.B = void 0.
+  while (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    if (!plainMember(value.left)) return false;
+    value = value.right;
+  }
+  if (ts.isVoidExpression(value) && ts.isNumericLiteral(value.expression)) return true;
+  if (ts.isStringLiteralLike(value) || ts.isNumericLiteral(value) ||
+      value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword ||
+      value.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (!ts.isIdentifier(value)) return false;
+  if (value.text === "undefined" && !sourceBinding7(program, value)) return true;
+  const checker = program.getTypeChecker();
+  const symbol = checker.getSymbolAtLocation(value);
+  return symbol !== undefined && checker.declarationsOf(symbol).some(
+    (decl) => ts.isFunctionDeclaration(decl) && decl.parent === stmt.parent,
+  );
+}
+
+function sourceBinding7(program: ts.Program, ident: ts.Identifier): boolean {
+  const checker = program.getTypeChecker();
+  const symbol = checker.getSymbolAtLocation(ident);
+  return symbol !== undefined && checker.declarationsOf(symbol).some(
+    (decl) => !decl.getSourceFile().isDeclarationFile && !ts.isSourceFile(decl),
+  );
+}
+
+function purePrefixDecl7(decl: ts.VariableDeclaration): boolean {
+  const init = decl.initializer;
+  return init === undefined || requireSpecOf7(init) !== null ||
+    ts.isStringLiteralLike(init) || ts.isNumericLiteral(init) ||
+    init.kind === ts.SyntaxKind.TrueKeyword || init.kind === ts.SyntaxKind.FalseKeyword ||
+    init.kind === ts.SyntaxKind.NullKeyword;
+}
+
 /** True for top-level statements that cannot run user code: directives,
  * empty statements, hoisted declarations, require statements themselves,
- * and literal-initialized variables. A require preceded ONLY by these can
- * never have its bindings observed early — nothing above it executes. */
-function purePrefixStmt7(s: ts.Statement): boolean {
+ * literal-initialized variables, and CommonJS function-export prologues.
+ * A require preceded ONLY by these cannot observe its own bindings early;
+ * require cycles are checked separately by the module graph fences. */
+function purePrefixStmt7(program: ts.Program, s: ts.Statement): boolean {
   if (ts.isEmptyStatement(s) || ts.isFunctionDeclaration(s)) return true;
   if (ts.isExpressionStatement(s) && ts.isStringLiteral(s.expression)) return true; // directive
   if (isRequireStatement7(s)) return true;
+  if (isCjsJsFile7(s.getSourceFile())) {
+    if (ts.isExpressionStatement(s) && isEsModuleStamp(s.expression)) {
+      const call = s.expression as ts.CallExpression;
+      const object = (call.expression as ts.PropertyAccessExpression).expression as ts.Identifier;
+      let receiver = call.arguments[0]!;
+      if (ts.isPropertyAccessExpression(receiver)) receiver = receiver.expression;
+      if (!sourceBinding7(program, object) && ts.isIdentifier(receiver) && !sourceBinding7(program, receiver)) return true;
+    }
+    if (pureCjsExport7(program, s)) return true;
+  }
   if (ts.isVariableStatement(s)) {
-    return s.declarationList.declarations.every(
-      (d) =>
-        d.initializer === undefined ||
-        requireSpecOf7(d.initializer) !== null ||
-        ts.isStringLiteralLike(d.initializer) ||
-        ts.isNumericLiteral(d.initializer) ||
-        d.initializer.kind === ts.SyntaxKind.TrueKeyword ||
-        d.initializer.kind === ts.SyntaxKind.FalseKeyword ||
-        d.initializer.kind === ts.SyntaxKind.NullKeyword,
-    );
+    return s.declarationList.declarations.every(purePrefixDecl7);
   }
   return false;
 }
@@ -878,6 +977,7 @@ function requireTdzRisk7(
   sf: ts.SourceFile,
   k: number,
   decl: ts.VariableDeclaration,
+  precedingDecls: readonly ts.VariableDeclaration[],
 ): string | null {
   const checker = program.getTypeChecker();
   const bound: ts.Identifier[] = [];
@@ -928,13 +1028,14 @@ function requireTdzRisk7(
   // These are the exact roots the TDZ analysis scans eagerly. Their files
   // are phase-managed already, so warm their deferred identifiers as one
   // symbol-only batch instead of paying one IPC query per occurrence.
-  checker.prefetchSymbolRoots(
-    stmts.slice(0, k).filter((stmt) => !ts.isFunctionDeclaration(stmt)),
-  );
-  for (let i = 0; i < k && hit === null; i++) {
-    const s = stmts[i]!;
-    if (ts.isFunctionDeclaration(s)) continue;
-    scan(s);
+  const roots = [
+    ...stmts.slice(0, k).filter((stmt) => !ts.isFunctionDeclaration(stmt)),
+    ...precedingDecls,
+  ];
+  checker.prefetchSymbolRoots(roots);
+  for (const root of roots) {
+    if (hit !== null) break;
+    scan(root);
   }
   while (hit === null && work.length > 0) {
     // A scanned reference can make a hoisted declaration's body reachable
@@ -2588,7 +2689,7 @@ function preflight7(load: LoadResult): {
       const stmts = sf.statements;
       let firstRunnable = -1;
       stmts.forEach((s, i) => {
-        if (firstRunnable < 0 && !purePrefixStmt7(s)) firstRunnable = i;
+        if (firstRunnable < 0 && !purePrefixStmt7(program, s)) firstRunnable = i;
       });
       for (let k = 0; k < stmts.length; k++) {
         const stmt = stmts[k]!;
@@ -2665,9 +2766,17 @@ function preflight7(load: LoadResult): {
             diags.push(unsupportedDiag("SC1012", loc, "require() of JSON modules"));
             continue;
           }
+          // Earlier declarators run too: `const x = read(), dep =
+          // require('./dep')` must not lose the guard merely because both
+          // initializers share one VariableStatement.
+          const precedingDecls = req.decl && ts.isVariableStatement(stmt)
+            ? stmt.declarationList.declarations.slice(0, stmt.declarationList.declarations.indexOf(req.decl))
+            : [];
+          const prefixCanRun = (firstRunnable >= 0 && firstRunnable < k) ||
+            precedingDecls.some((decl) => !purePrefixDecl7(decl));
           const tdzName =
-            firstRunnable >= 0 && firstRunnable < k && req.decl
-              ? requireTdzRisk7(program, sf, k, req.decl)
+            prefixCanRun && req.decl
+              ? requireTdzRisk7(program, sf, k, req.decl, precedingDecls)
               : null;
           if (tdzName !== null) {
             diags.push(

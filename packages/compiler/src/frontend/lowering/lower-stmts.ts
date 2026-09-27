@@ -11,7 +11,7 @@ import { lowerForAwaitBuiltin } from "./lower-async-iteration.js";
 import { BOOL, BYTES_U8, CAUGHT, DYN, F64, IrExpr, IrGlobal, IrJsOp, IrLocal, IrStmt, IrType, JSVAL, STRING, SrcLoc, UNDEFINED_T, VOID, arrayOf, isUnitType, shapeHasAccessorSlots, typeEquals } from "../../ir/ir.js";
 import { PoisonError, boundIdentifiersOf, dynFallbackType, dynUndefinedExpr, importCallHandleType, neverTaintedJsType, staticImportNamespaceType, stmtUsesIsland, uncheckedOverloadHandleCall } from "./lowerer.js";
 import { enforceLibBoundary } from "./lib-boundary.js";
-import { cjsExportAssignmentOf, cjsExportDiscardReason, cjsExportTargetLiteral, isCjsJsFile, isJsSourceFile, locOf, requireSpecOf } from "../program.js";
+import { cjsExportAssignmentOf, cjsExportDiscardReason, cjsExportTargetLiteral, isCjsJsFile, isEsModuleStamp, isJsSourceFile, locOf, requireSpecOf } from "../program.js";
 import { COMPOUND_ASSIGN_OPS, CompoundOp, STR_METHODS, UNSUPPORTED_STMT, isStdlibMember, sideEffectFreeOptionValue, stdlibGlobalAliasDecl, stdlibGlobalAliasNameOf, stdlibGlobalNameOf } from "./surfaces.js";
 import { isProvenanceSourceFile } from "../provenance-registry.js";
 import { ambientUndefVarRootOf, lowerImportEquals, nsUndefRead, nsWritableTarget, trapDeclRootOf } from "./lower-namespaces.js";
@@ -4475,41 +4475,6 @@ function lowerBranchSwitch(
       `'delete' on '${lowerer.fmt(obj.type)}' receivers (process.env keys and pure Record<string, T> keys delete)`,
     );
   }
-
-/** The exact `Object.defineProperty(exports|module.exports, "__esModule",
- * { value: true })` interop stamp (see the no-op lowering above). */
-function isEsModuleStamp(expr: ts.Expression): boolean {
-  if (!ts.isCallExpression(expr) || expr.questionDotToken !== undefined) return false;
-  const callee = expr.expression;
-  if (
-    !ts.isPropertyAccessExpression(callee) ||
-    !ts.isIdentifier(callee.expression) ||
-    callee.expression.text !== "Object" ||
-    !ts.isIdentifier(callee.name) ||
-    callee.name.text !== "defineProperty"
-  ) {
-    return false;
-  }
-  if (expr.arguments.length !== 3) return false;
-  const [recv, nameArg, desc] = expr.arguments as unknown as [ts.Expression, ts.Expression, ts.Expression];
-  const isExports =
-    (ts.isIdentifier(recv) && recv.text === "exports") ||
-    (ts.isPropertyAccessExpression(recv) &&
-      ts.isIdentifier(recv.expression) &&
-      recv.expression.text === "module" &&
-      ts.isIdentifier(recv.name) &&
-      recv.name.text === "exports");
-  if (!isExports) return false;
-  if (!ts.isStringLiteral(nameArg) || nameArg.text !== "__esModule") return false;
-  if (!ts.isObjectLiteralExpression(desc) || desc.properties.length !== 1) return false;
-  const p = desc.properties[0]!;
-  return (
-    ts.isPropertyAssignment(p) &&
-    ts.isIdentifier(p.name) &&
-    p.name.text === "value" &&
-    p.initializer.kind === ts.SyntaxKind.TrueKeyword
-  );
-}
 
 /** A top-level CommonJS export statement (see cjsExportAssignmentOf):
    * `exports.f = <expr>` and each expression-valued property of
