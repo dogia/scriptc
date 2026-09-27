@@ -1,4 +1,6 @@
-import type { IrExpr, IrModule } from "./ir.js";
+import type { IrExpr, IrStmt, IrModule } from "./ir.js";
+
+import { everyExprChild, everyStmtChild } from "./traverse.js";
 
 export interface ConstantNumericTable {
   symbol: string;
@@ -41,48 +43,63 @@ export function findConstantNumericTables(mod: IrModule): ReadonlyMap<string, Co
       ? candidates.get(expr.localId) : undefined;
   }
 
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) { value.forEach(visit); return; }
-    if (value === null || typeof value !== "object") return;
-    const node = value as Record<string, unknown>;
-    if (node["kind"] === "closure") {
-      for (const id of (node as IrExpr & { kind: "closure" }).captures) {
-        const candidate = candidates.get(id);
-        if (candidate) candidate.rejected = true;
-      }
-    }
-    if (node["kind"] === "arrIntrinsic") {
-      const read = node as IrExpr & { kind: "arrIntrinsic" };
-      const candidate = candidateFor(read.receiver);
-      if (candidate && ((read.method === "getNumber" && read.args.length === 1) ||
-          (read.method === "length" && read.args.length === 0))) {
-        if (read.method === "getNumber") candidate.reads++;
-        visit(read.args);
-        return;
-      }
-    }
-    if (node["kind"] === "arrayGet" || node["kind"] === "arrayHas" || node["kind"] === "arrayState") {
-      const read = node as IrExpr & { kind: "arrayGet" | "arrayHas" | "arrayState" };
-      if (candidateFor(read.arr)) { visit(read.index); return; }
-    }
-    const candidate = typeof node["localId"] === "string" ? candidates.get(node["localId"]) : undefined;
-    if (candidate) {
-      if (node["kind"] === "assign" && ++candidate.writes === 1) {
-        const init = node["value"] as IrExpr;
-        if (init.kind === "arrayLit" && !init.spreads?.length && init.elems.length > 0 && init.elems.length <= MAX_TABLE_ELEMENTS) {
-          const values = init.elems.map(literalNumber);
-          if (values.every((n): n is number => n !== null)) candidate.values = values;
-        }
-        if (candidate.values === null) candidate.rejected = true;
-      } else {
-        candidate.rejected = true;
-      }
-    }
-    for (const [key, child] of Object.entries(node)) {
-      if (key !== "type" && key !== "loc") visit(child);
-    }
+  function reject(id: string): void {
+    const candidate = candidates.get(id);
+    if (candidate) candidate.rejected = true;
   }
-  visit(mod.functions);
+
+  function expr(node: IrExpr): boolean {
+    switch (node.kind) {
+      case "closure":
+        for (const id of node.captures) reject(id);
+        break;
+      case "arrIntrinsic": {
+        const candidate = candidateFor(node.receiver);
+        if (candidate && ((node.method === "getNumber" && node.args.length === 1) ||
+            (node.method === "length" && node.args.length === 0))) {
+          if (node.method === "getNumber") candidate.reads++;
+          return node.args.every(expr);
+        }
+        break;
+      }
+      case "arrayGet": case "arrayHas": case "arrayState":
+        if (candidateFor(node.arr)) return expr(node.index);
+        break;
+      case "varRef": case "assignExpr": case "incDec":
+        reject(node.localId);
+        break;
+    }
+    return everyExprChild(node, expr, stmt);
+  }
+
+  function stmt(node: IrStmt): boolean {
+    switch (node.kind) {
+      case "assign": {
+        const candidate = candidates.get(node.localId);
+        if (candidate) {
+          candidate.writes++;
+          if (candidate.writes === 1) {
+            const init = node.value;
+            if (init.kind === "arrayLit" && !init.spreads?.length && init.elems.length > 0 && init.elems.length <= MAX_TABLE_ELEMENTS) {
+              const values: number[] = [];
+              for (const elem of init.elems) {
+                const value = literalNumber(elem);
+                if (value !== null) values.push(value);
+              }
+              if (values.length === init.elems.length) candidate.values = values;
+            }
+            if (candidate.values === null) candidate.rejected = true;
+          } else candidate.rejected = true;
+        }
+        break;
+      }
+      case "varDecl": case "forOf": case "rethrow":
+        reject(node.localId);
+        break;
+    }
+    return everyStmtChild(node, expr, stmt);
+  }
+  for (const fn of mod.functions) fn.body.every(stmt);
   const tables = new Map<string, ConstantNumericTable>();
   for (const [id, candidate] of candidates) {
     if (!candidate.rejected && candidate.writes === 1 && candidate.reads > 0 && candidate.values !== null) {

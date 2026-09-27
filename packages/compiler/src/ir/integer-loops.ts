@@ -1,5 +1,7 @@
 import type { IrExpr, IrLocal, IrStmt } from "./ir.js";
 
+import { everyStmtList } from "./traverse.js";
+
 /** A canonical byte loop whose induction variable is mathematically an
  * unsigned integer for every body entry. Backends may keep this binding in
  * integer storage while the loop runs, converting to f64 at ordinary JS
@@ -10,23 +12,13 @@ export interface IntegerBytesForLoop {
 }
 
 /** True when a lowered subtree writes `localId`. Local ids are unique per
- * function, so a generic structured walk is sufficient and includes writes
+ * function, so typed traversal includes writes
  * nested in expressions, branches, nested loops, and try/finally bodies. */
-function writesLocal(value: unknown, localId: string): boolean {
-  if (Array.isArray(value)) return value.some((item) => writesLocal(item, localId));
-  if (value === null || typeof value !== "object") return false;
-  const node = value as { kind?: unknown; localId?: unknown };
-  if (
-    (node.kind === "assign" || node.kind === "assignExpr" || node.kind === "incDec") &&
-    node.localId === localId
-  ) {
-    return true;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "type" || key === "loc") continue;
-    if (writesLocal(child, localId)) return true;
-  }
-  return false;
+function writesLocal(body: IrStmt[], localId: string): boolean {
+  return !everyStmtList(body, {
+    expr: (expr) => (expr.kind !== "assignExpr" && expr.kind !== "incDec") || expr.localId !== localId,
+    stmt: (stmt) => stmt.kind !== "assign" || stmt.localId !== localId,
+  });
 }
 
 function isUnitIncrement(update: IrStmt | null, localId: string): boolean {

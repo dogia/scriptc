@@ -1,7 +1,8 @@
 /* Cheap whole-module may-throw analysis (see computeMayThrow). Pure function
  * of the IR module; the emitter consults the result to place unwind checks. */
-import type { IrArrIntrinsicMethod, IrBytesIntrinsicMethod, IrLibFn, IrModule } from "../../ir/ir.js";
+import type { IrExpr, IrStmt, IrModule } from "../../ir/ir.js";
 import { isFfiCallbackParam, MAY_THROW_ARR_METHODS, MAY_THROW_BYTES_METHODS, MAY_THROW_LIB_FNS } from "../../ir/ir.js";
+import { everyStmtList } from "../../ir/traverse.js";
 import { hasRetainedFfiCallback } from "../ffi-callbacks.js";
 
 /** Cheap may-throw analysis (cost discipline: functions that transitively
@@ -51,16 +52,9 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
     // Capture locals carry the same flag as the declaring binding.
     const tdzIds = new Set(fn.locals.filter((l) => l.tdz).map((l) => l.id));
     const mutableTdzIds = new Set(fn.locals.filter((l) => l.tdz && l.mutable).map((l) => l.id));
-    // The IR is plain JSON: a generic walk keyed on `kind` stays correct as
-    // nodes grow fields (types' own `kind`s never collide with these).
-    const visit = (node: unknown): void => {
-      if (Array.isArray(node)) {
-        for (const item of node) visit(item);
-        return;
-      }
-      if (node === null || typeof node !== "object") return;
-      const rec = node as Record<string, unknown>;
-      switch (rec["kind"]) {
+    // Traverse typed executable nodes without copying the IR into unknown.
+    const visit = (rec: IrExpr | IrStmt): boolean => {
+      switch (rec.kind) {
         case "throw":
         case "rethrow":
         // The deferred JS compile fence throws catchably when executed.
@@ -70,13 +64,13 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
         case "varRef":
         case "incDec":
         case "assignExpr":
-          if (tdzIds.has(rec["localId"] as string)) f.throws = true;
+          if (tdzIds.has(rec.localId)) f.throws = true;
           break;
         case "assign":
           // A declaration is allowed to fill an empty box. Legacy const
           // TDZ stores also initialize; only mutable subsequent stores
           // introduce the new write-side exception edge.
-          if (rec["initializes"] !== true && mutableTdzIds.has(rec["localId"] as string)) f.throws = true;
+          if (rec.initializes !== true && mutableTdzIds.has(rec.localId)) f.throws = true;
           break;
         case "dynCheck":
         case "caughtCheck":
@@ -87,14 +81,14 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           // callValue) — those adapters are emitter-synthesized, invisible
           // to closureTargets, so they force the indirect answer below.
           f.throws = true;
-          if ((rec["type"] as { kind?: string } | undefined)?.kind === "func") {
+          if (rec.type.kind === "func") {
             sawDynFuncAdapter = true;
           }
           break;
         case "fieldIncDec":
           // A checked-dynamic field's ++/-- validates the number out of
           // the box — that dynCheck throws catchably on non-numbers.
-          if (rec["fieldDyn"] === true) f.throws = true;
+          if (rec.fieldDyn === true) f.throws = true;
           break;
         case "dynCall":
         // Prototype dispatch throws the same family (not-a-function,
@@ -126,7 +120,7 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
         case "intrinsic":
           // Module dependency evaluation has await's rejection behavior,
           // while deliberately avoiding await's extra settled-promise turn.
-          if (rec["name"] === "module.await") f.throws = true;
+          if (rec.name === "module.await") f.throws = true;
           break;
         case "yieldExpr":
           // A consumer .throw() surfaces at the yield (and .return()'s
@@ -145,9 +139,9 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           // that path throws the catchable TypeError. A SIGNATURE-FREE
           // shape's write throws on a key MISS (scr_record_key_miss).
           // Overflow shapes with typed value slots never do.
-          const shape = (mod.records ?? []).find((r) => r.id === rec["shapeId"]);
+          const shape = (mod.records ?? []).find((r) => r.id === rec.shapeId);
           if (
-            rec["overflowOnly"] !== true &&
+            rec.overflowOnly !== true &&
             shape && (!shape.indexValue || (shape.indexValue.kind === "dyn" && shape.fields.length > 0))
           ) {
             f.throws = true;
@@ -161,7 +155,7 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           // the emitters place the pending check only for cycle-capable
           // types, and a never-taken caller-side check costs one flag
           // read.
-          const vt = (rec["value"] as { type?: { kind?: string } }).type?.kind;
+          const vt = rec.value.type.kind;
           if (vt === "dyn" || vt === "record" || vt === "array" || vt === "union") f.throws = true;
           break;
         }
@@ -177,14 +171,14 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
         case "libCall":
           // The may-throw seed hook: throwing library calls (fs.*,
           // json.parse) count exactly like a `throw` statement.
-          if (MAY_THROW_LIB_FNS.has(rec["fn"] as IrLibFn)) f.throws = true;
+          if (MAY_THROW_LIB_FNS.has(rec.fn)) f.throws = true;
           break;
         case "ffiCall":
           // A native callback may run arbitrary scriptc code. With retained
           // descriptors any manifest binding may pump a previously stored
           // callback, so every FFI call is conservatively a checkpoint.
           if (
-            callbackFfiImports.has(rec["import"] as string) ||
+            callbackFfiImports.has(rec.import) ||
             manifestHasRetainedCallback
           ) f.throws = true;
           break;
@@ -192,7 +186,7 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           // The size form (`new Uint8Array(n)`) throws Node's "Invalid
           // typed array length" RangeError on a bad length; copy/array
           // sources never throw.
-          const source = rec["source"] as { type?: { kind?: string } } | null;
+          const source = rec.source;
           if (source && source.type?.kind === "f64") f.throws = true;
           break;
         }
@@ -200,12 +194,12 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           // setFrom and the numeric read/write families throw catchable
           // RangeErrors (Node's bounds discipline); the rest trap or
           // cannot fail.
-          if (MAY_THROW_BYTES_METHODS.has(rec["method"] as IrBytesIntrinsicMethod)) {
+          if (MAY_THROW_BYTES_METHODS.has(rec.method)) {
             f.throws = true;
           }
           break;
         case "arrIntrinsic":
-          if (MAY_THROW_ARR_METHODS.has(rec["method"] as IrArrIntrinsicMethod)) {
+          if (MAY_THROW_ARR_METHODS.has(rec.method)) {
             f.throws = true;
           }
           break;
@@ -215,26 +209,26 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
         case "regexIntrinsic":
           // replaceAll and matchAll without /g throw Node's TypeError;
           // split throws on a pattern with capture groups — all catchable.
-          if (rec["method"] === "replaceAll" || rec["method"] === "split" || rec["method"] === "matchAll" || rec["method"] === "matchAllInto") {
+          if (rec.method === "replaceAll" || rec.method === "split" || rec.method === "matchAll" || rec.method === "matchAllInto") {
             f.throws = true;
           }
           break;
         case "call": {
           // Calling an ASYNC function never unwinds the caller: a body
           // throw becomes a promise rejection (visible only at await).
-          const callee = rec["callee"] as string;
+          const callee = rec.callee;
           if (!asyncFns.has(callee) && !genFns.has(callee)) f.callees.push(callee);
           break;
         }
         case "new":
-          f.callees.push(`%${rec["className"] as string}.constructor`);
+          f.callees.push(`%${rec.className}.constructor`);
           break;
         case "newValue": {
           // Construction through a class VALUE reaches the static class's
           // constructor or any strict descendant's — a sound (slightly
           // wide) cover is every constructor of the named class's
           // hierarchy; classval flows never leave it.
-          const cls = ((rec["callee"] as { type?: { className?: string } }).type)?.className;
+          const cls = rec.callee.type.kind === "classval" ? rec.callee.type.className : undefined;
           if (cls !== undefined) {
             const descends = (name: string): boolean => {
               for (let c = (mod.classes ?? []).find((k) => k.name === name); c; c = (mod.classes ?? []).find((k) => k.name === c!.base)) {
@@ -253,7 +247,7 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           // The concrete callee is any implementation of this method name
           // on a class — a sound (slightly wide, cross-hierarchy) cover of
           // the override set the dispatch can actually reach.
-          const impls = methodImpls.get(rec["method"] as string);
+          const impls = methodImpls.get(rec.method);
           if (impls) f.callees.push(...impls);
           break;
         }
@@ -261,14 +255,12 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           f.callsValue = true;
           break;
         case "closure":
-          closureTargets.add(rec["fnName"] as string);
+          closureTargets.add(rec.fnName);
           break;
       }
-      for (const key of Object.keys(rec)) {
-        if (key !== "loc" && key !== "type") visit(rec[key]);
-      }
+      return true;
     };
-    visit(fn.body);
+    everyStmtList(fn.body, { expr: visit, stmt: visit });
     facts.set(fn.name, f);
   }
 

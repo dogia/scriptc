@@ -41,7 +41,7 @@ import type {
   IrUnionDef,
   SrcLoc,
 } from "../../ir/ir.js";
-import { ffiCallbackType, funcOf, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, mapOf, moduleEmbedsCompressedNpm, moduleUsesChildProcess, moduleUsesDgram, moduleUsesDynInvoke, moduleEmbedsBuiltin, moduleUsesFetch, moduleUsesFsWatch, moduleUsesHttp2, moduleUsesHttpServer, moduleUsesNet, moduleUsesNodeTest, moduleUsesProcessEvents, moduleUsesStream, moduleUsesTls, moduleUsesTlsCa, POINTER_KINDS, type PointerKind, RUNTIME_EMITTER_CLASS, STRING, VOID } from "../../ir/ir.js";
+import { ffiCallbackType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, moduleEmbedsCompressedNpm, moduleUsesChildProcess, moduleUsesDgram, moduleUsesDynInvoke, moduleEmbedsBuiltin, moduleUsesFetch, moduleUsesFsWatch, moduleUsesHttp2, moduleUsesHttpServer, moduleUsesNet, moduleUsesNodeTest, moduleUsesProcessEvents, moduleUsesStream, moduleUsesTls, moduleUsesTlsCa, POINTER_KINDS, type PointerKind, RUNTIME_EMITTER_CLASS, VOID } from "../../ir/ir.js";
 import { undefinedArmTag } from "../../ir/analysis.js";
 import { scalarizeNumericRecords } from "../../ir/scalar-records.js";
 import type { IntegerRanges } from "../../ir/integer-ranges.js";
@@ -61,6 +61,7 @@ import {
   mangleWrapper,
 } from "../mangle.js";
 import { cCommentText, cFnPtrCast, cType, releaseCallC, cStringLiteral, cDecl, cNumberLiteral } from "./types.js";
+import { computeTraced } from "../cycle-analysis.js";
 import { computeMayThrow } from "./may-throw.js";
 import { unionTruthyHelper, unionEqHelper, unionToStrHelper, unionJoinHelper, jsonWriteHelper, jsonIndentHelper, dynMatchHelper, dynCheckHelper, dynFuncBoxHelper, dynToStrHelper, caughtToDynHelper, toDynHelper, recordKeyGetHelper, recordKeySetHelper } from "./walkers.js";
 import { VtSlot, ClassMeta, emitStructDefs, vtEntriesFor, vtSlotParams, emitVtableDecls, emitVtableInstances, emitVtAdapterDefs, emitHierarchyClassHelpers, emitClassObjs, emitCtorThunkDefs, errorVtStampLines, emitterVtStampLines, streamVtStampLines, traceAdapterC, traceArgC, boxNewC, arrNewC } from "./shapes.js";
@@ -553,105 +554,9 @@ export class CEmitter {
         if (this.mayThrow.has(`%${cls.name}.${m}`)) this.mayThrowMethods.add(m);
       }
     }
-    // Cycle capability, as a greatest fixpoint over shapes and unions:
-    // start optimistic (everything cycle-capable), then repeatedly drop
-    // shapes with no cycle-capable field and unions with no cycle-capable
-    // arm until stable. Closures and promises are always cycle-capable
-    // (a captured box can hold anything; a rejection payload is an
-    // arbitrary thrown value); strings never are, and arrays/maps inherit
-    // their element/value type's capability (a record element can point
-    // back at the array holding it). The optimistic start is what keeps
-    // self- and mutually-recursive classes traced (`class A { next: A }`).
-    const shapeDefs = [
-      // The emitter class carries a synthetic closure-typed pseudo-field:
-      // its runtime registry OWNS listener closures, so the emitter
-      // hierarchy is unconditionally cycle-capable — the fixpoint must
-      // never drop it (the pseudo-field never reaches struct emission;
-      // runtime classes emit no structs).
-      ...(mod.classes ?? []).map((c) => ({
-        key: `object:${c.name}`,
-        fields: c.name === RUNTIME_EMITTER_CLASS
-          ? [...c.fields, { name: "<listeners>", type: funcOf([], VOID) }]
-          : c.fields,
-      })),
-      // An index-signature shape's overflow map participates like a field
-      // of map type: the shape is cycle-capable when the overflow VALUE
-      // type is (a record/object/union value in the map can point back at
-      // the record embedding it) — cycleCapable's map rule answers that.
-      ...(mod.records ?? []).map((r) => ({
-        key: `record:${r.id}`,
-        fields: r.indexValue
-          ? [...r.fields, { name: "<overflow>", type: mapOf(STRING, r.indexValue) }]
-          : r.fields,
-      })),
-    ];
-    for (const s of shapeDefs) this.tracedShapes.add(s.key);
-    // A hierarchy is ONE unit of cycle capability: a base-typed slot can
-    // hold any subclass and retain touches the cycle header, so header
-    // presence must be uniform across an extends-hierarchy — it is
-    // cycle-capable iff ANY member is. Standalone classes and records are
-    // singleton units (today's behavior exactly).
-    const unitKeyOf = (key: string): string => {
-      if (!key.startsWith("object:")) return key;
-      const meta = this.classMeta.get(key.slice("object:".length));
-      return meta && meta.hierarchy ? `object:${meta.root.def.name}` : key;
-    };
-    const units = new Map<string, typeof shapeDefs>();
-    for (const s of shapeDefs) {
-      const unit = unitKeyOf(s.key);
-      let members = units.get(unit);
-      if (!members) units.set(unit, (members = []));
-      members.push(s);
-    }
-    for (const u of mod.unions ?? []) this.tracedUnions.add(u.id);
-    const cycleCapable = (t: IrType): boolean => {
-      switch (t.kind) {
-        case "func":
-        case "promise":
-          return true;
-        case "object":
-          return this.tracedShapes.has(`object:${t.className}`);
-        case "record":
-          return this.tracedShapes.has(`record:${t.shapeId}`);
-        case "union":
-          return this.tracedUnions.has(t.unionId);
-        // A map is cycle-capable exactly when its VALUE type is: a record/
-        // object/union value can hold the map that owns it, while string/
-        // array/scalar values cannot point back. Map-valued maps (an
-        // index-signature overflow over `Map<K, V>` values) recurse on the
-        // inner value. Terminates: IrTypes are finite trees, and the
-        // record/union cases read the fixpoint sets.
-        case "map":
-          return cycleCapable(t.value);
-        // An array is cycle-capable exactly when its ELEMENT type is —
-        // record/object/union elements (and cycle-capable inner arrays)
-        // can point back at the array. Terminates: element types are
-        // finite trees, and the record/union cases read the fixpoint sets.
-        case "array":
-          return cycleCapable(t.elem);
-        default:
-          return false;
-      }
-    };
-    let shrunk = true;
-    while (shrunk) {
-      shrunk = false;
-      for (const members of units.values()) {
-        if (
-          this.tracedShapes.has(members[0]!.key) &&
-          !members.some((s) => s.fields.some((f) => cycleCapable(f.type)))
-        ) {
-          for (const s of members) this.tracedShapes.delete(s.key);
-          shrunk = true;
-        }
-      }
-      for (const u of mod.unions ?? []) {
-        if (this.tracedUnions.has(u.id) && !u.arms.some(cycleCapable)) {
-          this.tracedUnions.delete(u.id);
-          shrunk = true;
-        }
-      }
-    }
+    const traced = computeTraced(mod);
+    for (const shape of traced.shapes) this.tracedShapes.add(shape);
+    for (const union of traced.unions) this.tracedUnions.add(union);
     if (sourceText !== undefined) {
       this.lineStarts = [0];
       for (let i = 0; i < sourceText.length; i++) {
