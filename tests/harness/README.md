@@ -69,6 +69,14 @@ Full-suite runs (`vitest run` with no filters) take an advisory machine-wide loc
 
 ## Build and oracle caches
 
+### Development build benchmark
+
+After rebuilding the workspace, `pnpm bench:builds` measures the built CLI on a generated 17-module, 256-function TypeScript program using `--optimization=dev`. It reports one build with an empty scriptc cache, five exact rebuilds, and five rebuilds after changing an imported module. Every run uses a fresh private cache and verifies each binary's stdout, stderr, and exit status against Node, outside the timed build. Temporary files are removed on completion. `pnpm bench:builds --iterations=3` changes the sample count; progress goes to stderr and the JSON result, including individual samples and medians, goes to stdout (use `pnpm --silent bench:builds` when capturing JSON).
+
+This is a local latency benchmark, not a timing assertion in CI. Compare the same Node version, target, compiler installation, and machine load; the empty-cache sample does not flush OS filesystem or Node bytecode caches. Unset `SCRIPTC_TARGET` because the benchmark executes the resulting host binary. Use representative application measurements alongside this small module-graph baseline when choosing further optimizations.
+
+### Cache layers
+
 Test runs are dominated by clang (~275 corpus programs × two lanes at -O2/-O1+ASan). The production content-addressed build cache and the harness's oracle cache make repeat runs fast. Tests pin them under `node_modules/.cache/scriptc-tests/cas` (gitignored; override with `SCRIPTC_CACHE_DIR`) instead of using the per-user default:
 
 - **binaries** (`bin/`, native-toolchain.ts): key = resolved clang identity/version + target/compiler environment + implicit system-header dependency bytes + linker/assembler identities + runtime fingerprint (every runtime .c/.h + the vendor pin) + the full normalized command line + the emitted C bytes (byte-stable by project invariant). A hit skips native code generation and linking; the binary still RUNS live, so no comparison or sanitizer coverage is ever skipped. Each hit is checksum-verified. The sanitized lane's flags land in naturally distinct keys. FFI archive/object inputs and ambient system libraries always relink because their named files can hide mutable transitive dependencies.
