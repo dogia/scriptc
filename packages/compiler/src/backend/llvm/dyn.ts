@@ -1,3 +1,4 @@
+import { f64Lit } from "./common.js";
 import { InternalCompilerError } from "../../errors.js";
 /* The dyn (ScrDyn dyn) helper EMITTERS for the LLVM backend — the .ll
  * mirror of walkers.ts's dyn slice: per-type match predicates
@@ -67,13 +68,6 @@ export const DYN_KIND = {
 export interface DynHost extends WalkerHost {
   unitInstanceRef(unionId: string, tag: number): string;
   liveDynRefAdapter(t: IrType): { snapshot: string; commit: string };
-}
-
-/** Exact double literal (the emitter's f64Lit — the walkers' copy). */
-function f64Lit(n: number): string {
-  const buf = new ArrayBuffer(8);
-  new DataView(buf).setFloat64(0, n);
-  return `0x${[...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
 }
 
 const FN_ATTRS = "#0";

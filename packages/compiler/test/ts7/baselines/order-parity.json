@@ -7481,6 +7481,24 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3105-nullable-collections.ts": {
+   "order": [
+    "<repo>/tests/corpus/3105-nullable-collections.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3106-mixed-insertion-spreads.ts": {
+   "order": [
+    "<repo>/tests/corpus/3106-mixed-insertion-spreads.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3107-nullable-collection-lifetimes.ts": {
+   "order": [
+    "<repo>/tests/corpus/3107-nullable-collection-lifetimes.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"

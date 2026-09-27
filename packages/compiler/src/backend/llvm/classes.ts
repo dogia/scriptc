@@ -50,16 +50,19 @@ export interface LlVtSlot {
 }
 
 /** Per-class node of the class graph — the CEmitter ClassMeta shape. */
-export interface LlClassMeta {
-  def: IrClassDef;
-  base: LlClassMeta | null;
-  children: LlClassMeta[];
+export class LlClassMeta {
+  base: LlClassMeta | null = null;
+  children: LlClassMeta[] = [];
   root: LlClassMeta;
-  pre: number;
-  post: number;
-  hierarchy: boolean;
+  pre = 0;
+  post = 0;
+  hierarchy = false;
   /** Root classes: the hierarchy's slots in DFS-declaration order. */
-  slots: LlVtSlot[];
+  slots: LlVtSlot[] = [];
+
+  constructor(readonly def: IrClassDef) {
+    this.root = this;
+  }
 }
 
 /** The class graph: link base/children, number the forest in preorder
@@ -72,16 +75,7 @@ export interface LlClassMeta {
 export function buildClassGraph(mod: IrModule, fnByName: Map<string, IrFunction>): Map<string, LlClassMeta> {
   const metaMap = new Map<string, LlClassMeta>();
   for (const cls of mod.classes ?? []) {
-    metaMap.set(cls.name, {
-      def: cls,
-      base: null,
-      children: [],
-      root: undefined as unknown as LlClassMeta,
-      pre: 0,
-      post: 0,
-      hierarchy: false,
-      slots: [],
-    });
+    metaMap.set(cls.name, new LlClassMeta(cls));
   }
   for (const meta of metaMap.values()) {
     if (meta.def.base === undefined) continue;
@@ -107,7 +101,7 @@ export function buildClassGraph(mod: IrModule, fnByName: Map<string, IrFunction>
   const collectSlots = (m: LlClassMeta, root: LlClassMeta): void => {
     for (const method of m.def.methods ?? []) {
       let inherited = false;
-      for (let a = m.base; a; a = a.base) inherited ||= declares(a, method);
+      for (let a = m.base; a; a = a.base) inherited = inherited || declares(a, method);
       if (!inherited && declaredBelow(m, method)) {
         let fn = fnByName.get(`%${m.def.name}.${method}`);
         if (!fn && m.def.abstractMethods?.includes(method)) {
@@ -143,7 +137,7 @@ export function buildClassGraph(mod: IrModule, fnByName: Map<string, IrFunction>
  * dispatches to, or null outside the slot's declaring subtree / on a
  * fully-abstract chain (vtEntriesFor, ported). */
 function vtEntriesFor(meta: LlClassMeta): { slot: LlVtSlot; impl: LlClassMeta | null }[] {
-  return meta.root.slots.map((slot) => {
+  return meta.root.slots.map((slot): { slot: LlVtSlot; impl: LlClassMeta | null } => {
     if (!(slot.declarer.pre <= meta.pre && meta.pre <= slot.declarer.post)) {
       return { slot, impl: null };
     }
@@ -271,8 +265,13 @@ export function emitClassShapes(
   // runtime root — %Error — counts exactly when an emitted subclass needs
   // its type): a ScrVt head plus one ptr per slot. All slots are `ptr`, so
   // the type is layout-only.
-  const roots = [...new Set(emitted.map((c) => metaMap.get(c.name)!).filter((m) => m.hierarchy).map((m) => m.root))];
-  for (const root of roots) {
+  const roots = new Set<string>();
+  for (const cls of emitted) {
+    const meta = metaMap.get(cls.name)!;
+    if (meta.hierarchy) roots.add(meta.root.def.name);
+  }
+  for (const name of roots) {
+    const root = metaMap.get(name)!;
     const slotPtrs = root.slots.map(() => "ptr").join(", ");
     typeDefs.push(
       `%${mangleVtStruct(root.def.name)} = type { %ScrVt${root.slots.length ? ", " + slotPtrs : ""} } ` +
@@ -307,7 +306,7 @@ export function emitClassShapes(
     const isStreamRooted = streamRooted(meta);
     const fieldIndex = (i: number): number => fieldBase(meta) + i;
     const refFields = cls.fields
-      .map((f, i) => ({ ...f, index: fieldIndex(i) }))
+      .map((f, i) => ({ name: f.name, type: f.type, index: fieldIndex(i) }))
       .filter((f) => isRefCounted(f.type));
     const sizeOf = `ptrtoint (ptr getelementptr (%${struct}, ptr null, i32 1) to ${host.sizeType})`;
     // An embedded prefix slot (the emitter registry at 2, the stream
@@ -468,7 +467,7 @@ export function emitClassShapes(
       // trace: visit exactly the cycle-capable fields; gcFree: release
       // exactly the complement, then free (the trace/teardown complement
       // contract in scr_runtime.h).
-      const indexed = cls.fields.map((f, i) => ({ ...f, index: fieldIndex(i) }));
+      const indexed = cls.fields.map((f, i) => ({ name: f.name, type: f.type, index: fieldIndex(i) }));
       const tracedFields = indexed.filter((f) => traceAdapter(host, f.type) !== null);
       const untracedRefFields = indexed.filter(
         (f) => isRefCounted(f.type) && traceAdapter(host, f.type) === null,

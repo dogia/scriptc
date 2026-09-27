@@ -1,3 +1,4 @@
+import { f64Lit } from "./common.js";
 import { InternalCompilerError } from "../../errors.js";
 /* Structure-walking helper EMITTERS for the LLVM backend — the .ll mirror
  * of walkers.ts's phase-3 slice: type-directed JSON serializers over
@@ -35,14 +36,6 @@ export interface WalkerHost extends ShapeHost {
   cstr(text: string): string;
   /** Request the shared invalid-union-tag abort helper (@sc_bad_tag). */
   needBadTag(): void;
-}
-
-/** Exact double literal (the emitter's f64Lit — duplicated to avoid a
- * cyclic import; both spell every bit pattern identically). */
-function f64Lit(n: number): string {
-  const buf = new ArrayBuffer(8);
-  new DataView(buf).setFloat64(0, n);
-  return `0x${[...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
 }
 
 const FN_ATTRS = "#0";

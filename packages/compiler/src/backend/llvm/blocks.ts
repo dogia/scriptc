@@ -45,8 +45,8 @@ export class BlockBuilder {
     // can themselves contain semicolons; those are not comment delimiters.
     let quoted = false;
     for (let i = 0; i < s.length; i++) {
-      if (s[i] === '"') quoted = !quoted;
-      if (s[i] === ";" && !quoted) {
+      if (s.charAt(i) === '"') quoted = !quoted;
+      if (s.charAt(i) === ";" && !quoted) {
         return `${s.slice(0, i).trimEnd()}, !dbg ${this.debugLocation} ${s.slice(i)}`;
       }
     }

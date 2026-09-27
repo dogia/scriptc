@@ -1,3 +1,4 @@
+import { commentText, unsignedHex } from "../literals.js";
 import { InternalCompilerError } from "../../errors.js";
 import type { IrFfiCallbackParamClass, IrFfiReturnClass, IrFfiValueParamClass } from "../../ir/ir.js";
 
@@ -5,9 +6,7 @@ import type { IrFfiCallbackParamClass, IrFfiReturnClass, IrFfiValueParamClass } 
  * ordinary output byte-for-byte, but encode control and line-separator code
  * units so a property name can never inject a line or invalid source byte. */
 export function llvmCommentText(text: string): string {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (char) =>
-    `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`
-  );
+  return commentText(text);
 }
 
 export function ffiNativeTypeLl(
@@ -33,9 +32,9 @@ export function ffiNativeTypeLl(
 }
 
 export function f64Lit(n: number): string {
-  const buf = new ArrayBuffer(8);
-  new DataView(buf).setFloat64(0, n);
-  return `0x${[...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setFloat64(0, n);
+  return `0x${[...bytes].map((b) => unsignedHex(b).padStart(2, "0")).join("").toUpperCase()}`;
 }
 
 export const F64_INF = f64Lit(Infinity);

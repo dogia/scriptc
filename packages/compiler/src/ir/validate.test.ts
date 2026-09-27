@@ -1,9 +1,31 @@
 import { expect, test } from "vitest";
-import { BOOL, F64, NULL_T, STRING, UNDEFINED_T, VOID, arrayOf, type IrExpr, type IrModule, type IrType, type IrUnionDef } from "./ir.js";
+import { BOOL, F64, NULL_T, STRING, UNDEFINED_T, VOID, arrayOf, mapOf, setOf, type IrExpr, type IrModule, type IrType, type IrUnionDef } from "./ir.js";
 import { deserializeModule, serializeModule } from "./serialize.js";
 import { validateModule } from "./validate.js";
 
 const loc = { file: "numeric-read.ts", start: 0, end: 0 };
+
+test.each([mapOf(STRING, F64), setOf(STRING), { kind: "promise", inner: F64 } as IrType])("nullable %j payloads preserve an explicit absence tag", (type) => {
+  const mod = expressionModule({ kind: "numLit", value: 0, type: F64, loc }, [
+    { id: "nullable", arms: [type, NULL_T, UNDEFINED_T] },
+  ]);
+  expect(validateModule(mod)).toEqual([]);
+  expect(deserializeModule(serializeModule(mod))).toEqual(mod);
+});
+
+test.each([mapOf(STRING, F64), setOf(STRING), { kind: "promise", inner: F64 } as IrType])("%j payloads still refuse unrelated data siblings", (type) => {
+  const mod = expressionModule({ kind: "numLit", value: 0, type: F64, loc }, [
+    { id: "mixed", arms: [type, STRING, UNDEFINED_T] },
+  ]);
+  expect(validateModule(mod).map((error) => error.message)).toContain(`union mixed: ${type.kind} arm 0 beside non-unit arms`);
+});
+
+test("two differently typed Map payloads cannot silently share one tag test", () => {
+  const mod = expressionModule({ kind: "numLit", value: 0, type: F64, loc }, [
+    { id: "maps", arms: [mapOf(STRING, F64), mapOf(STRING, STRING), UNDEFINED_T] },
+  ]);
+  expect(validateModule(mod).filter((error) => error.message.includes("beside non-unit arms"))).toHaveLength(2);
+});
 
 function numericReadModule(overrides: Partial<IrExpr & { kind: "arrIntrinsic" }> = {}): IrModule {
   const read: IrExpr = {

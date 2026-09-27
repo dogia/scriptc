@@ -1,3 +1,5 @@
+import { unsignedHex } from "./literals.js";
+
 /* Name mangling. Distinct prefixes partition the C namespace:
  *   sc_f_  user functions        sc_l_  locals
  *   sc_t   emitter temporaries   sc_lit_ interned string literals
@@ -12,9 +14,15 @@
  */
 
 function sanitize(name: string): string {
-  return name.replace(/[^A-Za-z0-9_]/g, (ch) =>
-    ch === "." ? "_" : `_x${ch.codePointAt(0)!.toString(16)}_`,
-  );
+  let result = "";
+  for (let i = 0; i < name.length; i++) {
+    const code = name.charCodeAt(i);
+    const ch = name.charAt(i);
+    result += code === 46 ? "_"
+      : (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 95
+        ? ch : `_x${unsignedHex(code)}_`;
+  }
+  return result;
 }
 
 export function mangleFunction(name: string): string {

@@ -100,7 +100,13 @@ function lowerArraySpreadItems(
   ];
   for (const node of nodes) {
     if (ts.isSpreadElement(node)) {
-      const source = lowerer.lowerExpr(node.expression);
+      let source = lowerer.lowerExpr(node.expression);
+      if (source.type.kind === "set" && typeEquals(source.type.elem, elem)) {
+        source = { kind: "setIntrinsic", method: "toArray", receiver: source, args: [], type: arrType, loc };
+      }
+      if (source.type.kind === "record" && lowerer.shapes.get(source.type.shapeId)?.tuple) {
+        source = lowerer.widthCoerce(source, arrType) ?? source;
+      }
       if (!typeEquals(source.type, arrType)) {
         lowerer.noLowering(`Array insertion spread from '${lowerer.fmt(source.type)}'`, node);
       }
@@ -511,6 +517,17 @@ function fenceProducedArrayElem(lowerer: Lowerer, node: ts.Node, producer: strin
           args: [src],
           type: F64,
           loc,
+        };
+      }
+      if (call.arguments.some(ts.isSpreadElement)) {
+        // Finish argument evaluation before mutating the receiver. Each
+        // spread snapshots its elements immediately, so a later argument
+        // can mutate that source without changing already-collected values.
+        const items = lowerArraySpreadItems(lowerer, call.arguments, elem, receiverIr, loc);
+        return {
+          kind: "arrIntrinsic",
+          method: name === "push" ? "pushSpread" : "unshiftSpread",
+          receiver, args: [items], type: F64, loc,
         };
       }
       const valueProbes = call.arguments.map((arg) => tryLowerExpression(lowerer, arg));

@@ -173,8 +173,15 @@ export function streamTypedRefEligible(t: IrType): boolean {
   return t.kind === "record" || t.kind === "array" || t.kind === "bytes";
 }
 
+/** Only ancestry is needed here. Descendant links would turn a native
+ * structural projection into a copy of the entire cyclic class graph. */
+export interface IrClassAncestry {
+  def: { name: string };
+  base: IrClassAncestry | null;
+}
+
 /** True when a class descends from a runtime stream class. */
-export function streamRooted(meta: IrClassGraphNode): boolean {
+export function streamRooted(meta: IrClassAncestry): boolean {
   for (let current = meta.base; current; current = current.base) {
     if (RUNTIME_STREAM_CLASSES.has(current.def.name)) return true;
   }

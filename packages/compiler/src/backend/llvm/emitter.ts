@@ -1,3 +1,5 @@
+import { emitLlvmLayouts } from "./layouts.js";
+import { llvmBytes as llBytes } from "../literals.js";
 import { InternalCompilerError } from "../../errors.js";
 /* IR → LLVM IR text (.ll). The LLVM backend consumes the SAME in-memory
  * IrModule the C backend does (never the JSON dump — see the -0 lesson in
@@ -113,8 +115,6 @@ import {
   buildClassGraph,
   classFieldIndex,
   classStructSym,
-  emitClassObjDefs,
-  emitClassShapes,
   type LlClassMeta,
 } from "./classes.js";
 import { LlDyn } from "./dyn.js";
@@ -126,7 +126,6 @@ import {
   boxNewCall,
   computeTraced,
   elemAccess,
-  emitRecordShapes,
   FN_ATTRS,
   llFieldType,
   releaseSym,
@@ -188,19 +187,6 @@ export interface LlvmTargetOptions {
 export function emitLlvmModule(mod: IrModule, options: LlvmTargetOptions = {}): string {
   // Keep source storage intact for debugger inspection in dev builds.
   return new LlEmitter(options.debugSources === undefined ? scalarizeNumericRecords(mod) : mod, options).emit();
-}
-
-/** LLVM c"..." payload for a UTF-8 literal, NUL-terminated like the C
- * emitter's flexible-array-member initializer. */
-function llBytes(bytes: Uint8Array): string {
-  let s = "";
-  for (const b of bytes) {
-    s +=
-      b >= 0x20 && b < 0x7f && b !== 0x22 && b !== 0x5c
-        ? String.fromCharCode(b)
-        : `\\${b.toString(16).padStart(2, "0").toUpperCase()}`;
-  }
-  return `${s}\\00`;
 }
 
 function llStrBytes(text: string): string {
@@ -775,9 +761,10 @@ class LlEmitter {
     // emit), then the file assembles around them — the C emitter's order.
     const fnDefs: string[] = [];
     for (const fn of this.mod.functions) fnDefs.push(this.emitFunction(fn));
-    const shapes = emitRecordShapes(this, this.mod);
-    const classShapes = emitClassShapes(this, this.mod, this.classMeta);
-    const classObjDefs = emitClassObjDefs(this, this.classMeta, this.classObjs, this.fnByName, (t) => this.llType(t));
+    const layouts = emitLlvmLayouts(this, this.mod, this.classMeta, this.classObjs, this.fnByName, (t) => this.llType(t));
+    const shapes = layouts.records;
+    const classShapes = layouts.classes;
+    const classObjDefs = layouts.classObjects;
     const wrappers = this.emitFnValueDefs();
     const asyncDefs = this.emitAsyncScaffolding();
     const ffiCallbacks = this.emitFfiCallbackDefs();

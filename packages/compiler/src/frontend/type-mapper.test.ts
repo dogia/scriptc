@@ -1,6 +1,27 @@
 import { describe, expect, test } from "vitest";
-import { F64, STRING, VOID, type IrType } from "../ir/ir.js";
-import { formatIrType, ShapeRegistry, UnionRegistry } from "./type-mapper.js";
+import { F64, STRING, UNDEFINED_T, VOID, mapOf, setOf, type IrType } from "../ir/ir.js";
+import { formatIrType, genResultRecord, ShapeRegistry, UnionRegistry, withUndefinedArm } from "./type-mapper.js";
+
+describe("nullable collection union builders", () => {
+  test.each([mapOf(STRING, F64), setOf(STRING)])("optional %j fields and generator results share the same union", (type) => {
+    const shapes = new ShapeRegistry();
+    const unions = new UnionRegistry();
+    const optional = withUndefinedArm(type, unions);
+    expect(optional?.kind).toBe("union");
+    if (optional?.kind !== "union") throw new Error("missing union");
+    expect(unions.get(optional.unionId)?.arms).toContainEqual(type);
+    expect(unions.get(optional.unionId)?.arms).toContainEqual(UNDEFINED_T);
+    expect(withUndefinedArm(optional, unions)).toEqual(optional);
+    const result = genResultRecord(type, VOID, shapes, unions);
+    expect(result).not.toBeNull();
+    expect(shapes.get(result!.shapeId)?.fields.find((field) => field.name === "value")?.type).toEqual(optional);
+  });
+
+  test("collection generators retain the data-sibling refusal", () => {
+    expect(genResultRecord(mapOf(STRING, F64), STRING, new ShapeRegistry(), new UnionRegistry())).toBeNull();
+    expect(genResultRecord(setOf(STRING), F64, new ShapeRegistry(), new UnionRegistry())).toBeNull();
+  });
+});
 
 describe("IR type diagnostics", () => {
   test("preserves small types, repeated sibling shapes, and array precedence", () => {

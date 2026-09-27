@@ -685,18 +685,13 @@ export function funcOf(params: IrType[], ret: IrType): IrType {
   return { kind: "func", params, ret };
 }
 
-/** The union FUNC/SET-arm sibling rule, shared by the frontend's union
- * builders and the validator: FUNC arms are valid beside ANY sibling —
- * `typeof x === "function"` narrows against data arms, unit tag tests
- * cover the nullable-callback shape, and between func arms closures
- * compare by pointer identity per tag (unionEq), so `x === String` is the
- * narrowing (the primitive-constructor tables' `StringConstructor |
- * NumberConstructor` field, and LinkOptions' `false | ((s: string) =>
- * string)`). A SET arm keeps the unit-only rule (no narrowing test
- * against data arms). */
-export function unionFuncSetArmsOk(arms: IrType[]): boolean {
+/** Maps, sets and promises may share a union with null/undefined only.
+ * Unit tag tests can narrow nullable containers without losing identity;
+ * arbitrary data siblings require a separate runtime narrowing operation.
+ * Share this rule across checker mapping, synthesized unions and validation. */
+export function unionContainerArmsOk(arms: IrType[]): boolean {
   return arms.every(
-    (a, i) => a.kind !== "set" || arms.every((b, j) => j === i || isUnitType(b)),
+    (a, i) => (a.kind !== "map" && a.kind !== "set" && a.kind !== "promise") || arms.every((b, j) => j === i || isUnitType(b)),
   );
 }
 

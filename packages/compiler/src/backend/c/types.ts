@@ -1,3 +1,4 @@
+import { commentText, octalByte } from "../literals.js";
 import { InternalCompilerError } from "../../errors.js";
 /* Type-directed dispatch tables of the C emitter: the C spelling of every IR
  * type and the per-type runtime entry points (retain/release, box kinds,
@@ -431,12 +432,7 @@ export function mapValKindC(value: IrType): string {
  * ordinary output byte-for-byte, but split comment delimiters and encode
  * source-control characters so the text cannot alter the translation unit. */
 export function cCommentText(text: string): string {
-  return text
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (char) =>
-      `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`
-    )
-    .replace(/\*\//g, "* /")
-    .replace(/\/\*/g, "/ *");
+  return commentText(text).replace(/\*\//g, "* /").replace(/\/\*/g, "/ *");
 }
 
 /** UTF-8 bytes as an unambiguous C string literal (octal escapes are always
@@ -453,7 +449,7 @@ export function cStringLiteral(bytes: Buffer): string {
     // standard C, exactly for this.
     else if (b === 0x3f) out += "\\?";
     else if (b >= 0x20 && b < 0x7f) out += String.fromCharCode(b);
-    else out += "\\" + b.toString(8).padStart(3, "0");
+    else out += "\\" + octalByte(b);
   }
   return out + '"';
 }

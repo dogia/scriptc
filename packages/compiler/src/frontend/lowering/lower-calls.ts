@@ -437,15 +437,14 @@ export interface GenericInstance {
 
 /** The fences on a defaulted parameter's body type: it becomes the value
    * arm of the synthesized `T | undefined` ABI union, so it must be a valid
-   * single arm. func and Set ARE valid here: the ABI union's only test is
+   * single arm. Functions, Maps and Sets are valid: the ABI union's test is
    * the prologue's own undefined-tag check (never a user narrowing, which
-   * is what keeps map/set out of general unions), so `runner: Runner =
+   * is what keeps containers out of unions with data siblings), so `runner: Runner =
    * defaultRunner` and `skip: Set<string> = new Set()` arm like any ref
    * kind — the nullable-callback union shape, built by the compiler. */
   export function checkDefaultParamBodyType(lowerer: Lowerer, param: ts.ParameterDeclaration, bodyType: IrType): void {
     if (
       bodyType.kind === "void" ||
-      bodyType.kind === "map" ||
       bodyType.kind === "regex" ||
       bodyType.kind === "date" ||
       bodyType.kind === "dyn" ||

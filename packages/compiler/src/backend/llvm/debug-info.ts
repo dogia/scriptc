@@ -1,16 +1,8 @@
+import { llvmQuoted as quoted } from "../literals.js";
 import { basename, dirname } from "node:path";
 import { isUnitType, typeKey, type IrFunction, type IrGlobal, type IrLocal, type IrType, type IrUnionDef, type SrcLoc } from "../../ir/ir.js";
 import { SourceLocations } from "../source-locations.js";
 import { mangleFunction } from "../mangle.js";
-
-/** LLVM metadata strings use UTF-8 byte escapes, including for paths. */
-function quoted(text: string): string {
-  return '"' + [...Buffer.from(text)].map((byte) =>
-    byte >= 0x20 && byte < 0x7f && byte !== 0x22 && byte !== 0x5c
-      ? String.fromCharCode(byte)
-      : `\\${byte.toString(16).padStart(2, "0").toUpperCase()}`,
-  ).join("") + '"';
-}
 
 /** DWARF describes source bindings at their actual native storage locations. */
 export class LlvmDebugInfo {
@@ -69,7 +61,7 @@ export class LlvmDebugInfo {
     const id = this.add(`distinct !DISubprogram(name: ${quoted(fn.name)}, linkageName: ${quoted(mangleFunction(fn.name))}, scope: ${file}, file: ${file}, line: ${pos.line}, type: ${signature}, scopeLine: ${pos.line}, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: ${this.unit(pos.file).id})`);
     const scopes: { loc: SrcLoc; id: string }[] = [];
     this.lexicalScopes.set(id, scopes);
-    const captures = new Set(fn.captures?.map((c) => c.localId));
+    const captures = new Set((fn.captures ?? []).map((c) => c.localId));
     const spans = fn.locals.filter((local) => !captures.has(local.id)).flatMap((local) => local.source ? [local.source.scope] : []);
     // Outer scopes first; declarations in flattened IR still retain their
     // source block, loop, catch, or function scope (including hoisted var).

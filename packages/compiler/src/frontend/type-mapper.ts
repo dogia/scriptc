@@ -2,7 +2,7 @@ import { InternalCompilerError } from "../errors.js";
 import * as ts from "./ts7/adapter.js";
 import { bodyReadsArguments } from "./arguments-usage.js";
 import type { IrRecordShape, IrType, IrUnionDef, IrUnionDiscriminant } from "../ir/ir.js";
-import { arrayOf, BOOL, bytesOf, canConvertToDyn, CHILD_T, CRYPTOHASH_T, CRYPTOHMAC_T, DATE_T, DYN, F64, funcOf, isSupportedArrayElem, isSupportedIndexValue, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, JSVAL, mapOf, NULL_T, PROCSTREAM_T, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, setOf, STRING, SYMBOL_T, typeEquals, typeKey, UNDEFINED_T, VOID } from "../ir/ir.js";
+import { arrayOf, BOOL, bytesOf, canConvertToDyn, CHILD_T, CRYPTOHASH_T, CRYPTOHMAC_T, DATE_T, DYN, F64, funcOf, isSupportedArrayElem, isSupportedIndexValue, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, JSVAL, mapOf, NULL_T, PROCSTREAM_T, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, setOf, STRING, SYMBOL_T, typeEquals, typeKey, unionContainerArmsOk, UNDEFINED_T, VOID } from "../ir/ir.js";
 import { BIGINT_T } from "../ir/ir.js";
 
 import { isJsSourceFile, isNodeTypesPath } from "./program.js";
@@ -2884,27 +2884,9 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
         arms.some(
           (a) =>
             a.kind === "void" || a.kind === "union" ||
-            // Map/Set arms stay out (like func against data arms: no
-            // narrowing test — no discriminant fields on them). REGEX
-            // arms map: `x instanceof RegExp` is their narrowing test
-            // (the skip-utility `string | RegExp` shape), and the arm
-            // rides the ref machinery like array regex elements.
-            a.kind === "map" || a.kind === "set" || a.kind === "date" || a.kind === "dyn" ||
-            // Generator arms follow the map/set rule: no narrowing test.
-            a.kind === "generator" ||
-            // Func arms map beside ANY sibling: `typeof x === "function"`
-            // is the narrowing against data arms (typeofAnswer knows every
-            // arm kind), unit TAG tests cover the nullable-callback shape
-            // (cb !== null, cb ?? f, cb?.()), and against FUNC siblings
-            // (`StringConstructor | NumberConstructor` — the option-table
-            // field) closures compare by pointer identity per tag
-            // (unionEq), so `x === String` narrows. No restriction left.
-            // Promise arms follow the func rule (typeof gives no test
-            // against sibling data arms): only the promise-or-absent shape
-            // maps — `Promise<T> | undefined`, and `Promise<T> | void`
-            // return types whose void part became the undefined arm above.
-            (a.kind === "promise" && !arms.every((b) => b === a || isUnitType(b))),
-        )
+            a.kind === "date" || a.kind === "dyn" ||
+            a.kind === "generator",
+        ) || !unionContainerArmsOk(arms)
       ) {
         return null;
       }
@@ -3328,8 +3310,8 @@ export function unitOnlyUnion(unions: UnionRegistry): IrType {
  * answers undefined). ONE shape per channel pair — `g.next()`'s lowering,
  * `.return()`, `.throw()`, the for-of desugar, and mapType's
  * IteratorResult alias mapping all intern through here, so reads agree.
- * Null when the combined union would be illegal (a func/set arm beside
- * data arms, a map/regex/Date arm — kinds with no narrowing test): such
+ * Null when the combined union would be illegal (a container arm beside
+ * data arms, a regex/Date arm — kinds with no narrowing test here): such
  * generators stay unmapped. */
 export function genResultRecord(
   yieldT: IrType,
@@ -3349,7 +3331,7 @@ export function genResultRecord(
         return true;
       }
       if (
-        t.kind === "map" || t.kind === "regex" || t.kind === "date" ||
+        t.kind === "regex" || t.kind === "date" ||
         t.kind === "jsval" || t.kind === "generator"
       ) {
         return false; // no legal union arm exists for these kinds
@@ -3360,11 +3342,11 @@ export function genResultRecord(
     if (!add(yieldT) || !add(retT)) return null;
     byKey.set(typeKey(UNDEFINED_T), UNDEFINED_T);
     const arms = [...byKey.values()];
-    // func/set arms are legal only beside unit arms (no narrowing test
-    // against data siblings — the union rule).
+    // Containers keep the shared nullable-only rule. Generator function
+    // payloads retain their existing unit-only boundary too.
     if (
-      arms.some(
-        (a) => (a.kind === "func" || a.kind === "set") && !arms.every((b) => b === a || isUnitType(b)),
+      !unionContainerArmsOk(arms) || arms.some(
+        (a) => a.kind === "func" && !arms.every((b) => b === a || isUnitType(b)),
       )
     ) {
       return null;
@@ -3400,8 +3382,8 @@ export function isUnitOnlyTsType(t: ts.Type): boolean {
 }
 
 /** IR-level `t | undefined`, canonicalized and fenced exactly like the
- * ts-union branch of mapType (typeKey-sorted arms, deduplicated; map/
- * regex/Date/dyn/void arms unrepresentable; a func arm IS representable — the
+ * ts-union branch of mapType (typeKey-sorted arms, deduplicated;
+ * Date/dyn/void arms unrepresentable; a func arm IS representable — the
  * result is exactly the nullable-callback shape mapType's union branch
  * admits, `(() => void) | undefined`) so the interned union is IDENTICAL
  * to what mapping the checker's own `T | undefined` produces. */
@@ -3416,7 +3398,7 @@ export function withUndefinedArm(t: IrType, unions: UnionRegistry): IrType | nul
     return { kind: "union", unionId: unions.intern(arms) };
   }
   if (
-    t.kind === "void" || t.kind === "map" || t.kind === "date" || t.kind === "dyn" ||
+    t.kind === "void" || t.kind === "date" || t.kind === "dyn" ||
     // A bare unit field type cannot occur (units live only inside unions),
     // but guard against constructing a single-arm union from one.
     isUnitType(t)
@@ -4030,15 +4012,15 @@ function armHasUnionHome(arm: IrType, siblingCount: number): boolean {
   switch (arm.kind) {
     case "void":
     case "union":
-    case "map":
-    case "set":
     case "regex":
     case "date":
     case "generator":
     case "dyn":
       return false;
-    // Promise arms map only beside unit siblings (the promise-or-absent
-    // shape); a data sibling has no narrowing test against them.
+    // Containers map only beside unit siblings; data siblings have no
+    // supported runtime narrowing test against them.
+    case "map":
+    case "set":
     case "promise":
       return siblingCount === 0;
     default:
