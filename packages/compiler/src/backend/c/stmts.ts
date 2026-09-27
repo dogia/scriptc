@@ -721,6 +721,13 @@ function emitStmtBody(emitter: CEmitter, s: IrStmt): void {
           // uncaught printer's "name: message" for Error instances).
           const rc = vAdapters(t);
           emitter.line(`scr_throw_obj(${v.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)});${emitter.srcComment(s.loc)}`);
+        } else if (t.kind === "symbol" || t.kind === "bigint" || t.kind === "func" || t.kind === "classval") {
+          const rc = vAdapters(t);
+          emitter.line(`scr_throw_primitive_ref(${v.name}, &${rc.retain}, &${rc.release}, NULL);${emitter.srcComment(s.loc)}`);
+        } else if (t.kind === "dyn" || t.kind === "jsval") {
+          const rc = vAdapters(t);
+          const test = t.kind === "dyn" ? "scr_dyn_is_object" : "scr_jsval_is_object";
+          emitter.line(`scr_throw_ref_classified(${v.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)}, ${test}(${v.name}));${emitter.srcComment(s.loc)}`);
         } else {
           const rc = vAdapters(t);
           emitter.line(`scr_throw_ref(${v.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)});${emitter.srcComment(s.loc)}`);

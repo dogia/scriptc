@@ -7065,9 +7065,8 @@ function loweredTemplateStrings(
    * becomes the catch binding, and a handler VALUE would need a
    * caught-typed closure parameter, which cannot exist. finally takes
    * any () => void closure (its callback sees no arguments). then takes
-   * exactly one FULFILLMENT handler (any closure value of the settled
-   * value's type — the two-argument onRejected form stays fenced toward
-   * .catch); a promise-returning handler flattens through the async
+   * a fulfillment handler and optionally a rejection handler; a
+   * promise-returning handler flattens through the async
    * return path, a receiver rejection passes through untouched (the
    * wrapper's await re-throws it), and a handler throw rejects the
    * result — the spec's onFulfilled rules by construction. Null for
@@ -7158,12 +7157,12 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
     const passthrough =
       call.arguments.length === 0 ||
       (call.arguments.length === 1 && isAbsentHandler(call.arguments[0]));
-    if (call.arguments.length !== 1 && !passthrough) {
+    if (call.arguments.length !== 1 && !passthrough && !(member === "then" && call.arguments.length === 2)) {
       lowerer.noLowering(
         `${member} with ${call.arguments.length} arguments`,
         call,
         member === "then"
-          ? "the supported form takes exactly one fulfillment handler — chain .catch(...) for the rejection half"
+          ? "the supported form takes a fulfillment handler and an optional rejection handler"
           : `the supported form takes exactly one ${member === "catch" ? "inline handler" : "callback"}`,
       );
     }
@@ -7238,6 +7237,132 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
     }
 
     if (member === "then") {
+      if (call.arguments.length === 2) {
+        const fulfilledNode = call.arguments[0]!;
+        const rejectedNode = call.arguments[1]!;
+        const fulfilledAbsent = isAbsentHandler(fulfilledNode);
+        const rejectedAbsent = isAbsentHandler(rejectedNode);
+        const resultT = lowerer.mapTypeOf(lowerer.typeOf(call));
+        if (resultT?.kind !== "promise") {
+          lowerer.noLowering("then with these handlers", call, "the result must be a representable promise");
+        }
+        const R = resultT.inner;
+        if (!fulfilledAbsent && inner.kind === "jsval") markJsvalHandlerParams(lowerer, fulfilledNode);
+        if (!fulfilledAbsent && inner.kind === "moduleNs") markModuleNsHandlerParams(lowerer, fulfilledNode, inner);
+        const boxHandler = (node: ts.Expression, allowDirect: boolean): { value: IrExpr; direct: boolean; returnsPromise: boolean } => {
+          const value = lowerer.lowerExpr(node);
+          if (allowDirect && value.type.kind === "func" && value.type.params.length <= 1 &&
+              (value.type.params.length === 0 || (inner.kind !== "void" && typeEquals(value.type.params[0]!, inner)))) {
+            return { value, direct: true, returnsPromise: value.type.ret.kind === "promise" };
+          }
+          if (value.type.kind === "dyn") return { value, direct: false, returnsPromise: false };
+          if (value.type.kind === "func" && value.type.params.length <= 1 &&
+              canBoxFuncIntoDyn(value.type, (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))) {
+            return { value: { kind: "dynFrom", value, type: DYN, loc }, direct: false, returnsPromise: value.type.ret.kind === "promise" };
+          }
+          lowerer.unsupported("SC1090", node, "then handlers that cannot be called with one value");
+        };
+        // Evaluate both callback expressions before the wrapper runs, in source order.
+        const fulfilled = fulfilledAbsent ? null : boxHandler(fulfilledNode, true);
+        const rejected = rejectedAbsent ? null : boxHandler(rejectedNode, false);
+        const fnName = `%fn${lowerer.lambdaCounter++}_then2`;
+        const paramTypes: IrType[] = [promT, ...(fulfilled ? [fulfilled.value.type] : []), ...(rejected ? [DYN] : [])];
+        const funcType: IrType & { kind: "func" } = { kind: "func", params: paramTypes, ret: resultT };
+        const fnCtx = newFnCtx(true, null, funcType, R);
+        fnCtx.isAsync = true;
+        lowerer.fnStack.push(fnCtx);
+        try {
+          const pLocal = lowerer.declareHiddenLocal("p", promT);
+          const fLocal = fulfilled ? lowerer.declareHiddenLocal("f", fulfilled.value.type) : null;
+          const rLocal = rejected ? lowerer.declareHiddenLocal("r", DYN) : null;
+          const eLocal = lowerer.declareHiddenLocal("e", CAUGHT);
+          const vLocal = inner.kind === "void" ? null : lowerer.declareHiddenLocal("v", inner);
+          const awaitE: IrExpr = {
+            kind: "awaitExpr",
+            value: { kind: "varRef", localId: pLocal.id, type: promT, loc },
+            type: inner,
+            loc,
+          };
+          const tryBody: IrStmt[] = vLocal
+            ? [{ kind: "varDecl", localId: vLocal.id, init: awaitE, loc }]
+            : [{ kind: "exprStmt", expr: awaitE, loc }];
+          const resultOf = (value: IrExpr, returnsPromise = false): IrStmt[] => {
+            const settled: IrExpr = value.type.kind === "promise"
+              ? { kind: "awaitExpr", value, type: value.type.inner, loc }
+              : returnsPromise
+                ? { kind: "libCall", fn: "async.awaitDyn", args: [value], type: DYN, loc }
+                : value;
+            return R.kind === "void"
+              ? [{ kind: "exprStmt", expr: settled, loc }, { kind: "return", value: null, loc }]
+              : [{ kind: "return", value: lowerer.coerceInto(call, settled, R), loc }];
+          };
+          const rejectedCall: IrExpr | null = rLocal ? {
+            kind: "dynCall",
+            callee: { kind: "varRef", localId: rLocal.id, type: DYN, loc },
+            calleeName: jsFuncNameOf(rejectedNode) ?? "onRejected",
+            args: [{ kind: "caughtToDyn", value: { kind: "varRef", localId: eLocal.id, type: CAUGHT, loc }, type: DYN, loc }],
+            type: DYN,
+            loc,
+          } : null;
+          const catchBody: IrStmt[] = rejectedCall
+            ? resultOf(rejectedCall, rejected?.returnsPromise)
+            : [{ kind: "rethrow", localId: eLocal.id, loc }];
+          const body: IrStmt[] = [{ kind: "tryCatch", tryBody, catchBody, catchLocalId: eLocal.id, finallyBody: null, loc }];
+          // The fulfillment callback sits after the catch so a throw from it
+          // rejects the result instead of reaching onRejected.
+          if (fLocal) {
+            const settled: IrExpr = vLocal
+              ? { kind: "varRef", localId: vLocal.id, type: inner, loc }
+              : dynUndefinedExpr(loc);
+            if (fulfilled!.direct && fLocal.type.kind === "func") {
+              body.push(...resultOf({
+                kind: "callValue",
+                callee: { kind: "varRef", localId: fLocal.id, type: fLocal.type, loc },
+                args: fLocal.type.params.length === 0 ? [] : [settled],
+                type: fLocal.type.ret,
+                loc,
+              }));
+            } else {
+              const arg: IrExpr = settled.type.kind === "dyn" ? settled
+                : canConvertToDyn(settled.type, (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))
+                  ? { kind: "dynFrom", value: settled, type: DYN, loc }
+                  : lowerer.unsupported("SC1090", fulfilledNode, "then fulfillment values that cannot cross the checked-dynamic boundary");
+              body.push(...resultOf({
+                kind: "dynCall",
+                callee: { kind: "varRef", localId: fLocal.id, type: DYN, loc },
+                calleeName: jsFuncNameOf(fulfilledNode) ?? "onFulfilled",
+                args: [arg], type: DYN, loc,
+              }, fulfilled?.returnsPromise));
+            }
+          } else if (vLocal) {
+            body.push(...resultOf({ kind: "varRef", localId: vLocal.id, type: inner, loc }));
+          } else if (R.kind === "void") {
+            body.push({ kind: "return", value: null, loc });
+          } else {
+            body.push({ kind: "return", value: lowerer.coerceInto(call, dynUndefinedExpr(loc), R), loc });
+          }
+          const ctx = lowerer.ctx;
+          const lifted: IrFunction = {
+            name: fnName,
+            params: [
+              { localId: pLocal.id, name: pLocal.name, type: promT },
+              ...(fLocal ? [{ localId: fLocal.id, name: fLocal.name, type: fLocal.type }] : []),
+              ...(rLocal ? [{ localId: rLocal.id, name: rLocal.name, type: DYN }] : []),
+            ],
+            returnType: R,
+            locals: ctx.locals,
+            captures: ctx.captures!,
+            body,
+            loc,
+            async: true,
+          };
+          lowerer.liftedFns.push(lifted);
+          const closure: IrExpr = { kind: "closure", fnName, captures: ctx.captureSources, type: funcType, loc };
+          return { kind: "callValue", callee: closure, args: [receiver, ...(fulfilled ? [fulfilled.value] : []), ...(rejected ? [rejected.value] : [])], type: resultT, loc };
+        } finally {
+          lowerer.fnStack.pop();
+        }
+      }
       // The settled value is an island HANDLE: an inline handler's
       // unannotated parameter binds it as jsval, whatever the checker's
       // contextual type spelled (a module-namespace type has no mapping —

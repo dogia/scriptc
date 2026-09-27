@@ -1471,6 +1471,13 @@ ScrStr *scr_jsval_typeof(ScrJsval *a) {
   return s;
 }
 
+bool scr_jsval_is_object(ScrJsval *a) {
+  ScrStr *type = scr_jsval_typeof(a);
+  bool object = type->len == 6 && memcmp(type->data, "object", 6) == 0;
+  scr_str_release(type);
+  return object;
+}
+
 ScrStr *scr_jsval_to_str(ScrJsval *a) {
   isl_entry();
   return isl_js_to_str(a->v); /* NULL = bridged (e.g. a symbol) */

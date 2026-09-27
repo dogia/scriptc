@@ -10,6 +10,7 @@ export const vendorRoot = join(directory, "vendor");
 export const pin = JSON.parse(readFileSync(join(directory, "upstream.json"), "utf8"));
 export const completion = "__scriptc_test262_complete__";
 export const harnessSource = readFileSync(join(directory, "harness.ts"), "utf8");
+export const assertThrowsSource = readFileSync(join(directory, "assert-throws.js"), "utf8");
 export const expectations = JSON.parse(readFileSync(join(directory, "expectations.json"), "utf8"));
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
@@ -87,15 +88,20 @@ export function variants(meta) {
 // conservative about observable global-script semantics and helper reflection.
 // Exclusions are runner limitations, never implementation support claims.
 export function exclusion(source, meta, variant) {
+  if (meta.negative) {
+    if (meta.negative.phase !== "parse" || meta.negative.type !== "SyntaxError" || !parseDiagnostics(source, variant).length) {
+      return `negative-phase:${meta.negative.phase}`;
+    }
+    return undefined;
+  }
   if (variant !== "strict") return `execution:${variant}`;
-  if (meta.negative) return `negative-phase:${meta.negative.phase}`;
-  if (meta.flags.includes("async")) return "execution:async";
   if (meta.flags.some((flag) => flag.startsWith("CanBlock"))) return "host:agents";
   const unsupportedIncludes = meta.includes.filter((name) => name !== "compareArray.js");
   if (unsupportedIncludes.length) return `harness-includes:${unsupportedIncludes.join(",")}`;
   const sf = ts.createSourceFile("test.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   let reason;
   const forbidden = new Set(["$262", "$DONE", "$DONOTEVALUATE", "globalThis", "eval", "Function", "print", "process", "require", "arguments"]);
+  if (meta.flags.includes("async")) forbidden.delete("$DONE");
   const visit = (node) => {
     if (reason) return;
     if (node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.ImportKeyword || ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
@@ -107,8 +113,13 @@ export function exclusion(source, meta, variant) {
       if (ts.isCallExpression(parent) && parent.expression === node) {
         // assert(value, message)
       } else if (ts.isPropertyAccessExpression(parent) && parent.expression === node &&
-        ["sameValue", "notSameValue", "compareArray"].includes(parent.name.text) &&
-        ts.isCallExpression(parent.parent) && parent.parent.expression === parent) {
+        ts.isCallExpression(parent.parent) && parent.parent.expression === parent &&
+        (["sameValue", "notSameValue", "compareArray"].includes(parent.name.text) ||
+          (parent.name.text === "throws" &&
+            parent.parent.arguments[0] !== undefined &&
+            ts.isIdentifier(parent.parent.arguments[0]) &&
+            ["Error", "TypeError", "RangeError", "SyntaxError"].includes(parent.parent.arguments[0].text)))
+      ) {
         // Supported assertion calls; aliases, mutations, and reflection stay out.
       } else reason = "harness:assert-surface";
     } else if (meta.includes.includes("compareArray.js") && ts.isIdentifier(node) && node.text === "compareArray" &&
@@ -123,8 +134,36 @@ export function exclusion(source, meta, variant) {
   return reason;
 }
 
-export function prepare(source) {
-  return `"use strict";\nimport { assert, Test262Error } from "./harness.ts";\n${source}\n;console.log(${JSON.stringify(completion)});\n`;
+export function prepare(source, asyncTest = false, marker = completion) {
+  const names = asyncTest ? "assert, Test262Error, $DONE" : "assert, Test262Error";
+  const end = asyncTest ? "" : `;console.log(${JSON.stringify(marker)});\n`;
+  return `"use strict";\nimport { ${names} } from "./harness.ts";\n${source}\n${end}`;
+}
+
+function parseDiagnostics(source, variant) {
+  if (variant !== "strict" && variant !== "sloppy") return [];
+  const prepared = prepare(source);
+  const sourceStart = prepared.indexOf(source);
+  const sourceEnd = sourceStart + source.length;
+  const file = ts.createSourceFile("main.js", prepared, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const raw = variant === "sloppy"
+    ? ts.createSourceFile("test.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS).parseDiagnostics
+    : [];
+  return file.parseDiagnostics.filter((diagnostic) =>
+    diagnostic.start >= sourceStart && diagnostic.start < sourceEnd &&
+    (variant === "strict" || raw.some((item) =>
+      item.start === diagnostic.start - sourceStart &&
+      ts.flattenDiagnosticMessageText(item.messageText, "\n") ===
+        ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))));
+}
+
+export function matchesParseNegative(outcome, source, variant = "strict") {
+  if (outcome.status !== "compile-refusal") return false;
+  return parseDiagnostics(source, variant).some((parsed) => outcome.diagnostics?.some((reported) =>
+    reported.code === "SC0001" &&
+    reported.loc?.file?.endsWith("/main.js") &&
+    reported.loc.start === parsed.start &&
+    reported.message === ts.flattenDiagnosticMessageText(parsed.messageText, "\n")));
 }
 
 export function summarize(results) {

@@ -2449,6 +2449,18 @@ class LlEmitter {
       const rc = vAdapters(this, t);
       this.declare(`declare void @scr_throw_obj(ptr, ptr, ptr, ptr)`);
       B.line(`call void @scr_throw_obj(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this, t)})`);
+    } else if (t.kind === "symbol" || t.kind === "bigint" || t.kind === "func" || t.kind === "classval") {
+      const rc = vAdapters(this, t);
+      this.declare(`declare void @scr_throw_primitive_ref(ptr, ptr, ptr, ptr)`);
+      B.line(`call void @scr_throw_primitive_ref(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr null)`);
+    } else if (t.kind === "dyn" || t.kind === "jsval") {
+      const rc = vAdapters(this, t);
+      const test = t.kind === "dyn" ? "scr_dyn_is_object" : "scr_jsval_is_object";
+      this.declare(`declare zeroext i1 @${test}(ptr)`);
+      this.declare(`declare void @scr_throw_ref_classified(ptr, ptr, ptr, ptr, i1 zeroext)`);
+      const object = B.tmp();
+      B.line(`${object} = call zeroext i1 @${test}(ptr ${v.name})`);
+      B.line(`call void @scr_throw_ref_classified(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this, t)}, i1 zeroext ${object})`);
     } else {
       const rc = vAdapters(this, t);
       this.declare(`declare void @scr_throw_ref(ptr, ptr, ptr, ptr)`);

@@ -28,9 +28,9 @@ catch-bindings.ts:35:3 - error SC1090: assignments to catch bindings are not sup
      |   ^
   36 | }
 
-catch-bindings.ts:40:20 - error SC1090: 'typeof' catch-binding tests against "object" (only "string"/"number"/"boolean" narrow a catch binding; use 'instanceof' for objects) is not supported yet
+catch-bindings.ts:40:20 - error SC1090: 'typeof' catch-binding tests against "function" (only "string"/"number"/"boolean"/"object" are supported) is not supported yet
 
   39 | } catch (e) {
-  40 |   if (typeof e === "object") {
-     |                    ^~~~~~~~
-  41 |     // only the primitive typeof tests narrow
+  40 |   if (typeof e === "function") {
+     |                    ^~~~~~~~~~
+  41 |     // callable catch tests remain outside the supported narrowing set

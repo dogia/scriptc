@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { shardSelect } from "../harness/shard.js";
 import { runSource, type Outcome } from "./execute.js";
 import {
-  directory, exclusion, matchesExpectation, metadata, pin, sha256, snapshotDigest, summarize,
+  assertThrowsSource, directory, exclusion, harnessSource, matchesExpectation, matchesParseNegative, metadata, pin, sha256, snapshotDigest, summarize,
   testPaths, variants, vendorRoot, verifyVendor,
 } from "./support.mjs";
 
@@ -29,8 +29,8 @@ async function main(): Promise<void> {
   --list                                   list variants and exclusions without compiling
   --keep                                   retain generated sources and native artifacts
 SCRIPTC_SAN=1 enables sanitizers; SCRIPTC_TEST_SHARD=i/n partitions variants.
-Only synchronous strict scripts in the documented adapted profile can pass.
-All other variants remain visible as exclusions; negative errors never count as passes.`);
+Adapted strict scripts and source-matched strict or sloppy syntax negatives can pass.
+Other variants remain visible as exclusions.`);
     return;
   }
   function positive(value: string | undefined, fallback: number, name: string): number {
@@ -56,7 +56,8 @@ All other variants remain visible as exclusions; negative errors never count as 
     const source = readFileSync(join(root, path), "utf8");
     const meta = metadata(source, path);
     return variants(meta).map((variant: string) => ({
-      id: `${path}#${variant}`, path, variant, source, features: meta.features,
+      id: `${path}#${variant}`, path, variant, source, features: meta.features, negative: meta.negative,
+      asyncTest: meta.flags.includes("async"),
       exclusion: exclusion(source, meta, variant),
     }));
   });
@@ -82,11 +83,14 @@ All other variants remain visible as exclusions; negative errors never count as 
     for (;;) {
       const item = shard[next++];
       if (!item) return;
-      const outcome = item.exclusion
+      const raw = item.exclusion
         ? { status: "excluded", reason: item.exclusion }
         : await runSource(item.source, {
-          backend, sanitize: process.env.SCRIPTC_SAN === "1", compileTimeoutMs, runtimeTimeoutMs, keep: values.keep,
+          backend, sanitize: process.env.SCRIPTC_SAN === "1", compileTimeoutMs, runtimeTimeoutMs, keep: values.keep, asyncTest: item.asyncTest,
         });
+      const outcome = item.negative?.phase === "parse" && matchesParseNegative(raw, item.source, item.variant)
+        ? { status: "pass", phase: "compile" }
+        : raw;
       const result = { id: item.id, path: item.path, variant: item.variant, features: item.features, ...outcome };
       if (journalPath) appendFileSync(journalPath, `${JSON.stringify(result)}\n`);
       results.push(result);
@@ -99,8 +103,8 @@ All other variants remain visible as exclusions; negative errors never count as 
   const report = {
     schema: "scriptc.test262.v1",
     revision: pin.commit, snapshotSha256: pin.snapshotSha256,
-    profile: "static-strict-scalar-adapter-v1",
-    harnessSha256: sha256(readFileSync(join(directory, "harness.ts"))),
+    profile: "static-adapted-v2",
+    harnessSha256: sha256(harnessSource + assertThrowsSource),
     dynamic: false, requestedBackend: backend, sanitize: process.env.SCRIPTC_SAN === "1",
     host: `${process.platform}-${process.arch}`, node: process.version,
     compilerVersion: JSON.parse(readFileSync(join(directory, "../../packages/compiler/package.json"), "utf8")).version,

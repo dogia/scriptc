@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { boundedRun } from "../test262/execute.js";
-import { compileFailureStatus, exclusion, metadata, prepare, summarize, variants } from "../test262/support.mjs";
+import { compileFailureStatus, exclusion, matchesParseNegative, metadata, prepare, summarize, variants } from "../test262/support.mjs";
 
 const source = (yaml: string, body = "assert.sameValue(1, 1);") => `/*---\n${yaml}\n---*/\n${body}`;
 
@@ -33,14 +33,13 @@ test("metadata generates the upstream variants without rewriting execution goals
 
 test("unsupported execution requirements and assertion reflection remain exclusions", () => {
   for (const [head, body] of [
-    ["negative: {phase: parse, type: SyntaxError}", "invalid syntax"],
+    ["negative: {phase: parse, type: SyntaxError}", "assert.sameValue(1, 1);"],
     ["negative: {phase: runtime, type: TypeError}", "throw new TypeError();"],
-    ["flags: [async]", "$DONE();"],
     ["includes: [propertyHelper.js]", "verifyProperty({}, 'x', {});"],
     ["description: global script", "assert.sameValue(this, globalThis);"],
     ["description: reflection", "assert.sameValue(typeof assert, 'function');"],
     ["description: mutation", "assert.sameValue = () => {};"],
-    ["description: unsupported helper", "assert.throws(TypeError, () => {});"],
+    ["description: unsupported helper", "assert.throws(CustomError, () => {});"],
   ]) {
     const text = source(head!, body);
     expect(exclusion(text, metadata(text), "strict")).toBeTypeOf("string");
@@ -48,6 +47,35 @@ test("unsupported execution requirements and assertion reflection remain exclusi
   const text = source("description: scalar", "// globalThis and this in comments are harmless\nassert.sameValue('this', 'this');");
   expect(exclusion(text, metadata(text), "strict")).toBeUndefined();
   expect(exclusion(text, metadata(text), "sloppy")).toBe("execution:sloppy");
+  const asyncText = source("flags: [async]", "Promise.resolve().then(() => $DONE());");
+  expect(exclusion(asyncText, metadata(asyncText), "strict")).toBeUndefined();
+});
+
+test("negative parse cases require the compiler's matching source diagnostic", () => {
+  const text = source("negative: {phase: parse, type: SyntaxError}", "$DONOTEVALUATE();\nconst = ;");
+  expect(exclusion(text, metadata(text), "strict")).toBeUndefined();
+  expect(exclusion(text, metadata(text), "sloppy")).toBeUndefined();
+  const offset = prepare(text).indexOf("const = ;") + "const ".length;
+  const match = { status: "compile-refusal", diagnostics: [{
+    code: "SC0001", message: "Variable declaration expected.", loc: { file: "/tmp/main.js", start: offset },
+  }] };
+  expect(matchesParseNegative(match, text)).toBe(true);
+  expect(matchesParseNegative(match, text, "sloppy")).toBe(true);
+  expect(matchesParseNegative({ status: "compile-refusal", diagnostics: [{
+    code: "SC0001", message: "Cannot find name '$DONOTEVALUATE'.", loc: { file: "/tmp/main.js", start: 0 },
+  }] }, text)).toBe(false);
+  expect(matchesParseNegative({ status: "compiler-error", diagnostics: match.diagnostics }, text)).toBe(false);
+  const strictOnly = source("negative: {phase: parse, type: SyntaxError}", "with ({}) {}");
+  expect(exclusion(strictOnly, metadata(strictOnly), "sloppy")).toBe("negative-phase:parse");
+  const generatedOnly = source("negative: {phase: parse, type: SyntaxError}", "function f() {");
+  expect(exclusion(generatedOnly, metadata(generatedOnly), "strict")).toBe("negative-phase:parse");
+});
+
+test("built-in error assertions are admitted without permitting constructor aliases", () => {
+  const accepted = source("description: exact error", "assert.throws(TypeError, () => { throw new TypeError(); });");
+  expect(exclusion(accepted, metadata(accepted), "strict")).toBeUndefined();
+  const alias = source("description: custom error", "const Expected = TypeError; assert.throws(Expected, () => { throw new TypeError(); });");
+  expect(exclusion(alias, metadata(alias), "strict")).toBe("harness:assert-surface");
 });
 
 test("the compareArray include only admits the implemented assertion form", () => {

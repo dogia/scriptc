@@ -1,6 +1,6 @@
 // Catch bindings are deliberately NARROW: the binding is typed by what the
 // exception cell can actually hold, so the supported uses are the narrowing
-// tests (instanceof over hierarchy classes, typeof over primitives), reads
+// tests (instanceof over hierarchy classes, typeof over selected types), reads
 // under a proven narrow, rethrow, and the unknown-slot CONVERSION (an
 // un-narrowed use typed `unknown` converts to a dynamic value — corpus
 // 1554; `const copy = e` compiles now and is NOT in this fence corpus).
@@ -37,8 +37,8 @@ try {
 try {
   throw 6;
 } catch (e) {
-  if (typeof e === "object") {
-    // only the primitive typeof tests narrow
+  if (typeof e === "function") {
+    // callable catch tests remain outside the supported narrowing set
     console.log("no");
   }
 }

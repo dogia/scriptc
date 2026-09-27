@@ -6925,6 +6925,18 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3001-caught-typeof-object.js": {
+   "order": [
+    "<repo>/tests/corpus/3001-caught-typeof-object.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3002-promise-then-two.ts": {
+   "order": [
+    "<repo>/tests/corpus/3002-promise-then-two.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/301-while.ts": {
    "order": [
     "<repo>/tests/corpus/301-while.ts"
@@ -7201,6 +7213,18 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3060-dynamic-host-global.ts": {
+   "order": [
+    "<repo>/tests/corpus/3060-dynamic-host-global.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3061-concurrent-fiber-stacks.ts": {
+   "order": [
+    "<repo>/tests/corpus/3061-concurrent-fiber-stacks.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/3062-runtime-optional-record-guards.ts": {
    "order": [
     "<repo>/tests/corpus/3062-runtime-optional-record-guards.ts"
@@ -7243,6 +7267,13 @@
     "<repo>/tests/corpus/3067-cjs-function-export-require/member.cjs",
     "<repo>/tests/corpus/3067-cjs-function-export-require/single.cjs",
     "<repo>/tests/corpus/3067-cjs-function-export-require/main.cjs"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3068-debug-variables/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/3068-debug-variables/other.ts",
+    "<repo>/tests/corpus/3068-debug-variables/main.ts"
    ],
    "diags": []
   },

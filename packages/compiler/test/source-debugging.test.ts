@@ -105,7 +105,10 @@ test.each([
       if (!built.ok) continue;
       const native = await exec(outPath);
       expect(native.stdout).toBe(node.stdout);
-      expect(native.stderr).toBe(node.stderr);
+      const stderr = sanitize
+        ? native.stderr.replace(/^==\d+==WARNING: ASan doesn't fully support makecontext\/swapcontext functions and may produce false positives in some cases!\n/gm, "")
+        : native.stderr;
+      expect(stderr).toBe(node.stderr);
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

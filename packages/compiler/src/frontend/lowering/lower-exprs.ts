@@ -7162,7 +7162,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
           "'typeof' catch-binding tests against non-literal strings",
         );
       }
-      if (b.text === "string" || b.text === "number" || b.text === "boolean") {
+      if (b.text === "string" || b.text === "number" || b.text === "boolean" || b.text === "object") {
         return {
           kind: "caughtTest",
           value: { kind: "varRef", localId: local.id, type: CAUGHT, loc },
@@ -7175,8 +7175,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
       lowerer.unsupported(
         "SC1090",
         b,
-        `'typeof' catch-binding tests against "${b.text}" (only "string"/"number"/"boolean" ` +
-          `narrow a catch binding; use 'instanceof' for objects)`,
+        `'typeof' catch-binding tests against "${b.text}" (only "string"/"number"/"boolean"/"object" are supported)`,
       );
     }
     return null;
