@@ -499,6 +499,43 @@ function createRequireProgramRoots7(program: ts.Program): string[] {
   return [...roots].sort();
 }
 
+/** Classify the explicitly selected installed package's own sources. */
+export function entryPackageFilePredicate(entryPath: string): (file: string) => boolean {
+  const entryFile = tsgoPath(entryPath);
+  const installedAt = entryFile.lastIndexOf("/node_modules/");
+  const prefix = installedAt < 0
+    ? null
+    : entryFile.slice(0, installedAt) + "/node_modules/" + npmPackageNameOf(entryFile) + "/";
+  return (file) => {
+    const normalized = tsgoPath(file);
+    return normalized === entryFile || (
+      prefix !== null && normalized.startsWith(prefix) &&
+      !normalized.slice(prefix.length).split("/").includes("node_modules")
+    );
+  };
+}
+
+/** maxNodeModuleJsDepth omits even relative JS imports within an installed
+ * entry's own package. Add those sources as roots to the existing discovery
+ * fixpoint without raising the checker depth for other packages. */
+function entryPackageProgramRoots7(program: ts.Program, entryPath: string): string[] {
+  if (!isNodeModulesPath(entryPath)) return [];
+  const belongsToEntry = entryPackageFilePredicate(entryPath);
+  const roots = new Set<string>();
+  for (const sf of program.getSourceFiles()) {
+    if (sf.isDeclarationFile || !belongsToEntry(sf.fileName)) continue;
+    for (const specifier of sf.imports) {
+      if (!ts.isStringLiteralLike(specifier)) continue;
+      const target = resolveProjectModule(sf.fileName, specifier.text);
+      if (
+        target !== null && belongsToEntry(target) && isJsSourceFileName(target) &&
+        program.getSourceFile(target) === undefined
+      ) roots.add(target);
+    }
+  }
+  return [...roots].sort();
+}
+
 function loadProgram7(
   host: ts.Ts7Host,
   entryPath: string,
@@ -545,6 +582,7 @@ function loadProgram7(
   let program = ts.createProgram([...programRoots, overridesDtsPath()], options, host);
   for (let pass = 0; pass < 32; pass++) {
     const candidates = [
+      ...entryPackageProgramRoots7(program, entryPath),
       ...createRequireProgramRoots7(program),
       ...forkTargetPaths(program, program.getSourceFiles()),
     ];
@@ -1883,6 +1921,13 @@ function preflight7(load: LoadResult): {
   const { program, entry } = load;
   const diags: ScrDiagnostic[] = [...load.configDiags];
 
+  // An explicit entry can itself live in an installed package. Its own
+  // source files are program code, including relative barrels and sibling
+  // modules; their location must not silently erase the module graph.
+  // Match the full installed directory, not just the package name, and
+  // exclude nested installations so dependencies keep their npm policy.
+  const entryPackageFile = entryPackageFilePredicate(entry.fileName);
+
   // Workspace-linked packages register BEFORE the tsc gate. Their files
   // live at realpaths OUTSIDE node_modules (the monorepo-tool symlink
   // shape), so nothing path-shaped marks them as npm surface — yet their
@@ -2009,6 +2054,7 @@ function preflight7(load: LoadResult): {
    * program modules. */
   const islandJsFile = (file: string): boolean =>
     isJsSourceFileName(file) &&
+    !entryPackageFile(file) &&
     npmStaticPackageOfPath(file) === null &&
     (isNodeModulesPath(file) || workspacePackageOfPath(file) !== null);
   const nodeModulesJsSuppressed = (d: ts.Diagnostic): boolean =>
@@ -2111,7 +2157,7 @@ function preflight7(load: LoadResult): {
         sf.fileName !== ambient &&
         !sf.isDeclarationFile &&
         !sf.fileName.endsWith(".json") &&
-        (!isNodeModulesPath(sf.fileName) || npmStaticPackageOfPath(sf.fileName) !== null) &&
+        (!isNodeModulesPath(sf.fileName) || entryPackageFile(sf.fileName) || npmStaticPackageOfPath(sf.fileName) !== null) &&
         !islandJsFile(sf.fileName),
     );
   const userFiles = npmStaticActive()

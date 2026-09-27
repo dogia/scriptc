@@ -9,7 +9,7 @@ import { NpmGraphBuilder, packageNameOfPath, probeNodeImportRefusal, probeNodeRe
 import { isNpmStaticPackage } from "../npm-static.js";
 import { isJsSourceFileName } from "../tsc-codes.js";
 import { isRelativeSpecifier } from "../workspace-registry.js";
-import { canonicalBuiltinModule, cjsExportAssignmentOf, cjsExportDiscardReason, isCjsJsFile, isJsSourceFile, isRequireStatement, locOf, makeCycleAdmission, orderedImportsOf, resolveImport, resolveNpmImport } from "../program.js";
+import { canonicalBuiltinModule, cjsExportAssignmentOf, cjsExportDiscardReason, entryPackageFilePredicate, isCjsJsFile, isJsSourceFile, isRequireStatement, locOf, makeCycleAdmission, orderedImportsOf, resolveImport, resolveNpmImport } from "../program.js";
 import type { CycleEdge } from "../program.js";
 import { invalidJsonModuleDiag, npmEmbedFailedDiag, requiresDynamicImportDiag } from "../../diagnostics/diagnostic.js";
 import { BOOL, DYN, F64, IrClassDef, IrExpr, IrFunction, IrGlobal, IrRecordShape, IrStmt, IrType, IrUnionDef, JSVAL, RUNTIME_ERROR_CLASSES, STRING, SrcLoc, VOID, arrayOf, canConvertToDyn, isUnitType } from "../../ir/ir.js";
@@ -286,6 +286,7 @@ export function appendForkModules(
    * surface, not code. */
   export function collectNpmImports(lowerer: Lowerer, parts: FileParts[]): void {
     const builder = lowerer.dynamic ? new NpmGraphBuilder() : null;
+    const entryPackageFile = entryPackageFilePredicate(lowerer.entry.fileName);
     for (const fp of parts) {
       for (const stmt of fp.sf.statements) {
         // NAMED re-exports from npm packages (`export { isUrl } from
@@ -364,6 +365,13 @@ export function appendForkModules(
         // A relative import INTO an opted-in --npm-static package is the
         // program-module path too (preflight resolved the file edge).
         if (relIsJs && isNpmStaticPackage(relPkg)) continue;
+        if (relIsJs) {
+          // An explicitly selected installed entry owns its package's
+          // source graph. Preflight included these modules for native
+          // initialization; do not also embed them in the island.
+          const dep = resolveImport(lowerer.program, fp.sf, spec);
+          if (dep !== null && entryPackageFile(dep.fileName) && lowerer.fileTag.has(dep)) continue;
+        }
         if (!npm && !relIsJs) continue;
         // An edge Node's RUNTIME resolution refuses at startup (types
         // resolved, but the exports target ships no JS — the types-only
