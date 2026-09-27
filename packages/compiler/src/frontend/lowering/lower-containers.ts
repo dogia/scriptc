@@ -3209,7 +3209,8 @@ function buildArrayFromArrayFn(lowerer: Lowerer, name: string, elem: IrType,
       }
     }
     if (receiverIr?.kind !== "map") return null;
-    if (!lowerer.isStdlibMember(access)) return null;
+    // Collection views can refine has() while retaining its native ABI.
+    if (!lowerer.isStdlibMember(access) && name !== "has") return null;
     const loc = locOf(call);
     const receiver = lowerer.lowerExpr(access.expression);
     // The lib's `set` returns the Map (chaining typechecks); the lowered
@@ -3586,7 +3587,10 @@ const MAP_ITER_METHODS = new Set(["keys", "values", "entries"]);
       if (probed?.type.kind === "set") receiverIr = probed.type;
     }
     if (receiverIr?.kind !== "set") return null;
-    if (!lowerer.isStdlibMember(access)) return null;
+    // A collection interface may refine has() into a type predicate.
+    // Type mapping checked that view's native ABI; the value check below
+    // still rejects structural mocks and assertions over other objects.
+    if (!lowerer.isStdlibMember(access) && name !== "has") return null;
     const loc = locOf(call);
     const receiver = lowerer.lowerExpr(access.expression);
     // The lib's `add` returns the Set (chaining typechecks); the lowered

@@ -62,6 +62,100 @@ function collectNodes(w: TwoWorlds): Node[] {
   return nodes;
 }
 
+test("interface base queries preserve generic parameters and memoize raw answers", () => {
+  const w = buildTwoWorlds({ "main.ts": `
+    interface Values<T> extends ReadonlySet<T> {}
+    interface Nested<T> extends Values<T> {}
+    const numbers: Nested<number> = new Set<number>();
+    const strings: Nested<string> = new Set<string>();
+  ` }, host);
+  worlds.push(w);
+  const { proxy, counts } = countingChecker(w.p7.project.checker);
+  const facade = new CheckerFacade(proxy);
+  const targets = new Set<ad.InterfaceType>();
+  for (const node of collectNodes(w)) {
+    if (!ad.isVariableDeclaration(node)) continue;
+    const type = facade.getTypeAtLocation(node.name);
+    expect(type.isTypeReference()).toBe(true);
+    if (!type.isTypeReference()) continue;
+    const target = type.getTarget();
+    expect(target.isClassOrInterface()).toBe(true);
+    if (!target.isClassOrInterface()) continue;
+    targets.add(target);
+    const bases = facade.getBaseTypes(target);
+    expect(bases.map((base) => facade.typeToString(base))).toEqual(["Values<T>"]);
+    expect(bases).toEqual(w.p7.project.checker.getBaseTypes(target));
+    expect(facade.getBaseTypes(target)).toBe(bases);
+  }
+  expect(targets.size).toBe(1);
+  expect(counts["getBaseTypes"]).toBe(1);
+});
+
+test("semantic never detection drops impossible distributed intersections and caches the answer", () => {
+  const w = buildTwoWorlds({ "main.ts": `
+    type Node = { kind: "leaf"; text: string } | { kind: "branch"; children: Node[] };
+    type Branch = Node & { kind: "branch" };
+    type Impossible = { kind: "left" } & { kind: "right" };
+    type Empty = {};
+    type NeverField = { value: never };
+    type PlainNever = never;
+  ` }, host);
+  worlds.push(w);
+  const { proxy, counts } = countingChecker(w.p7.project.checker);
+  const facade = new CheckerFacade(proxy);
+  const aliases = new Map<string, ad.Type>();
+  for (const node of collectNodes(w)) {
+    if (ad.isTypeAliasDeclaration(node)) aliases.set(node.name.text, facade.getTypeFromTypeNode(node.type));
+  }
+  const branch = aliases.get("Branch")!;
+  const arms = ad.constituentTypes(branch);
+  expect(arms.length).toBe(2);
+  expect(arms.filter((arm) => facade.isNeverType(arm))).toHaveLength(1);
+  expect(facade.isNeverType(branch)).toBe(false);
+  expect(facade.isNeverType(aliases.get("Impossible")!)).toBe(true);
+  expect(facade.isNeverType(aliases.get("PlainNever")!)).toBe(true);
+  expect(facade.isNeverType(aliases.get("Empty")!)).toBe(false);
+  expect(facade.isNeverType(aliases.get("NeverField")!)).toBe(false);
+  const queried = counts["isTypeAssignableTo"];
+  expect(queried).toBeGreaterThan(0);
+  expect(counts["getNeverType"]).toBe(1);
+  for (const type of [...aliases.values(), ...arms]) facade.isNeverType(type);
+  const warm = counts["isTypeAssignableTo"];
+  for (const type of [...aliases.values(), ...arms]) facade.isNeverType(type);
+  expect(counts["isTypeAssignableTo"]).toBe(warm);
+});
+
+test("semantic assignability distinguishes recursive variants and memoizes both directions", () => {
+  const w = buildTwoWorlds({ "main.ts": `
+    type Tree = { kind: "leaf"; text: string } | { kind: "branch"; children: Tree[] };
+    type Branch = Tree & { kind: "branch" };
+    type Fresh = { kind: "branch"; children: never[] };
+    type Wrong = { kind: "branch"; children: number[] };
+  ` }, host);
+  worlds.push(w);
+  const { proxy, counts } = countingChecker(w.p7.project.checker);
+  const facade = new CheckerFacade(proxy);
+  const aliases = new Map<string, ad.Type>();
+  for (const node of collectNodes(w)) {
+    if (ad.isTypeAliasDeclaration(node)) aliases.set(node.name.text, facade.getTypeFromTypeNode(node.type));
+  }
+  const pairs = [
+    ["Fresh", "Branch", true], ["Fresh", "Tree", true],
+    ["Branch", "Fresh", false], ["Wrong", "Tree", false],
+    ["Branch", "Tree", true], ["Tree", "Branch", false],
+  ] as const;
+  for (const [from, to, expected] of pairs) {
+    const source = aliases.get(from)!;
+    const target = aliases.get(to)!;
+    expect(facade.isTypeAssignableTo(source, target), `${from} to ${to}`).toBe(expected);
+    expect(facade.isTypeAssignableTo(source, target)).toBe(w.p7.project.checker.isTypeAssignableTo(source, target));
+  }
+  expect(counts["isTypeAssignableTo"]).toBe(pairs.length);
+  for (const [from, to] of pairs) facade.isTypeAssignableTo(aliases.get(from)!, aliases.get(to)!);
+  for (const type of aliases.values()) expect(facade.isTypeAssignableTo(type, type)).toBe(true);
+  expect(counts["isTypeAssignableTo"]).toBe(pairs.length);
+});
+
 test("hot expression and identifier queries batch; uncommon kinds fall back once", () => {
   const { facade, counts, w } = build();
   const nodes = collectNodes(w);

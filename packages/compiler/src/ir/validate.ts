@@ -20,6 +20,7 @@ import type {
 } from "./ir.js";
 import { arrayOf, BOOL, BYTES_U8, bytesOf, canAdaptDynFuncTo, canConvertToDyn, canExitIslandToType, canMarshalIntoIsland, canMarshalTypedFuncIntoIsland, CHILD_T, CHILDSTREAM_T, CHILDWRITER_T, CRYPTOHASH_T, CRYPTOHMAC_T, DATE_T, DGRAMSOCK_T, DYN, DYN_HANDLE_KINDS, F64, ffiClassType, ffiSourceParamTypes, FILEHANDLE_T, FSWATCHER_T, HTTP2SESSION_T, HTTP2STREAM_T, HTTPCLIENTREQ_T, HTTPREQ_T, HTTPRES_T, islandPromisePayloadTag, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isJsonSafeType, isJsonStringifySafeType, isRefCounted, isSupportedArrayElem, isSupportedIndexValue, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, jsOpResultKind, JSVAL, NETSERVER_T, NETSOCKET_T, PROCSTREAM_T, REF_TRUTHY_KINDS, REGEX, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, SEARCH_PARAMS_T, SECURECTX_T, shapeHasAccessorSlots, SPAWNRES_T, STATS_T, STRING, SYMBOL_T, TESTCTX_T, typeEquals, typeKey, unionFuncSetArmsOk, URL_T, VOID } from "./ir.js";
 import { BIGINT_T } from "./ir.js";
+import { unionWideningTags } from "./analysis.js";
 
 /** Per-method signature for strIntrinsic: `argTypes` lists every argument
  * position (optional ones included); `minArgs` is how many may be omitted
@@ -2356,12 +2357,12 @@ function validateFunction(
           break;
         }
         const rest = def.arms.filter((a) => !isUnitType(a));
-        if (rest.length !== 1 || rest.length === def.arms.length) {
-          err("optChain receiver must have unit arms and exactly one non-unit arm", e.loc);
+        if (rest.length === 0 || rest.length === def.arms.length) {
+          err("optChain receiver must have unit arms and at least one non-unit arm", e.loc);
           break;
         }
         if (activeChains.has(e.id)) err(`optChain id "${e.id}" shadows an active chain`, e.loc);
-        activeChains.set(e.id, rest[0]!);
+        activeChains.set(e.id, rest.length === 1 ? rest[0]! : e.receiver.type);
         checkExpr(e.body);
         activeChains.delete(e.id);
         if (e.type.kind === "void") {
@@ -3476,8 +3477,12 @@ function validateFunction(
         // and require the overflow to exist.
         const surfaces = (t: IrType): boolean =>
           typeEquals(t, e.type) ||
-          (e.type.kind === "union" &&
-            (unions.get(e.type.unionId)?.arms.some((a) => typeEquals(a, t)) ?? false)) ||
+          (e.type.kind === "union" && (() => {
+            const result = unions.get(e.type.unionId);
+            const source = t.kind === "union" ? unions.get(t.unionId) : undefined;
+            return !!result && (result.arms.some((a) => typeEquals(a, t)) ||
+              (!!source && unionWideningTags(source.arms, result.arms) !== null));
+          })()) ||
           e.type.kind === "dyn";
         if (e.overflowOnly && !shape.indexValue) {
           err(`recordKeyGet on ${e.shapeId}: overflowOnly read of a shape without an index signature`, e.loc);
@@ -3782,7 +3787,11 @@ function validateFunction(
         // arms; string keys read RECORD arms.
         const resultUnion = e.type.kind === "union" ? unions.get(e.type.unionId) : undefined;
         const surfaces = (t: IrType): boolean =>
-          typeEquals(t, e.type) || !!resultUnion?.arms.some((a) => typeEquals(a, t));
+          typeEquals(t, e.type) || !!resultUnion?.arms.some((a) => typeEquals(a, t)) ||
+          (t.kind === "union" && !!resultUnion && (() => {
+            const source = unions.get(t.unionId);
+            return !!source && unionWideningTags(source.arms, resultUnion.arms) !== null;
+          })());
         def.arms.forEach((arm, i) => {
           if (arm.kind === "undefinedT" || arm.kind === "nullT") {
             if (!resultUnion?.arms.some((a) => a.kind === "undefinedT")) {

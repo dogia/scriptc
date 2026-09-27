@@ -1,10 +1,46 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
-import { undefinedArmTag } from "../../ir/analysis.js";
+import { undefinedArmTag, unionWideningTags } from "../../ir/analysis.js";
 import { IrExpr, IrType, isRefCounted, SrcLoc, typeEquals } from "../../ir/ir.js";
 import { LlvmUnsupportedError } from "./unsupported.js";
 import type { LlvmEmitterContext, LlValue } from "./expr-context.js";
 import { f64Lit, llvmCommentText } from "./common.js";
+
+/** Widen one tagged read. The source is borrowed unless the overflow map
+ * supplied an owned value. Each selected reference payload is retained
+ * before releasing an owned source, including cycle-traced references. */
+export function emitUnionWiden(
+  host: LlvmEmitterContext,
+  value: string,
+  fromId: string,
+  toId: string,
+  owned: boolean,
+): string {
+  const source = host.unionsById.get(fromId);
+  const target = host.unionsById.get(toId);
+  const tags = source && target ? unionWideningTags(source.arms, target.arms) : null;
+  if (!source || !tags) throw new InternalCompilerError(`llvm emitter bug: cannot widen ${fromId} into ${toId}`);
+  const B = host.B;
+  const slot = B.slot();
+  B.entryAllocas.push(`${slot} = alloca ptr`);
+  const join = B.newLabel("widen.join");
+  host.unionTagSwitch(value, source, (arm, index) => {
+    const tag = tags[index]!;
+    const result = arm.kind === "undefinedT" || arm.kind === "nullT"
+      ? host.unitInstanceRef(toId, tag)
+      : host.unionNewOwned(tag, { name: host.unionExtract(value, arm), type: arm });
+    B.line(`store ptr ${result}, ptr ${slot}`);
+    B.br(join);
+  });
+  B.startBlock(join);
+  if (owned) {
+    host.declare("declare void @scr_union_release(ptr)");
+    B.line(`call void @scr_union_release(ptr ${value})`);
+  }
+  const result = B.tmp();
+  B.line(`${result} = load ptr, ptr ${slot}`);
+  return result;
+}
 
 export function emitRegexIntrinsic(host: LlvmEmitterContext, e: IrExpr & { kind: "regexIntrinsic" }): LlValue {
     const B = host.B;
@@ -213,7 +249,7 @@ export function keyedRecordReadInto(host: LlvmEmitterContext,
     const undefTag = resultType.kind === "union"
       ? undefinedArmTag(resultType, host.unionsById)
       : -1;
-    const def = resultType.kind === "union" && undefTag >= 0
+    const def = resultType.kind === "union"
       ? host.unionsById.get(resultType.unionId)!
       : null;
     const ty = host.llType(resultType);
@@ -230,6 +266,9 @@ export function keyedRecordReadInto(host: LlvmEmitterContext,
       }
       if (typeEquals(vt, resultType)) {
         return owned ? expr : host.retainValue(expr, vt);
+      }
+      if (vt.kind === "union" && resultType.kind === "union") {
+        return emitUnionWiden(host, expr, vt.unionId, resultType.unionId, owned);
       }
       const tag = def.arms.findIndex((a) => typeEquals(a, vt));
       if (tag < 0) throw new InternalCompilerError(`llvm emitter bug: keyed read arm for ${vt.kind} missing`);
@@ -293,7 +332,7 @@ export function keyedRecordReadInto(host: LlvmEmitterContext,
         B.startBlock(ln);
       }
     }
-    if (def !== null && resultType.kind === "union") {
+    if (def !== null && resultType.kind === "union" && undefTag >= 0) {
       // The miss path: the result union's undefined arm.
       B.line(`store ptr ${host.unitInstanceRef(resultType.unionId, undefTag)}, ptr ${slot}`);
       B.br(join);

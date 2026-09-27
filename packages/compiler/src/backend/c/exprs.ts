@@ -7,7 +7,7 @@ import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM
 import { boxAccess, BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleClassNew, mangleClassRetain, mangleClassStruct, mangleField, mangleFnClosure, mangleFunction, mangleGlobal, mangleLocal, mangleRecordClone, mangleRecordNew, mangleRecordStruct, mangleVtStruct } from "../mangle.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
-import { dynDestrCheckHelper, dynIterNHelper, dynKeyGetHelper } from "./walkers.js";
+import { dynDestrCheckHelper, dynIterNHelper, dynKeyGetHelper, unionWidenHelper } from "./walkers.js";
 import { collectFfiRetainedOps, parseFfiCallbackKey } from "../ffi-callbacks.js";
 import { genResultThunkFor } from "./async.js";
 import { isStableReceiverOperand, matchStringSelfConcat, newValueMayThrow, streamTypedRefEligible, undefinedArmTag } from "../../ir/analysis.js";
@@ -1200,14 +1200,16 @@ function emitControlExpr(
         const unitTags = def.arms.flatMap((a, i) => (isUnitType(a) ? [i] : []));
         const narrowIdx = def.arms.findIndex((a) => !isUnitType(a));
         if (unitTags.length === 0 || narrowIdx < 0) throw new InternalCompilerError("emitter bug: optChain union arms");
-        const narrowed = def.arms[narrowIdx]!;
+        const multiple = def.arms.length - unitTags.length > 1;
+        const narrowed = multiple ? e.receiver.type : def.arms[narrowIdx]!;
         const r = emitter.emitExpr(e.receiver);
         const bind = `sc_t${emitter.tempCounter++}`;
         emitter.line(`${cDecl(narrowed, bind)} = ${isRefCounted(narrowed) ? "NULL" : "0"};`);
         if (isRefCounted(narrowed)) emitter.currentFrame().push({ name: bind, type: narrowed });
         const test = unitTags.map((t) => `${r.name}->tag == ${t}`).join(" || ");
-        const extract =
-          narrowed.kind === "f64"
+        const extract = multiple
+          ? retainCallC(narrowed, r.name)
+          : narrowed.kind === "f64"
             ? `scr_union_get_f64(${r.name})`
             : narrowed.kind === "bool"
               ? `scr_union_get_bool(${r.name})`
@@ -3089,6 +3091,11 @@ function emitDynamicExpr(
               emitter.line(`case ${i}: ${name} = ${read}; break;`);
               return;
             }
+            if (arm.elem.kind === "union" && e.type.kind === "union") {
+              const helper = unionWidenHelper(emitter, arm.elem.unionId, e.type.unionId);
+              emitter.line(`case ${i}: { ScrUnion *hit = ${read}; ${name} = ${helper}(hit); scr_union_release(hit); break; }`);
+              return;
+            }
             const tag = resultDef?.arms.findIndex((a) => typeEquals(a, arm.elem)) ?? -1;
             if (tag < 0 || e.type.kind !== "union" || isUnitType(arm.elem)) {
               throw new InternalCompilerError(`emitter bug: unionKeyGet element ${arm.elem.kind} outside the join`);
@@ -3116,6 +3123,11 @@ function emitDynamicExpr(
             const read = `((${cType(arm).trim()})scr_union_peek(${u.name}))->${mangleField(declared.name)}`;
             if (typeEquals(ft, e.type)) {
               emitter.line(`case ${i}: ${name} = ${isRefCounted(ft) ? retainCallC(ft, read) : read}; break;`);
+              return;
+            }
+            if (ft.kind === "union" && e.type.kind === "union") {
+              const helper = unionWidenHelper(emitter, ft.unionId, e.type.unionId);
+              emitter.line(`case ${i}: ${name} = ${helper}(${read}); break;`);
               return;
             }
             const tag = resultDef?.arms.findIndex((a) => typeEquals(a, ft)) ?? -1;

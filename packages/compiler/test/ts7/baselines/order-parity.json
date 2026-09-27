@@ -7283,6 +7283,54 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3070-collection-views.ts": {
+   "order": [
+    "<repo>/tests/corpus/3070-collection-views.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3071-map-contextual-record-seeds.ts": {
+   "order": [
+    "<repo>/tests/corpus/3071-map-contextual-record-seeds.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3072-optional-union-receivers.ts": {
+   "order": [
+    "<repo>/tests/corpus/3072-optional-union-receivers.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3073-union-keyed-reads.ts": {
+   "order": [
+    "<repo>/tests/corpus/3073-union-keyed-reads.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3074-discriminated-intersections.ts": {
+   "order": [
+    "<repo>/tests/corpus/3074-discriminated-intersections.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3075-recursive-contextual-literals.ts": {
+   "order": [
+    "<repo>/tests/corpus/3075-recursive-contextual-literals.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3076-nullish-record-defaults.ts": {
+   "order": [
+    "<repo>/tests/corpus/3076-nullish-record-defaults.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3077-optional-union-array-reads.ts": {
+   "order": [
+    "<repo>/tests/corpus/3077-optional-union-array-reads.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
@@ -8402,6 +8450,12 @@
   "<repo>/tests/diagnostics/class-values.ts": {
    "order": [
     "<repo>/tests/diagnostics/class-values.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/diagnostics/collection-views.ts": {
+   "order": [
+    "<repo>/tests/diagnostics/collection-views.ts"
    ],
    "diags": []
   },

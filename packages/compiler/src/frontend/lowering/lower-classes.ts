@@ -5244,13 +5244,23 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
         let mapped = lowerer.mapTypeOf(tsType);
         const fieldType = assignedThisFieldType(lowerer, expr);
         if (mapped?.kind !== "map" && fieldType?.kind === "map") mapped = fieldType;
+        // A fresh map built from pair literals can use its destination's
+        // layout directly. Inference may otherwise split record values
+        // into incompatible shapes (for example a nullable field), even
+        // though every seed fits the declared value type. Existing map or
+        // tuple-array values retain their own representation.
+        let parent = expr.parent;
+        while (ts.isParenthesizedExpression(parent)) parent = parent.parent;
+        // `satisfies` checks a view but retains the expression's own type.
+        const contextualSeed = !ts.isSatisfiesExpression(parent) && (expr.typeArguments?.length ?? 0) === 0 &&
+          (entriesLit !== null || (expr.arguments?.length ?? 0) === 0);
         // JavaScript's `new Map()` has no type-argument syntax: the no-arg
         // constructor overload pins Map<any, any> whatever the JSDoc says
         // (`@type` on the declaration types the VARIABLE, not this
         // expression). The CONTEXTUAL type carries the annotation — adopt
         // it when it is a supported map. TS type arguments keep winning:
         // their expression type already maps.
-        if (mapped?.kind !== "map") {
+        if (mapped?.kind !== "map" || contextualSeed) {
           const ctx = lowerer.checker.getContextualType(expr);
           const ctxMapped = ctx ? lowerer.mapTypeOf(ctx) : null;
           if (ctx && ctxMapped?.kind === "map") {

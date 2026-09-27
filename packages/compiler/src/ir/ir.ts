@@ -4735,11 +4735,11 @@ export type IrExpr =
    * release the left. */
   | { kind: "orDefault"; left: IrExpr; right: IrExpr; retag?: string; type: IrType; loc: SrcLoc }
   /** Optional chaining `a?.b` / `a?.m(...)` / `f?.()` / `a?.[i]` — the
-   * `nullish` test inverted: `receiver` is a unit-armed union with exactly
-   * ONE non-unit arm, evaluated exactly once; when its runtime tag is a
+   * `nullish` test inverted: `receiver` is a unit-armed union with at least
+   * one non-unit arm, evaluated exactly once; when its runtime tag is a
    * unit arm the result is the interned undefined arm of `type` (JS-exact:
    * a null receiver still yields undefined) and `body` never evaluates —
-   * argument side effects included. Otherwise the narrowed receiver binds
+   * argument side effects included. Otherwise the receiver binds
    * to `id` (read via chainRecv inside `body`, +1 per read for ref kinds)
    * and `body` produces the result: `type` when non-void (an
    * undefined-armed union; the frontend pre-wraps the member value into
@@ -4747,7 +4747,9 @@ export type IrExpr =
    * checker's `void | undefined` maps to void). */
   | { kind: "optChain"; id: string; receiver: IrExpr; body: IrExpr; type: IrType; loc: SrcLoc }
   /** The narrowed receiver inside an enclosing optChain's `body`, by the
-   * chain's `id` — typed as the union's single non-unit arm; each read is
+   * chain's `id` — typed as the single non-unit arm when there is one,
+   * or as the original union when there are several (the body can retag
+   * it to the present sub-union). Each read is
    * +1 for ref kinds (a borrowed bind temp backs it). Valid nowhere else
    * (validated against the active-chain stack). */
   | { kind: "chainRecv"; id: string; type: IrType; loc: SrcLoc }

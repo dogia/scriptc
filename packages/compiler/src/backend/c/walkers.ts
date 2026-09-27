@@ -8,11 +8,45 @@ import { InternalCompilerError } from "../../errors.js";
  * CEmitter and these functions only consult them through it. */
 import type { CEmitter } from "./c-emitter.js";
 import { DYN_HANDLE_KINDS, IrType, isDynTypedRefType, isRefCounted, typeEquals, typeKey } from "../../ir/ir.js";
-import { dynDesc, undefinedArmTag } from "../../ir/analysis.js";
+import { dynDesc, undefinedArmTag, unionWideningTags } from "../../ir/analysis.js";
 import { cCommentText, cDecl, cStringLiteral, cType, elemAccess, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleField, mangleRecordNew, mangleRecordStruct } from "../mangle.js";
 import { jsonObjectKeyLabel } from "../json-literal.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
+
+/** Retag a borrowed union into a superset without copying its payload.
+ * Both declared fields and owned overflow reads use the same helper;
+ * owned callers release their input after the new box retains the payload. */
+export function unionWidenHelper(emitter: CEmitter, fromId: string, toId: string): string {
+  const key = `${fromId}:${toId}`;
+  const existing = emitter.unionWidenFns.get(key);
+  if (existing) return existing;
+  const source = emitter.unionsById.get(fromId);
+  const target = emitter.unionsById.get(toId);
+  const tags = source && target ? unionWideningTags(source.arms, target.arms) : null;
+  if (!source || !tags) throw new InternalCompilerError(`emitter bug: cannot widen ${fromId} into ${toId}`);
+  const name = `sc_uw_${emitter.unionWidenFns.size}`;
+  emitter.unionWidenFns.set(key, name);
+  emitter.walkerProtos.push(`static ScrUnion *${name}(ScrUnion *v);`);
+  const lines = [`static ScrUnion *${name}(ScrUnion *v) {`, "  switch (v->tag) {"];
+  source.arms.forEach((arm, index) => {
+    const tag = tags[index]!;
+    let result: string;
+    if (arm.kind === "nullT" || arm.kind === "undefinedT") {
+      result = emitter.unitInstanceRef(toId, tag);
+    } else if (arm.kind === "f64" || arm.kind === "bool") {
+      result = `scr_union_new_${arm.kind}(${tag}, scr_union_get_${arm.kind}(v))`;
+    } else {
+      const adapters = vAdapters(arm);
+      const payload = retainCallC(arm, `(${cType(arm).trim()})scr_union_peek(v)`);
+      result = `scr_union_new_ref(${tag}, ${payload}, &${adapters.retain}, &${adapters.release}, ${emitter.traceArgC(arm)})`;
+    }
+    lines.push(`  case ${index}: return ${result};`);
+  });
+  lines.push('  default: scr_trap("scriptc: internal error: invalid union tag\\n");', "  }", "}");
+  emitter.walkerDefs.push(lines.join("\n"));
+  return name;
+}
 
 /** The per-union ToBoolean helper (interned per unionId): switch on the
    * runtime tag — unit arms false, f64 arms 0/NaN-falsy, string arms
@@ -1961,6 +1995,13 @@ export function jsonWriteHelper(emitter: CEmitter, t: IrType): string {
         return `${emitter.toDynHelper(vt)}(${expr})`;
       }
       if (t.kind === "union") {
+        if (vt.kind === "union") {
+          const helper = unionWidenHelper(emitter, vt.unionId, t.unionId);
+          if (!owned) return `${helper}(${expr})`;
+          d.push(`    ScrUnion *widened = ${helper}(${expr});`);
+          d.push(`    scr_union_release(${expr});`);
+          return "widened";
+        }
         const def = emitter.unionsById.get(t.unionId);
         const tag = def?.arms.findIndex((a) => typeEquals(a, vt)) ?? -1;
         if (tag < 0) throw new InternalCompilerError(`emitter bug: keyed read arm for ${typeKey(vt)} in ${typeKey(t)}`);

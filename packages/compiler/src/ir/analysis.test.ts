@@ -1,12 +1,27 @@
 import { expect, test } from "vitest";
-import { isStableReceiverOperand, matchStringSelfConcat } from "./analysis.js";
-import { BOOL, F64, STRING, arrayOf, bytesOf, type IrExpr, type IrLibFn } from "./ir.js";
+import { isStableReceiverOperand, matchStringSelfConcat, unionWideningTags } from "./analysis.js";
+import { BOOL, F64, NULL_T, STRING, UNDEFINED_T, arrayOf, bytesOf, type IrExpr, type IrLibFn } from "./ir.js";
 
 const loc = { file: "analysis.ts", start: 0, end: 0 };
 const str = (value: string): IrExpr => ({ kind: "strLit", value, type: STRING, loc });
 const ref = (localId: string, type = STRING): IrExpr => ({ kind: "varRef", localId, type, loc });
 const concat = (left: IrExpr, right: IrExpr, type = STRING): IrExpr => ({
   kind: "strConcat", left, right, type, loc,
+});
+
+test("union widening remaps tags without conflating null, undefined, or scalar payloads", () => {
+  expect(unionWideningTags([F64, NULL_T], [BOOL, F64, NULL_T, STRING, UNDEFINED_T])).toEqual([1, 2]);
+  expect(unionWideningTags([NULL_T, STRING, UNDEFINED_T], [F64, NULL_T, STRING, UNDEFINED_T])).toEqual([1, 2, 3]);
+  expect(unionWideningTags([F64, NULL_T], [F64, UNDEFINED_T])).toBeNull();
+});
+
+test("union widening preserves record identity and recursive element layouts", () => {
+  const node = { kind: "record", shapeId: "node" } as const;
+  const other = { kind: "record", shapeId: "other" } as const;
+  const children = arrayOf(node);
+  expect(unionWideningTags([children, node], [children, NULL_T, node, other])).toEqual([0, 2]);
+  expect(unionWideningTags([children], [arrayOf(other), node])).toBeNull();
+  expect(unionWideningTags([node], [other])).toBeNull();
 });
 
 test("matchStringSelfConcat recognizes only the immediate string self-concat", () => {

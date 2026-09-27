@@ -403,9 +403,11 @@ try {
  * (excess-property freshness — tsc already enforced it), every arm field
  * missing from the literal must be optional-flavored (an undefined-armed
  * union, or a dyn slot — the absent-completion rule), and each present
- * field's LITERAL type must fit the member's field type — literal against
- * literal decides by VALUE (the discriminant), everything else by the
- * widened IR pair under the width-lift relation. Exactly ONE fitting arm
+ * field's TypeScript type must fit the member's field type — literal against
+ * literal decides by VALUE (the discriminant), everything else through the
+ * checker. The chosen arm then directs construction of nested literals;
+ * probing their inferred IR layout too early can reject the right arm and
+ * select a smaller unrelated record that drops fields. Exactly ONE fitting arm
  * answers it; zero or several answer null and the caller keeps its
  * fences. Plain property-assignment/shorthand literals only — spreads,
  * accessors, methods, and unfoldable computed keys keep their own paths. */
@@ -426,11 +428,10 @@ for (const p of expr.properties) {
     return null;
   }
 }
-/** litT fits ftT: unions per arm; literal-vs-literal by value; unit
- * types only into their own unit; otherwise the widened IR pair must be
- * equal or width-liftable. */
+/** Cheap literal discriminants avoid checker traffic for unrelated arms.
+ * Compound types need the checker's semantic assignability, including
+ * recursive unions, never intersections, and contextual empty arrays. */
 const fits = (litT: ts.Type, ftT: ts.Type): boolean => {
-  if (ftT.isUnionType()) return ts.constituentTypes(ftT).some((a) => fits(litT, a));
   if (ftT.isStringLiteralType()) return litT.isStringLiteralType() && litT.value === ftT.value;
   if (ftT.isNumberLiteralType()) return litT.isNumberLiteralType() && litT.value === ftT.value;
   if (ftT.flags & ts.TypeFlags.BooleanLiteral) {
@@ -438,11 +439,7 @@ const fits = (litT: ts.Type, ftT: ts.Type): boolean => {
   }
   if (ftT.flags & ts.TypeFlags.Null) return (litT.flags & ts.TypeFlags.Null) !== 0;
   if (ftT.flags & ts.TypeFlags.Undefined) return (litT.flags & ts.TypeFlags.Undefined) !== 0;
-  if (litT.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) return false;
-  const li = lowerer.mapTypeOf(lowerer.checker.getBaseTypeOfLiteralType(litT));
-  const fi = lowerer.mapTypeOf(ftT);
-  if (!li || !fi) return false;
-  return typeEquals(li, fi) || lowerer.widthLiftPlan(li, fi) !== null;
+  return lowerer.checker.isTypeAssignableTo(litT, ftT);
 };
 const armShapeIds = new Set(recordArms.map((a) => a.shapeId));
 const candidates = new Set<string>();

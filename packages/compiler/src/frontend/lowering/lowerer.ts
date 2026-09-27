@@ -7855,16 +7855,19 @@ export class Lowerer {
   }
 
   /** Lowers an expression that flows into a slot of a known expected type,
-   * then applies the coercion path (coerceInto). An EMPTY array literal
+   * then applies the coercion path (coerceInto). A fresh array literal
    * takes the slot's array type directly — the caller-supplied `expected`
    * lowerArrayLiteral documents, for the positions where tsc's contextual
-   * API answers nothing (binding-element defaults: `{ json = [] }`) and
-   * the literal's own never[] would build the f64 representation. */
+   * API answers nothing or names a wider type than the chosen record
+   * field. Empty arrays also need it to avoid building never[] as f64[]. */
   lowerExprExpecting(node: ts.Expression, expected: IrType | undefined): IrExpr {
     if (expected?.kind === "array") {
       let x: ts.Expression = node;
       while (ts.isParenthesizedExpression(x)) x = x.expression;
-      if (ts.isArrayLiteralExpression(x) && x.elements.length === 0) {
+      // Fresh arrays are built for the actual destination, including
+      // nested literals whose checker context names a wider recursive
+      // union. Existing arrays still go through ordinary value coercion.
+      if (ts.isArrayLiteralExpression(x)) {
         return this.coerceInto(node, this.lowerArrayLiteral(x, expected), expected);
       }
     }

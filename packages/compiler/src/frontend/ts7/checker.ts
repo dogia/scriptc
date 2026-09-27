@@ -39,6 +39,7 @@ import type { Node, SourceFile } from "typescript/unstable/ast";
 import type {
   Checker,
   IndexInfo,
+  InterfaceType,
   Project,
   Signature,
   Symbol as Ts7Symbol,
@@ -216,6 +217,9 @@ export class CheckerFacade {
   private readonly declaredTypeOfSymbol = new WeakMap<Ts7Symbol, Type>();
   /** Type-keyed memos. */
   private readonly baseTypeOfLiteral = new WeakMap<Type, Type>();
+  private readonly baseTypesOf = new WeakMap<InterfaceType, readonly Type[]>();
+  private readonly neverTypeAnswer = new WeakMap<Type, boolean>();
+  private readonly assignableTypes = new WeakMap<Type, WeakMap<Type, boolean>>();
   private readonly nonNullableType = new WeakMap<Type, Type | undefined>();
   private readonly propertiesOfType = new WeakMap<Type, readonly Ts7Symbol[]>();
   private readonly indexInfosOfType = new WeakMap<Type, readonly IndexInfo[]>();
@@ -655,6 +659,45 @@ export class CheckerFacade {
       this.propertiesOfType.set(type, props);
     }
     return props;
+  }
+
+  getBaseTypes(type: InterfaceType): readonly Type[] {
+    let bases = this.baseTypesOf.get(type);
+    if (bases === undefined) {
+      bases = this.raw.getBaseTypes(type);
+      this.baseTypesOf.set(type, bases);
+    }
+    return bases;
+  }
+
+  /** Distributed intersections retain their original flags in the client
+   * even when conflicting discriminants reduce the type to never. Ask the
+   * checker for that semantic answer instead of inspecting display text. */
+  isNeverType(type: Type): boolean {
+    if (type.flags & TypeFlags.Never) return true;
+    if (!(type.flags & (TypeFlags.Intersection | TypeFlags.Union))) return false;
+    let answer = this.neverTypeAnswer.get(type);
+    if (answer === undefined) {
+      const never = this.intrinsic("never", () => this.raw.getNeverType());
+      answer = this.raw.isTypeAssignableTo(type, never);
+      this.neverTypeAnswer.set(type, answer);
+    }
+    return answer;
+  }
+
+  isTypeAssignableTo(source: Type, target: Type): boolean {
+    if (source === target) return true;
+    let targets = this.assignableTypes.get(source);
+    if (targets === undefined) {
+      targets = new WeakMap<Type, boolean>();
+      this.assignableTypes.set(source, targets);
+    }
+    let answer = targets.get(target);
+    if (answer === undefined) {
+      answer = this.raw.isTypeAssignableTo(source, target);
+      targets.set(target, answer);
+    }
+    return answer;
   }
 
   getIndexInfosOfType(type: Type): readonly IndexInfo[] {

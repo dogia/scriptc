@@ -337,6 +337,7 @@ export class CEmitter {
    * (scr_dyn_new_promise_adapting's callback — toDynHelper's promise arm). */
   readonly promiseDynAdapters = new Map<string, string>();
   readonly recordKeyGetFns = new Map<string, string>();
+  readonly unionWidenFns = new Map<string, string>();
   readonly recordKeySetFns = new Map<string, string>();
   readonly walkerProtos: string[] = [];
   readonly walkerDefs: string[] = [];

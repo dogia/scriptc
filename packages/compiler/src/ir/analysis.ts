@@ -2,6 +2,7 @@ import { InternalCompilerError } from "../errors.js";
 import {
   DYN_HANDLE_KINDS,
   RUNTIME_STREAM_CLASSES,
+  typeEquals,
   type IrExpr,
   type IrLibFn,
   type IrRecordShape,
@@ -9,6 +10,19 @@ import {
   type IrType,
   type IrUnionDef,
 } from "./ir.js";
+
+/** Destination tags for a union widening that preserves every payload's
+ * representation. A missing arm is not a widening; callers must never
+ * reinterpret its tag under a different union definition. */
+export function unionWideningTags(from: readonly IrType[], to: readonly IrType[]): number[] | null {
+  const tags: number[] = [];
+  for (const arm of from) {
+    const tag = to.findIndex((candidate) => typeEquals(arm, candidate));
+    if (tag < 0) return null;
+    tags.push(tag);
+  }
+  return tags;
+}
 
 /**
  * Recognize the one concat shape whose destination binding can temporarily

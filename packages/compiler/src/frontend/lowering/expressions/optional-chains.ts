@@ -6,7 +6,7 @@ import type { Lowerer } from "../lowerer.js";
 
 /** One optional-chain STEP: `a?.b`, `a?.m(...)`, `a?.[i]` (the token on
  * the member access) and `f?.()` (the token on the call). The receiver
- * lowers once; when it is a unit-armed union with ONE non-unit arm, the
+ * lowers once; when it is a unit-armed union, the
  * member/call lowers exactly as its non-optional spelling would — the
  * receiver node reads back as the chain's bound narrowed value
  * (chainRecv) and types as its non-nullish type — and the whole thing
@@ -18,8 +18,8 @@ import type { Lowerer } from "../lowerer.js";
  * ??'s fold). Multi-step TAILS (`a?.b.c`, `x?.trim().toLowerCase()`)
  * short-circuit whole: the guarded member step is the chain's dot and
  * every later step lowers inside the guard, checker-narrowed non-nullish
- * (see chainTailDot); sub-union receivers are fenced with rewrite
- * hints. */
+ * (see chainTailDot). Multiple present variants keep their tag until the
+ * guarded body retags them to the non-nullish receiver type. */
 /** The unhandled `?.`-carrying MEMBER step in this node's receiver
  * spine, when the node is the TAIL of an optional chain whose token sits
  * deeper — `x?.trim().toLowerCase()` reads nothing past the guard when x
@@ -307,16 +307,28 @@ export function lowerOptionalChain(lowerer: Lowerer, expr: ts.CallExpression | t
     }
   }
   const rest = def.arms.filter((a) => !isUnitType(a));
-  if (rest.length !== 1) {
+  if (rest.length === 0) {
     lowerer.unsupported(
       "SC1090",
       expr,
-      `'?.' on '${lowerer.fmt(receiver.type)}' (the guarded receiver is a sub-union; check a discriminant field first)`,
+      `'?.' on '${lowerer.fmt(receiver.type)}' without a non-nullish receiver`,
     );
   }
-  const narrowed = rest[0]!;
+  const narrowed = rest.length === 1
+    ? rest[0]!
+    : { kind: "union" as const, unionId: lowerer.unions.intern(rest) };
   const id = `chain.${lowerer.chainCounter++}`;
-  const recvRef: IrExpr = { kind: "chainRecv", id, type: narrowed, loc: locOf(recvNode) };
+  // A single present arm binds its payload. Multiple present arms bind
+  // the original tagged value, then retag inside the guarded body. The
+  // nullish arms never enter that body, and each record keeps its identity.
+  let recvRef: IrExpr = {
+    kind: "chainRecv", id,
+    type: rest.length === 1 ? narrowed : receiver.type,
+    loc: locOf(recvNode),
+  };
+  if (narrowed.kind === "union" && receiver.type.kind === "union") {
+    recvRef = lowerer.coerceInto(recvNode, recvRef, narrowed);
+  }
 
   // `f?.()`: the callee IS the guarded value — build the indirect call
   // directly (no member dispatch exists to re-enter).

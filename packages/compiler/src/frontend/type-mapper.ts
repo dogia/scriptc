@@ -1744,6 +1744,8 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     if (!elem || !isSupportedSetElem(elem)) return null;
     return setOf(elem);
   }
+  const collectionView = mapCollectionView(widened, ctx);
+  if (collectionView) return collectionView;
   // Date: a TimeClip'd epoch-millisecond scalar in the static runtime.
   // This supports stored/passed values and the read-only getter slice;
   // identity and mutation stay fenced because the scalar deliberately
@@ -2791,6 +2793,9 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     try {
       const byKey = new Map<string, IrType>();
       for (const part of ts.constituentTypes(widened)) {
+        // TypeScript's client can retain impossible intersections in a
+        // distributed union. They have no inhabitants and no runtime tag.
+        if (checker.isNeverType(part)) continue;
         // A `void` PART is inhabited only by undefined (`Promise<void> |
         // void` return types, `string | void`): it becomes the undefinedT
         // unit arm, exactly like an undefined part — the value either
@@ -2826,6 +2831,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
         byKey.set(typeKey(mapped), mapped);
       }
       const arms = [...byKey.values()];
+      if (arms.length === 0) return F64; // same unreachable placeholder as standalone never
       // A single surviving UNIT arm cannot stand alone (degenerate — the
       // checker collapsed everything else away); anything else single is
       // just that type. A single arm UNDER A MINTED PLACEHOLDER cannot
@@ -2908,6 +2914,70 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     }
   }
   return null;
+}
+
+/** Interface views of native collections may inherit their runtime surface
+ * and refine `has` into a type predicate. Keep declaration provenance and
+ * require the same call ABI; extra fields or replacement methods need a
+ * different representation. Value construction/coercion still has to prove
+ * a native Map/Set, so structural mocks cannot acquire a native handle. */
+function mapCollectionView(type: ts.Type, ctx: TypeMapperCtx, seen = new Set<ts.Type>()): IrType | null {
+  if (!type.isTypeReference()) return null;
+  const { checker } = ctx;
+  const symbol = type.getSymbol();
+  const declarations = symbol ? checker.declarationsOf(symbol) : [];
+  if (declarations.length === 0 || !declarations.every(
+    (decl) => ts.isInterfaceDeclaration(decl) && !ctx.isStdlibFile(decl.getSourceFile()),
+  )) return null;
+  const target = type.getTarget();
+  if (!target.isClassOrInterface() || seen.has(target) || seen.size >= MAP_TYPE_MAX_DEPTH) return null;
+  const bases = checker.getBaseTypes(target);
+  if (bases.length !== 1) return null;
+  if (checker.getCallSignatures(type).length || checker.getConstructSignatures(type).length ||
+      checker.getIndexInfosOfType(type).length) return null;
+
+  // Base declarations contain the interface's parameters, even when this
+  // reference is instantiated. Resolve those through this reference before
+  // mapping the base; never cache a template under one instantiation's ABI.
+  const params = checker.getTypeArguments(target);
+  const args = checker.getTypeArguments(type);
+  const baseCtx: TypeMapperCtx = {
+    ...ctx,
+    canMemoizeType: () => false,
+    resolveTypeParam: (param) => {
+      const index = params.indexOf(param);
+      const arg = index >= 0 ? args[index] : undefined;
+      return arg && arg !== param ? mapType(arg, ctx) : ctx.resolveTypeParam?.(param) ?? null;
+    },
+    resolveTypeParamTs: (param) => {
+      const index = params.indexOf(param);
+      const arg = index >= 0 ? args[index] : undefined;
+      return arg && arg !== param ? ctx.resolveTypeParamTs?.(arg) ?? arg : ctx.resolveTypeParamTs?.(param) ?? null;
+    },
+  };
+  seen.add(target);
+  try {
+    const base = bases[0]!;
+    const baseSymbol = base.getSymbol();
+    const native = baseSymbol && ["Map", "ReadonlyMap", "Set", "ReadonlySet"].includes(baseSymbol.name) &&
+      checker.declarationsOf(baseSymbol).some(
+        (decl) => ts.isInterfaceDeclaration(decl) && ctx.isStdlibFile(decl.getSourceFile()),
+      );
+    const mapped = native ? mapType(base, baseCtx) : mapCollectionView(base, baseCtx, seen);
+    if (mapped?.kind !== "map" && mapped?.kind !== "set") return null;
+    const hasType = funcOf([mapped.kind === "map" ? mapped.key : mapped.elem], BOOL);
+    for (const property of checker.getPropertiesOfType(type)) {
+      const own = checker.declarationsOf(property).filter((decl) => !ctx.isStdlibFile(decl.getSourceFile()));
+      if (own.length === 0) continue;
+      if (property.name !== "has" || (property.flags & ts.SymbolFlags.Optional) ||
+          !own.every((decl) => decl.kind === ts.SyntaxKind.MethodSignature)) return null;
+      const method = mapType(checker.getTypeOfSymbol(property), ctx);
+      if (!method || !typeEquals(method, hasType)) return null;
+    }
+    return mapped;
+  } finally {
+    seen.delete(target);
+  }
 }
 
 /** The narrowed-type-parameter recognizer behind mapType's early return:

@@ -9405,7 +9405,22 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
   export function lowerRecordFieldCall(lowerer: Lowerer, call: ts.CallExpression,
     access: ts.PropertyAccessExpression,): IrExpr | null {
     if (lowerer.chainBlocked(call)) return null;
-    if (lowerer.mapTypeOf(lowerer.typeOf(access.expression))?.kind !== "record") return null;
+    const receiverType = lowerer.mapTypeOf(lowerer.typeOf(access.expression));
+    if (receiverType?.kind !== "record" && receiverType?.kind !== "union") return null;
+    // A union of records can share a closure-valued field. Its normal
+    // property read performs the tag dispatch before arguments evaluate.
+    // Class methods retain their vtable path and must not lose `this`.
+    if (receiverType.kind === "union") {
+      const arms = lowerer.unions.get(receiverType.unionId)?.arms;
+      if (!arms?.every((arm) => arm.kind === "record")) return null;
+      if (!arms.every((arm) => arm.kind === "record" &&
+        lowerer.shapes.get(arm.shapeId)?.fields.some((field) =>
+          field.name === access.name.text && field.type.kind === "func"))) return null;
+      const callee = lowerer.lowerUnionProperty(access);
+      if (callee?.type.kind !== "func") return null;
+      const args = completeFuncValueArgs(lowerer, call, callee.type, locOf(call));
+      return { kind: "callValue", callee, args, type: callee.type.ret, loc: locOf(call) };
+    }
     const target = lowerer.fieldTarget(access);
     let callee = target ? lowerer.fieldGetExpr(target, locOf(access), access) : null;
     if (!callee) return null;

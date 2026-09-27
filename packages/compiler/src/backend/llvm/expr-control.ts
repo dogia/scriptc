@@ -233,7 +233,8 @@ export function emitControlExpr(host: LlvmEmitterContext, e: ExprOf<"dynDestrChe
         const unitTags = def.arms.flatMap((a, i) => (isUnitType(a) ? [i] : []));
         const narrowIdx = def.arms.findIndex((a) => !isUnitType(a));
         if (unitTags.length === 0 || narrowIdx < 0) throw new InternalCompilerError("llvm emitter bug: optChain union arms");
-        const narrowed = def.arms[narrowIdx]!;
+        const multiple = def.arms.length - unitTags.length > 1;
+        const narrowed = multiple ? e.receiver.type : def.arms[narrowIdx]!;
         const r = host.emitExpr(e.receiver);
         const bind = B.slot();
         B.entryAllocas.push(`${bind} = alloca ${host.llType(narrowed)}`);
@@ -242,13 +243,16 @@ export function emitControlExpr(host: LlvmEmitterContext, e: ExprOf<"dynDestrChe
         );
         host.ownSlot(bind, narrowed);
         const isUnit = host.tagInSet(r.name, unitTags);
+        const extract = (): string => multiple
+          ? host.retainValue(r.name, narrowed)
+          : host.unionExtract(r.name, narrowed);
         if (e.type.kind === "void") {
           // Statement form (cb?.()): no result value at all.
           const lb = B.newLabel("oc.b");
           const lj = B.newLabel("oc.j");
           B.condBr(isUnit, lj, lb);
           B.startBlock(lb);
-          B.line(`store ${host.llType(narrowed)} ${host.unionExtract(r.name, narrowed)}, ptr ${bind}`);
+          B.line(`store ${host.llType(narrowed)} ${extract()}, ptr ${bind}`);
           host.chainSlots.set(e.id, { name: bind, type: narrowed, slot: true });
           host.frames.push([]);
           host.emitExpr(e.body);
@@ -278,7 +282,7 @@ export function emitControlExpr(host: LlvmEmitterContext, e: ExprOf<"dynDestrChe
           B.line(`store ptr ${ur}, ptr ${slotD}`);
           B.br(lj);
           B.startBlock(lb);
-          B.line(`store ${host.llType(narrowed)} ${host.unionExtract(r.name, narrowed)}, ptr ${bind}`);
+          B.line(`store ${host.llType(narrowed)} ${extract()}, ptr ${bind}`);
           host.chainSlots.set(e.id, { name: bind, type: narrowed, slot: true });
           host.emitBranchInto(slotD, e.body);
           host.chainSlots.delete(e.id);
@@ -302,7 +306,7 @@ export function emitControlExpr(host: LlvmEmitterContext, e: ExprOf<"dynDestrChe
         B.line(`store ptr ${host.unitInstanceRef(e.type.unionId, undefTag)}, ptr ${slot}`);
         B.br(lj);
         B.startBlock(lb);
-        B.line(`store ${host.llType(narrowed)} ${host.unionExtract(r.name, narrowed)}, ptr ${bind}`);
+        B.line(`store ${host.llType(narrowed)} ${extract()}, ptr ${bind}`);
         host.chainSlots.set(e.id, { name: bind, type: narrowed, slot: true });
         host.emitBranchInto(slot, e.body);
         host.chainSlots.delete(e.id);
