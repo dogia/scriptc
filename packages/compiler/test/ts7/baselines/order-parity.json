@@ -7481,6 +7481,18 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3103-scalar-record-nested-control-flow.ts": {
+   "order": [
+    "<repo>/tests/corpus/3103-scalar-record-nested-control-flow.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3104-native-analysis-tables-loops.ts": {
+   "order": [
+    "<repo>/tests/corpus/3104-native-analysis-tables-loops.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/3105-nullable-collections.ts": {
    "order": [
     "<repo>/tests/corpus/3105-nullable-collections.ts"
@@ -7496,6 +7508,18 @@
   "<repo>/tests/corpus/3107-nullable-collection-lifetimes.ts": {
    "order": [
     "<repo>/tests/corpus/3107-nullable-collection-lifetimes.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3108-for-await-sync-arrays.js": {
+   "order": [
+    "<repo>/tests/corpus/3108-for-await-sync-arrays.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3109-destructuring-unknown-defaults.js": {
+   "order": [
+    "<repo>/tests/corpus/3109-destructuring-unknown-defaults.js"
    ],
    "diags": []
   },
@@ -10334,18 +10358,6 @@
   "<repo>/tests/fixtures/node-types/url-getters.ts": {
    "order": [
     "<repo>/tests/fixtures/node-types/url-getters.ts"
-   ],
-   "diags": []
-  },
-  "<repo>/tests/corpus/3103-scalar-record-nested-control-flow.ts": {
-   "order": [
-    "<repo>/tests/corpus/3103-scalar-record-nested-control-flow.ts"
-   ],
-   "diags": []
-  },
-  "<repo>/tests/corpus/3104-native-analysis-tables-loops.ts": {
-   "order": [
-    "<repo>/tests/corpus/3104-native-analysis-tables-loops.ts"
    ],
    "diags": []
   }

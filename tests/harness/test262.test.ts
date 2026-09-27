@@ -16,6 +16,39 @@ function runUpstream(source: string, variant: "strict" | "sloppy" = "strict"): v
   runInContext(variant === "strict" ? `"use strict";\n${source}` : source, context, { timeout: 5000 });
 }
 
+async function runUpstreamAsync(source: string, variant: "strict" | "sloppy"): Promise<void> {
+  const context = createContext({});
+  let calls = 0;
+  const done = new Promise<void>((resolve, reject) => {
+    context.$DONE = (error?: unknown) => {
+      calls++;
+      if (calls > 1) reject(new Error("Test262 called $DONE more than once"));
+      else if (error) reject(error);
+      else resolve();
+    };
+  });
+  runInContext(upstreamHarness, context, { timeout: 5000 });
+  runInContext(variant === "strict" ? `"use strict";\n${source}` : source, context, { timeout: 5000 });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      done,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Test262 async completion timed out")), 5000); }),
+    ]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (calls !== 1) throw new Error(`Test262 called $DONE ${calls} times`);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+test("upstream async completion rejects errors and duplicate calls", async () => {
+  await expect(runUpstreamAsync("$DONE(new Test262Error('failed'));", "strict"))
+    .rejects.toMatchObject({ message: "failed" });
+  await expect(runUpstreamAsync("$DONE(); $DONE();", "strict"))
+    .rejects.toThrow("Test262 called $DONE 2 times");
+});
+
 test("sloppy script source executes through a CommonJS entry", async () => {
   const source = readFileSync(join(vendorRoot, "test/language/expressions/addition/S11.6.1_A4_T1.js"), "utf8");
   const meta = metadata(source);
@@ -57,8 +90,9 @@ if (profileCases.length > 0) describe(`Test262 static script profile${shardSuffi
         let error: unknown;
         try { runUpstream(source, variant); } catch (caught) { error = caught; }
         expect(error).toMatchObject({ name: "SyntaxError" });
-      } else runUpstream(source, variant);
-      const result = await runSource(source, { sanitize, variant });
+      } else if (meta.flags.includes("async")) await runUpstreamAsync(source, variant);
+      else runUpstream(source, variant);
+      const result = await runSource(source, { sanitize, variant, asyncTest: meta.flags.includes("async") });
       if (meta.negative?.phase === "parse") {
         expect(matchesParseNegative(result, source, variant), JSON.stringify(result, null, 2)).toBe(true);
       } else expect(matchesExpectation(`${path}#${variant}`, result), JSON.stringify(result, null, 2)).toBe(true);
