@@ -3845,6 +3845,16 @@ entry:
         // The completed executable hit returns before shard lookup/merge.
         expect((await stat(join(cacheRoot, "program-shard", name))).mtimeMs).toBe(old.getTime());
       }
+      if (process.platform === "darwin") {
+        // A missing bundle is restored with its executable without revisiting
+        // any program shards, including on case-insensitive macOS volumes.
+        await rm(`${outPath}.dSYM`, { recursive: true });
+        await build(9);
+        expect((await stat(join(`${outPath}.dSYM`, "Contents/Resources/DWARF/program"))).size).toBeGreaterThan(0);
+        for (const name of after) {
+          expect((await stat(join(cacheRoot, "program-shard", name))).mtimeMs).toBe(old.getTime());
+        }
+      }
     } finally {
       if (oldCacheDir === undefined) delete process.env["SCRIPTC_CACHE_DIR"];
       else process.env["SCRIPTC_CACHE_DIR"] = oldCacheDir;

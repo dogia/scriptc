@@ -22,6 +22,7 @@ import {
 } from "./native-toolchain.js";
 import { RuntimePackError, stageRuntimePackArtifacts } from "./runtime-pack.js";
 import type { NativeLinkPlan } from "./link-plan.js";
+import { createDarwinDebugSymbols, installDarwinDebugSymbols, readDarwinDebugSymbols } from "./debug-symbols.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -254,10 +255,17 @@ export async function linkNativeExecutable(
     await execFileAsync(linker, args);
     const output = await stat(privateOut);
     if (!output.isFile() || output.size === 0) throw new Error("linker produced no executable");
+    if (plan.darwinDebugSymbols) {
+      await createDarwinDebugSymbols(privateOut);
+      await installDarwinDebugSymbols(await readDarwinDebugSymbols(privateOut), plan.outputPath);
+    }
     await rename(privateOut, plan.outputPath).catch(async () => {
       await rm(plan.outputPath, { force: true });
       await rename(privateOut, plan.outputPath);
     });
+    if (plan.target.platform === "darwin" && !plan.darwinDebugSymbols) {
+      await rm(`${plan.outputPath}.dSYM`, { recursive: true, force: true });
+    }
     if (
       options.onArtifactReady !== undefined && preLinkDependencies !== null &&
       await nativeArtifactDependenciesStillMatch(preLinkDependencies).catch(() => false)

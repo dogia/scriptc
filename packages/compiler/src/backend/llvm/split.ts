@@ -87,7 +87,10 @@ function functionDefAt(lines: readonly string[], start: number): { def: Function
   const source = [definitionHeader, ...lines.slice(start + 1, end + 1)].join("\n");
   // Parameter names are legal on declarations. Preserve the emitted text so
   // attributes, zeroext, and varargs stay byte-exact.
-  const declaration = `declare ${linkage}${match[2]} ${match[3]}(${match[4]})${match[5]}`.trimEnd();
+  // A definition's DISubprogram cannot be attached to a declaration in a
+  // different shard. Its owning definition retains the original metadata.
+  const attrs = match[5]!.replace(/\s+!dbg !\d+/g, "");
+  const declaration = `declare ${linkage}${match[2]} ${match[3]}(${match[4]})${attrs}`.trimEnd();
   return { def: { source, declaration, symbol, promoted }, end };
 }
 

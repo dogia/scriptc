@@ -1,4 +1,5 @@
 import { InternalCompilerError } from "../../errors.js";
+import { SourceLocations } from "../source-locations.js";
 /* IR → C. Three-address style: every IR expression lands in a fresh C temp.
  * Verbose (clang -O2 erases it) but buys three things: short-circuit
  * emission is trivially correct, reference counting has one mechanical
@@ -70,6 +71,8 @@ import { emitExpr, liveDynRefAdapter as buildLiveDynRefAdapter, type StreamTyped
 import { emitLibraryIdentityLines } from "../library-identity-markers.js";
 
 export interface CEmitOptions {
+  /** Exact frontend sources for dev-build #line directives. */
+  debugSources?: ReadonlyMap<string, string>;
   /** Library archive assembly may move the volatile identity getters into a
    * separate translation unit. Public/direct emission keeps them by default. */
   emitLibraryIdentity?: boolean;
@@ -156,6 +159,8 @@ function ffiCallbackDummyC(callback: IrFfiCallbackParam["callback"]): string {
 }
 
 export class CEmitter {
+  private readonly debug: SourceLocations | null;
+  sourceLoc: SrcLoc | null = null;
   readonly lines: string[] = [];
   indent = 0;
   tempCounter = 0;
@@ -440,6 +445,7 @@ export class CEmitter {
     sourceText?: string,
     private readonly options: CEmitOptions = {},
   ) {
+    this.debug = options.debugSources === undefined ? null : new SourceLocations(options.debugSources);
     this.constantNumericTables = findConstantNumericTables(mod);
     this.ffiCallbackAdapters = allocateFfiCallbackAdapters(mod.ffiImports ?? []);
     this.ffiHasRetainedCallback = hasRetainedFfiCallback(mod.ffiImports ?? []);
@@ -1580,7 +1586,18 @@ export class CEmitter {
   }
 
   line(text: string): void {
+    const pos = this.sourceLoc === null ? null : this.debug?.position(this.sourceLoc);
+    if (pos !== null && pos !== undefined && text.trim() !== "") {
+      // Repeat the directive for every generated line: one TS statement can
+      // expand into many native instructions, all belonging to that line.
+      this.lines.push(`#line ${pos.line} ${JSON.stringify(pos.file)}`);
+    }
     this.lines.push("  ".repeat(this.indent) + text);
+  }
+
+  endSourceFunction(): void {
+    this.sourceLoc = null;
+    if (this.debug !== null) this.lines.push('#line 1 "<scriptc>"');
   }
 
   srcComment(loc: SrcLoc): string {

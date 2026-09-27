@@ -20,6 +20,7 @@ import { endsWithJump, matchStringSelfConcat } from "../../ir/analysis.js";
 
 
 export function emitFunction(emitter: CEmitter, fn: IrFunction): void {
+    emitter.sourceLoc = fn.loc;
     emitter.tempCounter = 0;
     emitter.frames = [];
     emitter.scopes = [];
@@ -93,6 +94,8 @@ export function emitFunction(emitter: CEmitter, fn: IrFunction): void {
 
     emitter.indent--;
     emitter.line(`}`);
+    // Keep generated runtime scaffolding out of the user's source file.
+    emitter.endSourceFunction();
     emitter.line(``);
   }
 
@@ -166,6 +169,16 @@ export function emitStmts(emitter: CEmitter, stmts: IrStmt[]): void {
   }
 
 export function emitStmt(emitter: CEmitter, s: IrStmt): void {
+    const previous = emitter.sourceLoc;
+    emitter.sourceLoc = s.loc;
+    try {
+      emitStmtBody(emitter, s);
+    } finally {
+      emitter.sourceLoc = previous;
+    }
+  }
+
+function emitStmtBody(emitter: CEmitter, s: IrStmt): void {
     emitter.frames.push([]);
     switch (s.kind) {
       case "varDecl": {
@@ -1034,8 +1047,9 @@ export function emitStmt(emitter: CEmitter, s: IrStmt): void {
 /** Emits `if (cond) ` followed by a block on the same line for readability. */
   export function mergeBrace(emitter: CEmitter, emitBlockFn: () => void): void {
     const head = emitter.lines.pop()!;
-    const before = emitter.lines.length;
+    let before = emitter.lines.length;
     emitBlockFn();
+    while (emitter.lines[before]?.startsWith("#line ")) before++;
     emitter.lines[before] = head + emitter.lines[before]!.trimStart();
   }
 

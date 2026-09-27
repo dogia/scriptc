@@ -119,6 +119,9 @@ Prebuilds release runtime objects and native TLS/dynamic-engine archives for tar
   <dt><code>--strip</code></dt>
   <dd>Remove symbol and debug payload when linking an executable, including cross-compiled targets. This opt-in flag works with either backend and <code>--from-c</code> without changing code optimization.</dd>
 
+  <dt><code>--optimization &lt;release|dev&gt;</code></dt>
+  <dd>Select native optimization for executable, assembly, or object output. The default is <code>release</code> (<code>-O2</code>). <code>dev</code> uses <code>-O0</code> and emits source locations for TypeScript and JavaScript breakpoints and stack frames. macOS executable builds also produce an adjacent <code>.dSYM</code> bundle.</dd>
+
   <dt><code>--windows-subsystem &lt;console|gui&gt;</code></dt>
   <dd>Select the subsystem of a Windows executable. <code>console</code> is the default; <code>gui</code> prevents Windows from opening a console window for the app. Valid only for executable builds targeting Windows, including <code>--from-c</code>.</dd>
 
@@ -178,6 +181,8 @@ fib-linux: ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), dynamically
 ## Backends
 
 The default backend emits textual LLVM IR. On supported targets it is lowered to an object by the bundled helper and linked with the matching precompiled runtime pack; <code>SCRIPTC_LINKER</code> controls the platform linker driver, separately from C compilation. A program outside the LLVM tier is never miscompiled—the native build falls back to the C backend transparently and says so in one stderr line. The production <code>wasm32-wasi</code> target uses LLVM's 32-bit ABI path and never falls back; an LLVM coverage gap is a build diagnostic. Dynamic npm embedding is LLVM surface on every target.
+
+For source breakpoints in Xcode or LLDB, build with <code>--optimization=dev</code>. In an Xcode custom build rule, add this option to the <code>scriptc build</code> invocation and list both the executable and its <code>.dSYM</code> bundle as outputs. Keep the bundle next to the executable and retain the original source files at their build-time paths. Both the LLVM and C backends preserve source locations across imported modules.
 
 The C backend is a debugging aid: deliberately readable, source-line-annotated output with differential tests against LLVM wherever the two overlap. Pin it when you want to inspect what your program became:
 

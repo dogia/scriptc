@@ -6,6 +6,7 @@ import { frontendInputsStillMatch, validFrontendInputSnapshot } from "../fronten
 import { compilerReleaseVersion } from "../library/sidecar.js";
 import { nativeArtifactDependenciesStillMatch, type NativeArtifactDependency } from "../backend/native-toolchain.js";
 import type { CompilerImplementationDependency } from "../library/compiler-self-identity.js";
+import { installDarwinDebugSymbols, needsDarwinDebugSymbols, readDarwinDebugSymbols } from "../backend/debug-symbols.js";
 import { compilerImplementationDependenciesStillMatch, compilerImplementationRoot } from "../library/compiler-self-identity.js";
 import {
   cacheKey as sharedCacheKey,
@@ -69,6 +70,7 @@ interface EarlyExecutableCacheStamp {
     translationUnit: CachedExecutableFile;
     ir: CachedExecutableFile | null;
     executable: CachedExecutableFile | null;
+    debugSymbols?: CachedExecutableFile;
   };
   nativeDependencies: NativeArtifactDependency[] | null;
   native: EarlyExecutableNativeFeatures;
@@ -291,7 +293,7 @@ function executableFrontendOutputExclusions(
   options: EarlyExecutableCacheOptions,
   backend: "c" | "llvm",
 ): ReturnType<typeof frontendOutputExclusions> {
-  return frontendOutputExclusions(options, backend, "", [options.outPath]);
+  return frontendOutputExclusions(options, backend, "", [options.outPath, `${options.outPath}.dSYM`]);
 }
 
 async function fileMatches(
@@ -347,6 +349,13 @@ export async function readEarlyExecutableCache(
         stamp.files.executable?.name !== "program.bin" ||
         !/^[0-9a-f]{64}$/.test(stamp.files.executable.digest)
       )) ||
+      (stamp.files.debugSymbols !== undefined && (
+        stamp.files.executable === null || stamp.files.debugSymbols.name !== "program.dsym" ||
+        !/^[0-9a-f]{64}$/.test(stamp.files.debugSymbols.digest)
+      )) ||
+      (stamp.files.executable !== null &&
+        needsDarwinDebugSymbols(options.target.split(":")[1] ?? "", options.optimization, options.strip) !==
+        (stamp.files.debugSymbols !== undefined)) ||
       (stamp.files.executable === null) !== (stamp.nativeDependencies === null) ||
       (stamp.nativeDependencies !== null && !Array.isArray(stamp.nativeDependencies)) ||
       (stamp.files.ir !== null) !== options.emitIr ||
@@ -358,7 +367,7 @@ export async function readEarlyExecutableCache(
     ) return null;
 
     const directory = dirname(path);
-    const [translationUnit, ir, executable] = await Promise.all([
+    const [translationUnit, ir, executable, debugSymbols] = await Promise.all([
       readCachedFile(
         join(directory, stamp.files.translationUnit.name),
         stamp.files.translationUnit.digest,
@@ -372,11 +381,15 @@ export async function readEarlyExecutableCache(
             join(directory, stamp.files.executable.name),
             stamp.files.executable.digest,
           ),
+      stamp.files.debugSymbols === undefined
+        ? Promise.resolve(null)
+        : readCachedFile(join(directory, stamp.files.debugSymbols.name), stamp.files.debugSymbols.digest),
     ]);
     if (
       translationUnit === null ||
       stamp.files.ir !== null && ir === null ||
-      stamp.files.executable !== null && executable === null
+      stamp.files.executable !== null && executable === null ||
+      stamp.files.debugSymbols !== undefined && debugSymbols === null
     ) return null;
 
     // Validate the native proof before restoring frontend artifacts: replacing
@@ -398,9 +411,13 @@ export async function readEarlyExecutableCache(
     ) await installBytes(ir, paths.irPath);
     if (executableRestored) {
       try {
+        if (debugSymbols !== null) await installDarwinDebugSymbols(debugSymbols, options.outPath);
         const expectedMode = 0o777 & ~process.umask();
         if (!(await fileMatches(options.outPath, stamp.files.executable!.digest, expectedMode))) {
           await installExecutable(executable!, options.outPath);
+        }
+        if (debugSymbols === null && options.target.split(":")[1] === "darwin") {
+          await rm(`${options.outPath}.dSYM`, { recursive: true, force: true });
         }
       } catch {
         executableRestored = false;
@@ -412,6 +429,7 @@ export async function readEarlyExecutableCache(
       join(directory, stamp.files.translationUnit.name),
       ...(stamp.files.ir === null ? [] : [join(directory, stamp.files.ir.name)]),
       ...(stamp.files.executable === null ? [] : [join(directory, stamp.files.executable.name)]),
+      ...(stamp.files.debugSymbols === undefined ? [] : [join(directory, stamp.files.debugSymbols.name)]),
     ].map((cachePath) => utimes(cachePath, now, now).catch(() => undefined)));
     return {
       cPath: paths.cPath,
@@ -553,6 +571,12 @@ export async function publishEarlyExecutableCache(
         : publishFile(result.irPath, "program.ir.json"),
       publishExecutable,
     ]);
+    let debugSymbols: CachedExecutableFile | undefined;
+    if (executable !== null && needsDarwinDebugSymbols(options.target.split(":")[1] ?? "", options.optimization, options.strip)) {
+      const bytes = await readDarwinDebugSymbols(options.outPath);
+      await writeFile(join(stage, "program.dsym"), bytes, { mode: 0o600 });
+      debugSymbols = { name: "program.dsym", digest: digest(bytes) };
+    }
     if (!frontendInputsStillMatch(
       result.frontend,
       executableFrontendOutputExclusions(options, result.native.backend),
@@ -561,7 +585,7 @@ export async function publishEarlyExecutableCache(
       version: 1,
       key: cacheKey(options),
       frontend: result.frontend,
-      files: { translationUnit, ir, executable },
+      files: { translationUnit, ir, executable, ...(debugSymbols === undefined ? {} : { debugSymbols }) },
       nativeDependencies: executable === null ? null : result.nativeDependencies!,
       native: result.native,
     };
@@ -579,6 +603,7 @@ export async function publishEarlyExecutableCache(
     await install(translationUnit.name);
     if (ir !== null) await install(ir.name);
     if (executable !== null) await install(executable.name);
+    if (debugSymbols !== undefined) await install(debugSymbols.name);
     await install("stamp.json");
     await publishEarlyExecutableRoute(root, options);
   } finally {

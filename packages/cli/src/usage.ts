@@ -33,8 +33,8 @@ Options:
                      its C inspection lane accepts async-free programs only
       --optimization <release|dev>
                      native optimization posture (default: release/-O2). dev
-                     uses -O0 and stable cached LLVM object shards for faster
-                     edits of large programs
+                     uses -O0, source breakpoints, and cached LLVM object shards;
+                     macOS executable builds also produce an adjacent .dSYM
       --strip        remove symbol/debug payload from the linked executable
                      for smaller builds (opt in; --emit=exe only)
       --windows-subsystem <console|gui>

@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { localizeElfObject, mergeAndLocalizeCoffObjects } from "./object-localize.js";
 import { executableOptimizationLinkerArgs, executableStripLinkerArgs, windowsSubsystemLinkerArgs, type WindowsSubsystem } from "./targets.js";
+import { createDarwinDebugSymbols, installDarwinDebugSymbols, needsDarwinDebugSymbols, readDarwinDebugSymbols } from "./debug-symbols.js";
 import {
   createVendorArchives,
   MBEDTLS_VERSION,
@@ -3407,6 +3408,7 @@ interface LocalArtifactStamp {
   version: 2;
   key: string;
   digest: string;
+  debugSymbolsDigest?: string;
   dependencies: NativeArtifactDependency[];
   integrity: string;
 }
@@ -3756,7 +3758,7 @@ function localArtifactStampPath(root: string, outPath: string): string {
 }
 
 function localArtifactStampIntegrity(
-  stamp: Pick<LocalArtifactStamp, "version" | "key" | "digest" | "dependencies">,
+  stamp: Pick<LocalArtifactStamp, "version" | "key" | "digest" | "dependencies" | "debugSymbolsDigest">,
 ): string {
   return createHash("sha256")
     .update("local-artifact-stamp-v2\0")
@@ -3768,6 +3770,7 @@ async function localArtifactHit(
   stampPath: string,
   outPath: string,
   key: string,
+  darwinDebugSymbols = false,
 ): Promise<LocalArtifactStamp | null> {
   try {
     const stamp = JSON.parse(await readFile(stampPath, "utf8")) as Partial<LocalArtifactStamp>;
@@ -3777,6 +3780,8 @@ async function localArtifactHit(
       stamp.version !== 2 ||
       stamp.key !== key ||
       !/^[0-9a-f]{64}$/.test(stamp.digest ?? "") ||
+      (darwinDebugSymbols !== (stamp.debugSymbolsDigest !== undefined)) ||
+      (stamp.debugSymbolsDigest !== undefined && !/^[0-9a-f]{64}$/.test(stamp.debugSymbolsDigest)) ||
       !Array.isArray(stamp.dependencies) ||
       !/^[0-9a-f]{64}$/.test(stamp.integrity ?? "") ||
       localArtifactStampIntegrity({
@@ -3784,6 +3789,7 @@ async function localArtifactHit(
         key: stamp.key,
         digest: stamp.digest!,
         dependencies: stamp.dependencies,
+        ...(stamp.debugSymbolsDigest === undefined ? {} : { debugSymbolsDigest: stamp.debugSymbolsDigest }),
       }) !== stamp.integrity ||
       !output.isFile() ||
       (output.mode & 0o777) !== expectedMode ||
@@ -3811,7 +3817,8 @@ async function localArtifactHit(
         )
       ) ||
       !(await nativeArtifactDependenciesStillMatch(stamp.dependencies)) ||
-      await fileDigest(outPath) !== stamp.digest
+      await fileDigest(outPath) !== stamp.digest ||
+      darwinDebugSymbols && createHash("sha256").update(await readDarwinDebugSymbols(outPath)).digest("hex") !== stamp.debugSymbolsDigest
     ) {
       return null;
     }
@@ -3830,6 +3837,7 @@ async function publishLocalArtifactStamp(
   dependencyPaths: readonly string[],
   recursiveDirectories: readonly string[] = [],
   recursiveExclusions: readonly string[] = [],
+  darwinDebugSymbols = false,
 ): Promise<LocalArtifactStamp> {
   await mkdir(dirname(stampPath), { recursive: true });
   const tmp = `${stampPath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
@@ -3844,6 +3852,9 @@ async function publishLocalArtifactStamp(
       key,
       digest: await fileDigest(outPath),
       dependencies,
+      ...(darwinDebugSymbols
+        ? { debugSymbolsDigest: createHash("sha256").update(await readDarwinDebugSymbols(outPath)).digest("hex") }
+        : {}),
     } as const;
     const stamp: LocalArtifactStamp = {
       ...unsigned,
@@ -4023,6 +4034,10 @@ async function compileCInternal(
   const tls = (opts.tls ?? false) || nativeFetch || netIsland;
   const tlsCa = (opts.tlsCa ?? false) || tls;
   const driver = resolveCc();
+  const darwinDebugSymbols = needsDarwinDebugSymbols(targetPlatform(driver), optimization, opts.strip);
+  const debugFlags = optimization === "dev" && !opts.strip
+    ? ["-gline-tables-only", ...(opts.cPath.endsWith(".ll") ? [] : ["-gno-column-info"])]
+    : [];
   const shardNames = new Set<string>();
   const programShardsValid = opts.programShards?.every((shard) => {
     if (
@@ -4192,7 +4207,7 @@ async function compileCInternal(
           programBytes,
           compilerPath: effectiveCompiler.canonicalPath,
         };
-        const hit = await localArtifactHit(stampPath, opts.outPath, key);
+        const hit = await localArtifactHit(stampPath, opts.outPath, key, darwinDebugSymbols);
         if (hit !== null) {
           await opts.onArtifactReady?.({ dependencies: hit.dependencies }).catch(() => undefined);
           return;
@@ -4424,10 +4439,11 @@ async function compileCInternal(
     } = {},
   ): string[] => [
     "-std=c11",
+    ...debugFlags,
     ...driver.targetArgs,
     ...threadArgs,
     ...(sanitize
-      ? ["-O1", "-fsanitize=address", "-DSCR_RC_AUDIT"]
+      ? [optimization === "dev" ? "-O0" : "-O1", "-fsanitize=address", "-DSCR_RC_AUDIT"]
       : [optimization === "dev" ? "-O0" : "-O2"]),
     ...executableSectionFlags.compile,
     ...(opts.textDecoderLegacy ? ["-DSCR_TEXT_DECODER_LEGACY"] : []),
@@ -4617,10 +4633,11 @@ async function compileCInternal(
   // historical single clang invocation.
   const cflags = [
     "-std=c11",
+    ...debugFlags,
     ...driver.targetArgs,
     ...threadArgs,
     ...(sanitize
-      ? ["-O1", "-fsanitize=address", "-DSCR_RC_AUDIT"]
+      ? [optimization === "dev" ? "-O0" : "-O1", "-fsanitize=address", "-DSCR_RC_AUDIT"]
       : [optimization === "dev" ? "-O0" : "-O2"]),
     ...executableSectionFlags.compile,
     ...(opts.textDecoderLegacy ? ["-DSCR_TEXT_DECODER_LEGACY"] : []),
@@ -5026,6 +5043,20 @@ async function compileCInternal(
       if (!(await copyValidCachedFile(cachedBin, tmpOut))) {
         throw new Error("invalid cached executable");
       }
+      if (darwinDebugSymbols) {
+        const cachedSymbols = `${cachedBin}.dsym`;
+        const symbolsCopy = privateSiblingPath(opts.outPath, "dsym-hit");
+        try {
+          if (!(await copyValidCachedFile(cachedSymbols, symbolsCopy))) throw new Error("invalid cached dSYM");
+          const bytes = await readFile(symbolsCopy);
+          // A concurrent publisher may replace either payload. The sidecar
+          // also names its binary digest so a mixed pair always misses.
+          if (bytes.subarray(0, 32).toString("hex") !== await fileDigest(tmpOut)) throw new Error("mismatched cached dSYM");
+          await installDarwinDebugSymbols(bytes.subarray(32), opts.outPath);
+        } finally {
+          await rm(symbolsCopy, { force: true });
+        }
+      }
       // Match a fresh linker output under the caller's current umask. Reusing a
       // cache entry populated by a less restrictive shell must not widen access.
       await chmod(tmpOut, 0o777 & ~process.umask());
@@ -5038,6 +5069,7 @@ async function compileCInternal(
           localArtifactDependencyPaths,
           [dirname(resolve(opts.cPath))],
           [persistentCache.root],
+          darwinDebugSymbols,
         ).catch(() => null);
         if (stamp !== null) {
           await opts.onArtifactReady?.({ dependencies: stamp.dependencies }).catch(() => undefined);
@@ -5258,6 +5290,13 @@ async function compileCInternal(
           : { programPath: shardedProgramObject, outPath: privateOut },
       ),
     );
+    if (darwinDebugSymbols) {
+      // clang invokes dsymutil when compiling a source TU while linking.
+      // A sharded program is already an object, so run it explicitly while
+      // the merged object and staged runtime inputs still exist.
+      if (shardedProgramObject !== null) await createDarwinDebugSymbols(privateOut);
+      await installDarwinDebugSymbols(await readDarwinDebugSymbols(privateOut), opts.outPath);
+    }
     await installArtifact(privateOut, opts.outPath);
 
     if (cachedBin !== null && keyHex !== null) {
@@ -5317,6 +5356,14 @@ async function compileCInternal(
         // generated code and embedded literals private; the hit path reapplies
         // the caller's current executable mode to its destination copy.
         await publishCachedFile(privateOut, cachedBin);
+        if (darwinDebugSymbols) {
+          const symbols = privateSiblingPath(privateOut, "debug-symbols");
+          await writeFile(symbols, Buffer.concat([
+            Buffer.from(await fileDigest(privateOut), "hex"),
+            await readDarwinDebugSymbols(privateOut),
+          ]));
+          await publishCachedFile(symbols, `${cachedBin}.dsym`);
+        }
       } catch {
         /* publishing is best-effort */
       }
@@ -5334,6 +5381,7 @@ async function compileCInternal(
         localArtifactDependencyPaths,
         [dirname(resolve(opts.cPath))],
         [persistentCache.root],
+        darwinDebugSymbols,
       ).catch(() => null);
       if (stamp !== null) {
         await opts.onArtifactReady?.({ dependencies: stamp.dependencies }).catch(() => undefined);
@@ -5350,6 +5398,9 @@ async function compileCInternal(
 export async function compileC(opts: CcOptions): Promise<void> {
   clearCcCaches();
   await compileCInternal(opts, false);
+  if (targetPlatform(resolveCc()) === "darwin" && !needsDarwinDebugSymbols("darwin", opts.optimization, opts.strip)) {
+    await rm(`${opts.outPath}.dSYM`, { recursive: true, force: true });
+  }
 }
 
 export type NativeCacheWarmProfile = "runtime" | "tls" | "dynamic";

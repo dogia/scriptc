@@ -89,6 +89,7 @@ import { RUNTIME_ABI_MARKER } from "../runtime-abi.js";
 import { computeMayThrow } from "../c/may-throw.js";
 import { mangleArgPack, mangleAsyncSpawn, mangleClassObj, mangleFnClosure, mangleFunction, mangleGenDrop, mangleGenSpawn, mangleGlobal, mangleLocal, mangleRecordStruct, mangleTrampoline, mangleWrapper } from "../mangle.js";
 import { BlockBuilder } from "./blocks.js";
+import { LlvmDebugInfo } from "./debug-info.js";
 import { f64Lit, ffiNativeTypeLl, llvmCommentText } from "./common.js";
 import { emitLiteralExpr, emitOperatorExpr, emitStringExpr, emitContainerExpr, emitRecordExpr } from "./expr-primitives.js";
 import { emitControlExpr } from "./expr-control.js";
@@ -170,6 +171,8 @@ interface LlScopeEntry {
 }
 
 export interface LlvmTargetOptions {
+  /** Exact frontend sources for dev-build line tables and stack frames. */
+  debugSources?: ReadonlyMap<string, string>;
   /** Pointer width of the target C ABI. Native targets are 64-bit today. */
   pointerBits?: 32 | 64;
   /** Select the WASI libc entry-point convention. */
@@ -204,6 +207,8 @@ function llStrBytes(text: string): string {
 }
 
 class LlEmitter {
+  private readonly debug: LlvmDebugInfo | null;
+  private debugScope: string | null = null;
   readonly sizeType: "i32" | "i64";
   readonly cycleColorOffset: number;
   private readonly wasi: boolean;
@@ -377,6 +382,7 @@ class LlEmitter {
   private logArgSlots = 0;
 
   constructor(private readonly mod: IrModule, options: LlvmTargetOptions) {
+    this.debug = options.debugSources === undefined ? null : new LlvmDebugInfo(mod.sourceFile, options.debugSources);
     this.constantNumericTables = findConstantNumericTables(mod);
     this.sizeType = options.pointerBits === 32 ? "i32" : "i64";
     this.wasi = options.wasi === true;
@@ -1321,6 +1327,7 @@ class LlEmitter {
       if (this.wasi) out.push(`attributes #1 = { sanitize_address presplitcoroutine }`);
       if (hasNoInlineRecordClone) out.push(`attributes #2 = { noinline sanitize_address }`);
       out.push(``);
+      if (this.debug !== null) out.push(this.debug.render());
       return out.join("\n");
     }
     out.push(
@@ -1449,6 +1456,7 @@ class LlEmitter {
       ...(hasNoInlineRecordClone ? [`attributes #2 = { noinline sanitize_address }`] : []),
       ``,
     );
+    if (this.debug !== null) out.push(this.debug.render());
     return out.join("\n");
   }
 
@@ -2968,6 +2976,8 @@ class LlEmitter {
   private emitFunction(fn: IrFunction): string {
     const B = new BlockBuilder();
     this.B = B;
+    this.debugScope = this.debug?.function(fn) ?? null;
+    B.debugLocation = this.debug?.location(fn.loc, this.debugScope) ?? null;
     this.frames = [];
     this.scopes = [];
     this.jumpTargets = [];
@@ -3122,7 +3132,8 @@ class LlEmitter {
     if (fn.captures !== undefined) params.unshift("ptr %sc_env");
     const ret = this.llType(fn.returnType);
     const attrs = coro !== null ? "#1" : FN_ATTRS;
-    return `define internal ${ret} @${mangleFunction(fn.name)}(${params.join(", ")}) ${attrs} { ; ${fn.name}\n${B.render()}\n}`;
+    const debug = this.debugScope === null ? "" : ` !dbg ${this.debugScope}`;
+    return `define internal ${ret} @${mangleFunction(fn.name)}(${params.join(", ")}) ${attrs}${debug} { ; ${fn.name}\n${B.render()}\n}`;
   }
 
   // ── statements ──────────────────────────────────────────────────────────
@@ -3153,6 +3164,16 @@ class LlEmitter {
   }
 
   private emitStmt(s: IrStmt): void {
+    const previous = this.B.debugLocation;
+    this.B.debugLocation = this.debug?.location(s.loc, this.debugScope) ?? null;
+    try {
+      this.emitStmtBody(s);
+    } finally {
+      this.B.debugLocation = previous;
+    }
+  }
+
+  private emitStmtBody(s: IrStmt): void {
     const B = this.B;
     this.frames.push([]);
     switch (s.kind) {

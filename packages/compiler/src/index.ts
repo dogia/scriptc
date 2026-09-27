@@ -221,7 +221,8 @@ export interface CompileBaseOptions {
    * C fallback; a missing LLVM lowering there is SC3001. */
   backend?: "c" | "llvm";
   /** Native optimization posture. Release is the shipped -O2 default; dev
-   * uses -O0 and stable multi-TU object caching for large LLVM programs. */
+   * uses -O0, source line tables, and stable multi-TU object caching for
+   * large LLVM programs. Darwin executables include an adjacent .dSYM. */
   optimization?: "release" | "dev";
   /** Remove symbol/debug payload from an executable at link time. */
   strip?: boolean;
@@ -1624,6 +1625,9 @@ async function compileTracked(
     c: join(opts.outDir, `${stem}.c`),
     llvm: join(opts.outDir, `${stem}.ll`),
   } as const;
+  const debugOptions = opts.optimization === "dev" && !opts.strip
+    ? { debugSources: sourceTexts }
+    : {};
 
   if (outputKind === "ir") {
     await mkdir(dirname(opts.outPath), { recursive: true });
@@ -1633,7 +1637,7 @@ async function compileTracked(
 
   if (outputKind === "c") {
     await mkdir(dirname(opts.outPath), { recursive: true });
-    await writeFile(opts.outPath, emitCModule(lowered.module, entryText));
+    await writeFile(opts.outPath, emitCModule(lowered.module, entryText, debugOptions));
     return { ok: true, artifact: { kind: "c", path: opts.outPath } };
   }
 
@@ -1641,6 +1645,7 @@ async function compileTracked(
     let llvm: string;
     try {
       llvm = emitLlvmModule(lowered.module, {
+        ...debugOptions,
         pointerBits: buildPlatform === "wasi" ? 32 : 64,
         wasi: buildPlatform === "wasi",
         runtimeAbiMarker: outputKind === "obj",
@@ -1712,6 +1717,7 @@ async function compileTracked(
   if (opts.backend !== "c") {
     try {
       const ll = emitLlvmModule(lowered.module!, {
+        ...debugOptions,
         pointerBits: buildPlatform === "wasi" ? 32 : 64,
         wasi: buildPlatform === "wasi",
         runtimeAbiMarker:
@@ -1733,7 +1739,7 @@ async function compileTracked(
     }
   }
   if (backend === "c") {
-    await writeFile(cPath, emitCModule(lowered.module!, entryText));
+    await writeFile(cPath, emitCModule(lowered.module!, entryText, debugOptions));
   }
   let irPath: string | undefined;
   if (opts.emitIr) {

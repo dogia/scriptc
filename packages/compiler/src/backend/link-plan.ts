@@ -9,6 +9,7 @@
 import type { FfiProfile } from "../ffi/ffi-manifest.js";
 import type { NativeLinkFeatures } from "./native-link-info.js";
 import type { NativeArtifactDependency } from "./native-toolchain.js";
+import { needsDarwinDebugSymbols } from "./debug-symbols.js";
 import { loadRuntimePack, type RuntimePackSelection } from "./runtime-pack.js";
 import {
   executableOptimizationLinkerArgs,
@@ -30,6 +31,7 @@ export interface NativeLinkPlan {
   /** Inputs already snapshotted by the program-object emitter. */
   programObjectDependencies: NativeArtifactDependency[];
   runtimePack: RuntimePackSelection;
+  darwinDebugSymbols?: boolean;
 }
 
 export async function createNativeLinkPlan(options: {
@@ -48,6 +50,7 @@ export async function createNativeLinkPlan(options: {
   const runtimePack = await loadRuntimePack(options);
   return {
     target: options.target,
+    darwinDebugSymbols: needsDarwinDebugSymbols(options.target.platform, options.optimization, options.strip),
     outputPath: options.outPath,
     inputs: [
       options.programObject,

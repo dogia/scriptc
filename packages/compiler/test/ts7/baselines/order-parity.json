@@ -7230,6 +7230,13 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3066-source-debugging/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/3066-source-debugging/helper.ts",
+    "<repo>/tests/corpus/3066-source-debugging/main.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"

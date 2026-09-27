@@ -1,9 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, test } from "vitest";
 import { splitLlvmLibraryProgram, splitLlvmProgram } from "./split.js";
+import { LlvmDebugInfo } from "./debug-info.js";
+import { VOID } from "../../ir/ir.js";
 
 const scratch: string[] = [];
 afterAll(async () => {
@@ -75,6 +77,32 @@ test("thread-local program state conservatively keeps the single-TU path", () =>
     "@hidden_value = internal thread_local global i64 7",
   );
   expect(splitLlvmProgram(tls, { minimumBytes: 0, targetBytes: 64 * 1024 })).toBeNull();
+});
+
+test("debug metadata stays on definitions when splitting LLVM modules", async () => {
+  const debug = new LlvmDebugInfo("/source/main.ts", new Map([["/source/main.ts", "console.log(1);\n"]]));
+  let source = SAMPLE;
+  for (const name of ["left", "right", "public_entry"]) {
+    const loc = { file: "/source/main.ts", start: 0, end: 1 };
+    const scope = debug.function({ name, loc, params: [], locals: [], body: [], returnType: VOID });
+    const location = debug.location(loc, scope);
+    source = source.replace(new RegExp(`(@${name}\\(\\) #0) \\{([\\s\\S]*?)\\n\\}`), (_, header: string, body: string) =>
+      `${header} !dbg ${scope} {${body.split("\n").map((line) => line.startsWith("  ") ? `${line}, !dbg ${location}` : line).join("\n")}\n}`,
+    );
+  }
+  source += debug.render();
+  const split = splitLlvmProgram(source, { minimumBytes: 0 });
+  expect(split).not.toBeNull();
+  const dir = await mkdtemp(join(tmpdir(), "scriptc-debug-split-"));
+  scratch.push(dir);
+  for (const shard of split!.shards) {
+    expect(shard.source).not.toMatch(/^declare.*!dbg/m);
+    const path = join(dir, shard.name);
+    await writeFile(path, shard.source);
+    const result = spawnSync("clang", ["-Wno-override-module", "-c", path, "-o", `${path}.o`], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  }
 });
 
 test("dev libraries split at the measured 2MB crossover while executables retain 4MB", () => {

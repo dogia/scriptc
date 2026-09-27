@@ -2,6 +2,10 @@
 
 Honesty is the product. The static surface is large but not total, and a few behaviors diverge from Node **by design**. This page is the plain-language version; `scriptc coverage` on your program is the real answer for your code, and every blocker it reports is specific and coded. Nothing on this page is silent: everything here is either a compile error or a documented, numbered divergence.
 
+## Native debugging
+
+Executable builds with `--optimization=dev` support source breakpoints and native stack frames for statically compiled TypeScript and JavaScript. Debuggers see native representations; TypeScript variable inspection, expression evaluation, and stepping through code executed by the dynamic engine are not implemented. Release builds and builds with `--strip` omit these source mappings. macOS uses an adjacent `.dSYM` bundle generated with the Command Line Tools' `dsymutil`.
+
 ## What doesn't compile (yet)
 
 These are rejected at compile time with an `SC` code, a code frame, and usually a rewrite hint. A non-exhaustive tour of the ones you're most likely to meet:

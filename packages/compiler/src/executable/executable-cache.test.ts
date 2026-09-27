@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { FrontendInputTracker, trackedFileExists, trackedReadFile } from "../frontend/input-tracker.js";
 import { nativeArtifactDependenciesStillMatch } from "../backend/native-toolchain.js";
+import { installDarwinDebugSymbols, readDarwinDebugSymbols } from "../backend/debug-symbols.js";
 import {
   publishEarlyExecutableCache,
   readEarlyExecutableCache,
@@ -120,6 +121,29 @@ test("early executable cache restores the emitted TU, IR, and native feature gat
   expect(await readFile(f.cPath, "utf8")).toBe("; generated llvm\n");
   expect(await readFile(f.irPath, "utf8")).toContain("irVersion");
   expect(await readFile(alternateC, "utf8")).toBe("/* saved C backend */\n");
+});
+
+test("early dev cache restores the matching dSYM and rejects a missing payload", async () => {
+  const f = await fixture();
+  f.options.optimization = "dev";
+  f.options.target = "native:darwin:arm64:runtime-pack";
+  const tracker = new FrontendInputTracker();
+  tracker.run(() => trackedReadFile(f.source));
+  await writeFile(f.options.outPath, "native binary");
+  const symbols = Buffer.concat([Buffer.from("SCDSYM01"), Buffer.from([5, 0, 0, 0]), Buffer.from("plistDWARF")]);
+  await installDarwinDebugSymbols(symbols, f.options.outPath);
+  await publishEarlyExecutableCache(f.root, f.options, {
+    cPath: f.cPath, irPath: f.irPath, native: { ...native, optimization: "dev" },
+    executableRestored: true, nativeDependencies: [], frontend: tracker.snapshot(),
+  });
+  await rm(`${f.options.outPath}.dSYM`, { recursive: true });
+  expect((await readEarlyExecutableCache(f.root, f.options))?.executableRestored).toBe(true);
+  expect(await readDarwinDebugSymbols(f.options.outPath)).toEqual(symbols);
+  const files = await readdir(f.root, { recursive: true });
+  const cachedSymbols = files.find((file) => file.endsWith("program.dsym"));
+  expect(cachedSymbols).toBeDefined();
+  await rm(join(f.root, cachedSymbols!));
+  expect(await readEarlyExecutableCache(f.root, f.options)).toBeNull();
 });
 
 test("early executable cache misses on source and resolution changes", async () => {

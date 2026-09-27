@@ -19,6 +19,7 @@ export class BlockBuilder {
   readonly entryAllocas: string[] = [];
   private tempCounter = 0;
   private labelCounter = 0;
+  debugLocation: string | null = null;
 
   constructor() {
     this.cur = { label: "entry", lines: [], term: null };
@@ -35,7 +36,21 @@ export class BlockBuilder {
   }
 
   line(s: string): void {
-    if (this.cur.term === null) this.cur.lines.push(`  ${s}`);
+    if (this.cur.term === null) this.cur.lines.push(`  ${this.withDebugLocation(s)}`);
+  }
+
+  private withDebugLocation(s: string): string {
+    if (this.debugLocation === null || s.trimStart().startsWith(";")) return s;
+    // Instruction comments must follow the attachment. Quoted LLVM operands
+    // can themselves contain semicolons; those are not comment delimiters.
+    let quoted = false;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === '"') quoted = !quoted;
+      if (s[i] === ";" && !quoted) {
+        return `${s.slice(0, i).trimEnd()}, !dbg ${this.debugLocation} ${s.slice(i)}`;
+      }
+    }
+    return `${s}, !dbg ${this.debugLocation}`;
   }
 
   tmp(): string {
@@ -51,7 +66,7 @@ export class BlockBuilder {
   }
 
   terminate(s: string): void {
-    if (this.cur.term === null) this.cur.term = `  ${s}`;
+    if (this.cur.term === null) this.cur.term = `  ${this.withDebugLocation(s)}`;
   }
 
   br(label: string): void {
