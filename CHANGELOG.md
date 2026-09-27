@@ -6,6 +6,31 @@ All notable changes to scriptc will be documented in this file.
 
 <!-- release:start -->
 
+## 0.1.7
+
+### Features
+
+- **Development builds support native source debugging.** `--optimization=dev` adds TypeScript and JavaScript source locations across the C and LLVM backends, with source-named variables in LLVM builds.
+- **More Math operations compile statically.** Additional constants and methods include hyperbolic functions, `clz32`, `fround`, `imul`, `expm1`, and `log1p`.
+- **Static Promise handling supports rejection callbacks.** `Promise.prototype.then` accepts both fulfillment and optional rejection handlers, including returned promises.
+- **Static compilation accepts more package layouts.** Installed entries can compile their own TypeScript and JavaScript imports, and CommonJS packages with safe export prologues remain eligible for static compilation.
+- **Fixed tuple spreads compile in tuple literals.** Const tuple inference is preserved when checked with `satisfies`.
+- **Dynamic `globalThis` exposes Node host globals.** Escaping through the global object initializes the same Node globals used by embedded modules.
+
+### Performance
+
+- **Async and generator fibers commit stack memory on demand.** They retain their existing stack capacity while using less committed memory.
+- **Development builds compute compiler fingerprints faster.** Parallel fingerprint reads preserve the existing cache identity and invalidation behavior.
+
+### Fixes
+
+- **Caught and rejected values preserve JavaScript object classification.** Native exception handling distinguishes objects from primitive values across catch and promise paths.
+- **TypeScript project settings and Node declarations are preserved.** Built-in default imports honor effective project options, and `RequestInfo` remains available across imported sources.
+- **Optional chains and dynamic option records retain supported values.** Array callbacks inside optional chains, narrowed optional receivers, and records containing abort handles compile correctly.
+- **Compiler analysis handles more edge cases safely.** Deep or shared type graphs no longer overwhelm diagnostics, and property names spelled `arguments` are not treated as reads of the special binding.
+
+<!-- release:end -->
+
 ## 0.1.6
 
 ### Features
@@ -16,8 +41,6 @@ All notable changes to scriptc will be documented in this file.
 ### Performance
 
 - **Array, string, and terminal operations use fewer resources.** Array comparisons and string operations allocate less, fibers reuse stacks and release cached memory while idle, and terminal dimensions come directly from native streams.
-
-<!-- release:end -->
 
 ## 0.1.5
 
