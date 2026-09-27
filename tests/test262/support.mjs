@@ -89,21 +89,26 @@ export function variants(meta) {
 // Exclusions are runner limitations, never implementation support claims.
 export function exclusion(source, meta, variant) {
   if (meta.negative) {
-    if (meta.negative.phase !== "parse" || meta.negative.type !== "SyntaxError" || !parseDiagnostics(source, variant).length) {
+    if (meta.negative.phase !== "parse" || meta.negative.type !== "SyntaxError" || (variant !== "strict" && variant !== "sloppy")) {
       return `negative-phase:${meta.negative.phase}`;
     }
     return undefined;
   }
-  if (variant !== "strict") return `execution:${variant}`;
+  if (variant !== "strict" && variant !== "sloppy") return `execution:${variant}`;
   if (meta.flags.some((flag) => flag.startsWith("CanBlock"))) return "host:agents";
   const unsupportedIncludes = meta.includes.filter((name) => name !== "compareArray.js");
   if (unsupportedIncludes.length) return `harness-includes:${unsupportedIncludes.join(",")}`;
   const sf = ts.createSourceFile("test.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   let reason;
   const forbidden = new Set(["$262", "$DONE", "$DONOTEVALUATE", "globalThis", "eval", "Function", "print", "process", "require", "arguments"]);
+  if (variant === "sloppy") for (const name of ["module", "exports", "__dirname", "__filename"]) forbidden.add(name);
   if (meta.flags.includes("async")) forbidden.delete("$DONE");
   const visit = (node) => {
     if (reason) return;
+    if (variant === "sloppy" && node.kind === ts.SyntaxKind.ThisKeyword) {
+      reason = "host:script-environment";
+      return;
+    }
     if (node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.ImportKeyword || ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       reason = "host:script-environment";
     } else if (ts.isIdentifier(node) && forbidden.has(node.text)) {
@@ -134,18 +139,19 @@ export function exclusion(source, meta, variant) {
   return reason;
 }
 
-export function prepare(source, asyncTest = false, marker = completion) {
+export function prepare(source, asyncTest = false, marker = completion, variant = "strict") {
   const names = asyncTest ? "assert, Test262Error, $DONE" : "assert, Test262Error";
   const end = asyncTest ? "" : `;console.log(${JSON.stringify(marker)});\n`;
+  if (variant === "sloppy") return `const { ${names} } = require("./harness.ts");\n${source}\n${end}`;
   return `"use strict";\nimport { ${names} } from "./harness.ts";\n${source}\n${end}`;
 }
 
 function parseDiagnostics(source, variant) {
   if (variant !== "strict" && variant !== "sloppy") return [];
-  const prepared = prepare(source);
+  const prepared = prepare(source, false, completion, variant);
   const sourceStart = prepared.indexOf(source);
   const sourceEnd = sourceStart + source.length;
-  const file = ts.createSourceFile("main.js", prepared, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const file = ts.createSourceFile(variant === "sloppy" ? "main.cjs" : "main.js", prepared, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const raw = variant === "sloppy"
     ? ts.createSourceFile("test.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS).parseDiagnostics
     : [];
@@ -157,13 +163,46 @@ function parseDiagnostics(source, variant) {
         ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))));
 }
 
+// TypeScript reports these JavaScript grammar and early errors in its semantic
+// pass. Matching the compiler's diagnostic at the original source location
+// keeps type-checking errors and the harness's $DONOTEVALUATE error out.
+const earlyErrorCodes = new Set([
+  1005, 1013, 1048, 1091, 1136, 1156, 1186, 1214, 1215, 1346, 1347, 1359,
+  1500, 1508, 1522, 1524, 2300, 2364, 2451, 2462, 2491, 2779, 17012, 18061,
+]);
+
+function earlyErrorDiagnostics(source, variant) {
+  const prepared = prepare(source, false, completion, variant);
+  const start = prepared.indexOf(source);
+  const end = start + source.length;
+  const suffix = variant === "sloppy" ? "main.cjs" : "main.js";
+  const fileName = join(directory, "__test262_parse__", suffix);
+  const isMain = (path) => path.replaceAll("\\", "/").endsWith(`/__test262_parse__/${suffix}`);
+  const options = {
+    allowJs: true, checkJs: true, noEmit: true, noLib: true, types: [],
+    strict: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext,
+  };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = isMain;
+  host.readFile = (path) => isMain(path) ? prepared : undefined;
+  host.getSourceFile = (path, languageVersion) =>
+    isMain(path) ? ts.createSourceFile(path, prepared, languageVersion, true) : undefined;
+  const program = ts.createProgram([fileName], options, host);
+  const file = program.getSourceFile(fileName);
+  if (!file) return [];
+  return program.getSemanticDiagnostics(file).filter((diagnostic) =>
+    earlyErrorCodes.has(diagnostic.code) && diagnostic.start >= start && diagnostic.start < end &&
+    !(variant === "sloppy" && (diagnostic.code === 1214 || diagnostic.code === 1215)));
+}
+
 export function matchesParseNegative(outcome, source, variant = "strict") {
   if (outcome.status !== "compile-refusal") return false;
-  return parseDiagnostics(source, variant).some((parsed) => outcome.diagnostics?.some((reported) =>
+  const matches = (parsed) => outcome.diagnostics?.some((reported) =>
     reported.code === "SC0001" &&
-    reported.loc?.file?.endsWith("/main.js") &&
+    reported.loc?.file?.endsWith(variant === "sloppy" ? "/main.cjs" : "/main.js") &&
     reported.loc.start === parsed.start &&
-    reported.message === ts.flattenDiagnosticMessageText(parsed.messageText, "\n")));
+    reported.message === ts.flattenDiagnosticMessageText(parsed.messageText, "\n"));
+  return parseDiagnostics(source, variant).some(matches) || earlyErrorDiagnostics(source, variant).some(matches);
 }
 
 export function summarize(results) {

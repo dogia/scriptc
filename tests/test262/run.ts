@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   --list                                   list variants and exclusions without compiling
   --keep                                   retain generated sources and native artifacts
 SCRIPTC_SAN=1 enables sanitizers; SCRIPTC_TEST_SHARD=i/n partitions variants.
-Adapted strict scripts and source-matched strict or sloppy syntax negatives can pass.
+Adapted strict and sloppy scripts and source-matched syntax negatives can pass.
 Other variants remain visible as exclusions.`);
     return;
   }
@@ -87,6 +87,7 @@ Other variants remain visible as exclusions.`);
         ? { status: "excluded", reason: item.exclusion }
         : await runSource(item.source, {
           backend, sanitize: process.env.SCRIPTC_SAN === "1", compileTimeoutMs, runtimeTimeoutMs, keep: values.keep, asyncTest: item.asyncTest,
+          variant: item.variant === "sloppy" ? "sloppy" : "strict",
         });
       const outcome = item.negative?.phase === "parse" && matchesParseNegative(raw, item.source, item.variant)
         ? { status: "pass", phase: "compile" }
@@ -103,7 +104,7 @@ Other variants remain visible as exclusions.`);
   const report = {
     schema: "scriptc.test262.v1",
     revision: pin.commit, snapshotSha256: pin.snapshotSha256,
-    profile: "static-adapted-v2",
+    profile: "static-adapted-v4",
     harnessSha256: sha256(harnessSource + assertThrowsSource),
     dynamic: false, requestedBackend: backend, sanitize: process.env.SCRIPTC_SAN === "1",
     host: `${process.platform}-${process.arch}`, node: process.version,

@@ -10,11 +10,22 @@ const sanitize = process.env.SCRIPTC_SAN === "1";
 const upstreamHarness = ["assert.js", "sta.js"]
   .map((name) => readFileSync(join(vendorRoot, "harness", name), "utf8")).join("\n");
 
-function runUpstream(source: string): void {
+function runUpstream(source: string, variant: "strict" | "sloppy" = "strict"): void {
   const context = createContext({});
   runInContext(upstreamHarness, context, { timeout: 5000 });
-  runInContext(`"use strict";\n${source}`, context, { timeout: 5000 });
+  runInContext(variant === "strict" ? `"use strict";\n${source}` : source, context, { timeout: 5000 });
 }
+
+test("sloppy script source executes through a CommonJS entry", async () => {
+  const source = readFileSync(join(vendorRoot, "test/language/expressions/addition/S11.6.1_A4_T1.js"), "utf8");
+  const meta = metadata(source);
+  expect(exclusion(source, meta, "sloppy")).toBeUndefined();
+  const context = createContext({});
+  runInContext(upstreamHarness, context, { timeout: 5000 });
+  runInContext(source, context, { timeout: 5000 });
+  const result = await runSource(source, { sanitize, variant: "sloppy" });
+  expect(result, JSON.stringify(result, null, 2)).toMatchObject({ status: "pass" });
+});
 
 test("Test262 regression inputs retain their pinned upstream bytes", () => {
   verifyVendor();
@@ -27,20 +38,30 @@ test("negative parse cases require a matching compiler syntax diagnostic", async
   expect(matchesParseNegative(result, source), JSON.stringify(result, null, 2)).toBe(true);
 });
 
-const profileCases = shardSelect<string>(pin.tests, (path) => `${path}#strict`);
-// The initial profile is small enough that a valid shard can own no cases.
-// Vitest rejects an empty describe block, so register this suite only when
-// this shard actually owns a program. The host checks below still run.
-if (profileCases.length > 0) describe(`Test262 static strict profile${shardSuffix()}`, () => {
+const profileCases = shardSelect<string>(pin.tests, (path) => {
+  const source = readFileSync(join(vendorRoot, path), "utf8");
+  const variant = metadata(source, path).flags.includes("noStrict") ? "sloppy" : "strict";
+  return `${path}#${variant}`;
+});
+// Vitest rejects an empty describe block when a valid shard owns no cases.
+if (profileCases.length > 0) describe(`Test262 static script profile${shardSuffix()}`, () => {
   for (const path of profileCases) {
     test(path, async () => {
       const source = readFileSync(join(vendorRoot, path), "utf8");
-      expect(exclusion(source, metadata(source, path), "strict")).toBeUndefined();
+      const meta = metadata(source, path);
+      const variant = meta.flags.includes("noStrict") ? "sloppy" : "strict";
+      expect(exclusion(source, meta, variant)).toBeUndefined();
       // Independently check the unchanged test with the original global-script
       // harness. Node is a host sanity check, not the conformance oracle.
-      runUpstream(source);
-      const result = await runSource(source, { sanitize });
-      expect(matchesExpectation(`${path}#strict`, result), JSON.stringify(result, null, 2)).toBe(true);
+      if (meta.negative?.phase === "parse") {
+        let error: unknown;
+        try { runUpstream(source, variant); } catch (caught) { error = caught; }
+        expect(error).toMatchObject({ name: "SyntaxError" });
+      } else runUpstream(source, variant);
+      const result = await runSource(source, { sanitize, variant });
+      if (meta.negative?.phase === "parse") {
+        expect(matchesParseNegative(result, source, variant), JSON.stringify(result, null, 2)).toBe(true);
+      } else expect(matchesExpectation(`${path}#${variant}`, result), JSON.stringify(result, null, 2)).toBe(true);
     });
   }
 });

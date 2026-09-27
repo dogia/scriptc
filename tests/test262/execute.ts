@@ -64,6 +64,7 @@ export function boundedRun(command: string, args: string[], timeoutMs: number): 
 export async function runSource(source: string, options: {
   backend?: "default" | "llvm" | "c";
   asyncTest?: boolean;
+  variant?: "strict" | "sloppy";
   sanitize?: boolean;
   compileTimeoutMs?: number;
   runtimeTimeoutMs?: number;
@@ -72,14 +73,14 @@ export async function runSource(source: string, options: {
   // Keep sources OUTSIDE node_modules: scriptc intentionally treats imports
   // under that directory as package code, with different compilation rules.
   const workDir = mkdtempSync(join(tmpdir(), "scriptc-test262-"));
-  const entry = join(workDir, "main.js");
+  const entry = join(workDir, options.variant === "sloppy" ? "main.cjs" : "main.js");
   const binary = join(workDir, process.platform === "win32" ? "program.exe" : "program");
   const resultFile = join(workDir, "compile.json");
   const requestFile = join(workDir, "request.json");
   let phase = "compile";
   try {
     const marker = `${completion}:${randomBytes(16).toString("hex")}`;
-    writeFileSync(entry, prepare(source, options.asyncTest ?? false, marker));
+    writeFileSync(entry, prepare(source, options.asyncTest ?? false, marker, options.variant));
     writeFileSync(join(workDir, "harness.ts"), harnessSource.replace(completion, marker));
     writeFileSync(join(workDir, "assert-throws.js"), assertThrowsSource);
     writeFileSync(requestFile, JSON.stringify({

@@ -33,7 +33,6 @@ test("metadata generates the upstream variants without rewriting execution goals
 
 test("unsupported execution requirements and assertion reflection remain exclusions", () => {
   for (const [head, body] of [
-    ["negative: {phase: parse, type: SyntaxError}", "assert.sameValue(1, 1);"],
     ["negative: {phase: runtime, type: TypeError}", "throw new TypeError();"],
     ["includes: [propertyHelper.js]", "verifyProperty({}, 'x', {});"],
     ["description: global script", "assert.sameValue(this, globalThis);"],
@@ -46,7 +45,11 @@ test("unsupported execution requirements and assertion reflection remain exclusi
   }
   const text = source("description: scalar", "// globalThis and this in comments are harmless\nassert.sameValue('this', 'this');");
   expect(exclusion(text, metadata(text), "strict")).toBeUndefined();
-  expect(exclusion(text, metadata(text), "sloppy")).toBe("execution:sloppy");
+  expect(exclusion(text, metadata(text), "sloppy")).toBeUndefined();
+  const scriptGlobal = source("description: script global", "assert.sameValue((function () { return this; })(), globalThis);");
+  expect(exclusion(scriptGlobal, metadata(scriptGlobal), "sloppy")).toBe("host:script-environment");
+  const commonJsGlobal = source("description: CommonJS global", "assert.sameValue(module.exports, {});");
+  expect(exclusion(commonJsGlobal, metadata(commonJsGlobal), "sloppy")).toBe("host:module");
   const asyncText = source("flags: [async]", "Promise.resolve().then(() => $DONE());");
   expect(exclusion(asyncText, metadata(asyncText), "strict")).toBeUndefined();
 });
@@ -60,15 +63,25 @@ test("negative parse cases require the compiler's matching source diagnostic", (
     code: "SC0001", message: "Variable declaration expected.", loc: { file: "/tmp/main.js", start: offset },
   }] };
   expect(matchesParseNegative(match, text)).toBe(true);
-  expect(matchesParseNegative(match, text, "sloppy")).toBe(true);
+  expect(matchesParseNegative(match, text, "sloppy")).toBe(false);
+  const sloppyOffset = prepare(text, false, undefined, "sloppy").indexOf("const = ;") + "const ".length;
+  expect(matchesParseNegative({ status: "compile-refusal", diagnostics: [{
+    code: "SC0001", message: "Variable declaration expected.", loc: { file: "/tmp/main.cjs", start: sloppyOffset },
+  }] }, text, "sloppy")).toBe(true);
   expect(matchesParseNegative({ status: "compile-refusal", diagnostics: [{
     code: "SC0001", message: "Cannot find name '$DONOTEVALUATE'.", loc: { file: "/tmp/main.js", start: 0 },
   }] }, text)).toBe(false);
   expect(matchesParseNegative({ status: "compiler-error", diagnostics: match.diagnostics }, text)).toBe(false);
   const strictOnly = source("negative: {phase: parse, type: SyntaxError}", "with ({}) {}");
-  expect(exclusion(strictOnly, metadata(strictOnly), "sloppy")).toBe("negative-phase:parse");
+  expect(exclusion(strictOnly, metadata(strictOnly), "sloppy")).toBeUndefined();
   const generatedOnly = source("negative: {phase: parse, type: SyntaxError}", "function f() {");
-  expect(exclusion(generatedOnly, metadata(generatedOnly), "strict")).toBe("negative-phase:parse");
+  expect(exclusion(generatedOnly, metadata(generatedOnly), "strict")).toBeUndefined();
+  const typeOnly = source("negative: {phase: parse, type: SyntaxError}", "const value = 'a' * 2;");
+  const typeOffset = prepare(typeOnly).indexOf("'a' * 2");
+  expect(matchesParseNegative({ status: "compile-refusal", diagnostics: [{
+    code: "SC0001", message: "An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.",
+    loc: { file: "/tmp/main.js", start: typeOffset },
+  }] }, typeOnly)).toBe(false);
 });
 
 test("built-in error assertions are admitted without permitting constructor aliases", () => {
@@ -91,6 +104,9 @@ test("the adapter retains the test body without a function or try/catch wrapper"
   expect(result.startsWith('"use strict";\n')).toBe(true);
   expect(result).toContain(`\n${body}\n`);
   expect(result).not.toContain("try {");
+  const sloppy = prepare(body, false, "done", "sloppy");
+  expect(sloppy).toContain(`\n${body}\n`);
+  expect(sloppy).not.toContain('"use strict";');
 });
 
 test("reports keep exclusions, refusals, failures and passes separate", () => {
