@@ -3704,7 +3704,10 @@ function lowerPromiseThenPresence(
     expected?: (IrType & { kind: "array" }) | (IrType & { kind: "record" }),): IrExpr {
     const loc = locOf(expr);
     const ctxType = lowerer.checker.getContextualType(expr);
-    const tsType = ctxType ?? lowerer.typeOf(expr);
+    // `as const satisfies readonly T[]` checks against an array but keeps
+    // the literal's inferred tuple type. Build that shape; an actual array
+    // destination can use the ordinary tuple-to-array coercion afterward.
+    const tsType = underConstAssertion(expr) ? lowerer.typeOf(expr) : ctxType ?? lowerer.typeOf(expr);
     let mapped = expected ?? lowerer.mapTypeOf(tsType);
     // A JS literal whose OWN inferred type is never-tainted
     // (neverTaintedJsType — the evolving `const gb = []`, the mixed
@@ -3827,17 +3830,13 @@ function lowerPromiseThenPresence(
     // literal constructs the tuple's record shape — one positional field
     // per element, source order (which IS index order, so evaluation order
     // is JS-exact). tsc has already checked the arity; the recount below
-    // backstops `as` smuggling. Spreads have no fixed positions — fenced.
+    // backstops `as` smuggling. Fixed tuple spreads have known positions.
     if (mapped?.kind === "record") {
       const shape = lowerer.shapes.get(mapped.shapeId);
       if (shape?.tuple) {
         const spread = expr.elements.find(ts.isSpreadElement);
         if (spread) {
-          lowerer.unsupported(
-            "SC1090",
-            spread,
-            "spread elements in tuple literals (positions must be spelled out)",
-          );
+          return lowerTupleSpreadLiteral(lowerer, expr, mapped, shape);
         }
         if (expr.elements.length !== shape.fields.length) {
           // tsc padded an UNDER-LENGTH literal against an optional-element
@@ -4108,6 +4107,65 @@ function lowerPromiseThenPresence(
       loc,
     };
   }
+
+/** Build a fixed tuple from positional elements and fixed tuple spreads.
+ * Capture each value in source order: deferring the reads until recordLit
+ * would observe a later element's mutations of the spread source. */
+function lowerTupleSpreadLiteral(
+  lowerer: Lowerer,
+  expr: ts.ArrayLiteralExpression,
+  type: IrType & { kind: "record" },
+  shape: IrRecordShape,
+): IrExpr {
+  const loc = locOf(expr);
+  const byName = new Map(shape.fields.map((field) => [field.name, field.type]));
+  const stmts: IrStmt[] = [];
+  const fields: { name: string; value: IrExpr }[] = [];
+  const append = (node: ts.Expression, value: IrExpr): void => {
+    const name = String(fields.length);
+    const expected = byName.get(name);
+    if (!expected) lowerer.badType(expr, lowerer.typeOf(expr));
+    const coerced = lowerer.coerceInto(node, value, expected);
+    const temp = lowerer.declareHiddenLocal("%tupleElement", expected);
+    const at = locOf(node);
+    stmts.push({ kind: "varDecl", localId: temp.id, init: coerced, loc: at });
+    fields.push({ name, value: varRef(temp.id, expected, at) });
+  };
+  for (const element of expr.elements) {
+    if (!ts.isSpreadElement(element)) {
+      const expected = byName.get(String(fields.length));
+      if (!expected) lowerer.badType(element, lowerer.typeOf(element));
+      append(element, lowerer.lowerExprExpecting(element, expected));
+      continue;
+    }
+    const source = lowerer.lowerExpr(element.expression);
+    const sourceShape = source.type.kind === "record" ? lowerer.shapes.get(source.type.shapeId) : undefined;
+    if (!sourceShape?.tuple) {
+      // Empty tuples use a zero-length array representation. Preserve a
+      // producing call's effects even though there are no positions to copy.
+      const sourceTs = lowerer.typeOf(element.expression);
+      if (source.type.kind === "array" && lowerer.checker.isTupleType(sourceTs) &&
+        lowerer.checker.getTypeArguments(sourceTs as ts.TypeReference).length === 0) {
+        stmts.push({ kind: "exprStmt", expr: source, loc: locOf(element) });
+        continue;
+      }
+      lowerer.unsupported("SC1090", element, "spreading a variable-length value into a fixed tuple literal");
+    }
+    const temp = lowerer.declareHiddenLocal("%tupleSpread", source.type);
+    const at = locOf(element);
+    stmts.push({ kind: "varDecl", localId: temp.id, init: source, loc: at });
+    const receiver = varRef(temp.id, source.type, at);
+    const positions = [...sourceShape.fields].sort((a, b) => Number(a.name) - Number(b.name));
+    for (const field of positions) {
+      append(element.expression, {
+        kind: "recordGet", obj: receiver, shapeId: sourceShape.id,
+        field: field.name, type: field.type, loc: at,
+      });
+    }
+  }
+  if (fields.length !== shape.fields.length) lowerer.badType(expr, lowerer.typeOf(expr));
+  return { kind: "seqExpr", stmts, result: { kind: "recordLit", fields, type, loc }, type, loc };
+}
 
 
 /** Convert an undefined-armed numeric value at an arithmetic use. Ordinary

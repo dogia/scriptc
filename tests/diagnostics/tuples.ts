@@ -1,7 +1,7 @@
 // Tuple + ref-element-array fences — what stays OUT of the new surface and
 // why: dynamic tuple indexing (heterogeneous positions have no single
-// element type), optional/rest tuple elements (no fixed shape), for-of over
-// tuples, spread into tuple literals, join on ref-element arrays (JS would
+// element type), optional/rest tuple elements (no fixed shape), variable-length
+// spreads into tuple literals, join on ref-element arrays (JS would
 // recursively toString), and Map-element arrays (hashed storage has no
 // element representation in the array runtime).
 const pair: [string, number] = ["a", 1];
@@ -21,8 +21,8 @@ for (const part of pair) {
   console.log(part);
 }
 
-// Spread has no fixed positions inside a tuple literal.
-const copy: [string, number] = [...pair];
+// An array's runtime length cannot determine a fixed tuple's positions.
+const copy = [...(["a", 1] as (string | number)[])] as [string, number];
 
 // The arity constant folds only off side-effect-free receivers.
 function mk(): [string, number] {
