@@ -2256,7 +2256,7 @@ export class LlDyn {
       B.terminate(`ret ptr ${r}`);
       B.startBlock(lNext);
     }
-    // OBJ: the own member (+1) or the undefined singleton.
+    // OBJ: the own member or the inherited builtin Error constructor.
     {
       const isObj = B.tmp();
       B.line(`${isObj} = icmp eq i32 ${kd}, ${DYN_KIND.OBJ}`);
@@ -2264,15 +2264,9 @@ export class LlDyn {
       const lNext = B.newLabel("kg.n");
       B.condBr(isObj, lObj, lNext);
       B.startBlock(lObj);
-      host.declare(`declare ptr @scr_dyn_obj_get(ptr, ptr, ${host.sizeType})`);
-      const m = B.tmp();
-      B.line(`${m} = call ptr @scr_dyn_obj_get(ptr %d, ptr ${kParts.data}, ${host.sizeType} ${kParts.len})`);
-      const has = B.tmp();
-      B.line(`${has} = icmp ne ptr ${m}, null`);
-      const u = this.undef(B);
-      const sel = B.tmp();
-      B.line(`${sel} = select i1 ${has}, ptr ${m}, ptr ${u}`);
-      const r = this.retainDyn(B, sel);
+      host.declare(`declare ptr @scr_dyn_obj_read(ptr, ptr, ${host.sizeType})`);
+      const r = B.tmp();
+      B.line(`${r} = call ptr @scr_dyn_obj_read(ptr %d, ptr ${kParts.data}, ${host.sizeType} ${kParts.len})`);
       B.terminate(`ret ptr ${r}`);
       B.startBlock(lNext);
     }

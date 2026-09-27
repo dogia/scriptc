@@ -736,6 +736,15 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
           B.line(`${n} = xor i1 ${t}, true`);
           return { name: n, type: e.type };
         }
+        if (e.test === "object") {
+          host.declare(`declare zeroext i1 @scr_caught_is_object(ptr)`);
+          const t = B.tmp();
+          B.line(`${t} = call zeroext i1 @scr_caught_is_object(ptr ${c.name})`);
+          if (e.negated !== true) return { name: t, type: e.type };
+          const n = B.tmp();
+          B.line(`${n} = xor i1 ${t}, true`);
+          return { name: n, type: e.type };
+        }
         const tag = { string: 3, number: 1, boolean: 2 }[e.test];
         const kp = B.tmp();
         const k = B.tmp();

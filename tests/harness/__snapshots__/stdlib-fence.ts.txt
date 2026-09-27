@@ -258,15 +258,6 @@ stdlib-fence.ts:61:16 - error SC2020: 'JSON.stringify with replacer/space parame
 
   hint: the serializer is type-directed — shape the value before stringifying
 
-stdlib-fence.ts:66:16 - error SC2020: 'then with 2 arguments' is part of the standard library types but has no scriptc lowering yet
-
-  65 | }
-  66 | const thened = work().then((v) => v + 1, () => 0);
-     |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  67 | const caught = work().catch(() => 0);
-
-  hint: the supported form takes exactly one fulfillment handler — chain .catch(...) for the rejection half
-
 stdlib-fence.ts:73:15 - error SC2020: 'Object.is over a dynamic operand' is part of the standard library types but has no scriptc lowering yet
 
   72 | // unions needing narrowing.

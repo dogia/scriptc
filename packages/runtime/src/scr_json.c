@@ -1387,6 +1387,13 @@ ScrStr *scr_dyn_typeof(const ScrDyn *d) {
   return scr_str_new(s, strlen(s));
 }
 
+bool scr_dyn_is_object(const ScrDyn *d) {
+  ScrStr *type = scr_dyn_typeof(d);
+  bool object = type->len == 6 && memcmp(type->data, "object", 6) == 0;
+  scr_str_release(type);
+  return object;
+}
+
 ScrStr *scr_dyn_object_tag(const ScrDyn *d) {
   if (d->kind == SCR_DYN_TYPED_REF) {
     if (scr_dyn_isl_is_error(d)) return scr_str_new("[object Error]", 14);
@@ -2957,6 +2964,30 @@ bool scr_dyn_err_instanceof(const ScrDyn *d, double kind) {
     }
   }
   return false;
+}
+
+ScrDyn *scr_dyn_obj_read(const ScrDyn *d, const char *key, size_t key_len) {
+  ScrDyn *own = scr_dyn_obj_get(d, key, key_len);
+  if (own) return scr_dyn_retain(own);
+  if (key_len == 11 && memcmp(key, "constructor", 11) == 0) {
+    static const char *const tokens[] = {
+        "[builtin Error]", "[builtin TypeError]",
+        "[builtin RangeError]", "[builtin SyntaxError]",
+    };
+    for (size_t i = 0; i < scr_errdyn_n; i++) {
+      if (scr_errdyn_cache[i].dyn != d) continue;
+      const ScrVt *vt = scr_errdyn_cache[i].err->vt;
+      for (size_t kind = 0; kind < sizeof tokens / sizeof tokens[0]; kind++) {
+        if (vt != &scr_error_vts[kind]) continue;
+        ScrStr *token = scr_str_new(tokens[kind], strlen(tokens[kind]));
+        ScrDyn *result = scr_dyn_new_str(token);
+        scr_str_release(token);
+        return result;
+      }
+      break;
+    }
+  }
+  return scr_dyn_retain(scr_dyn_undefined());
 }
 
 /* ── Object.keys/values/entries over the checked-dynamic tree ──────────────────────────

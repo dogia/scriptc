@@ -378,6 +378,7 @@ import { OVERFLOW_MEMBER } from "./shapes.js";
       `    }`,
       `    /* FALLTHROUGH: a non-Error hierarchy object is type-erased */`,
       `  case SCR_EXC_REF:`,
+      `  case SCR_EXC_PRIMITIVE_REF:`,
       `    /* A thrown dyn value passes back BY REFERENCE (identity with`,
       `     * every other holder of the node — the traced-throw shape). */`,
       `    if (c->retain_fn == scr_dyn_retain_v) return scr_dyn_retain((ScrDyn *)c->payload);`,
@@ -1013,8 +1014,7 @@ export function jsonWriteHelper(emitter: CEmitter, t: IrType): string {
     d.push(`    return sc_out;`);
     d.push(`  }`);
     d.push(`  if (d->kind == SCR_DYN_OBJ) {`);
-    d.push(`    ScrDyn *m = scr_dyn_obj_get(d, k->data, k->len);`);
-    d.push(`    return scr_dyn_retain(m ? m : scr_dyn_undefined());`);
+    d.push(`    return scr_dyn_obj_read(d, k->data, k->len);`);
     d.push(`  }`);
     d.push(`  if (d->kind == SCR_DYN_JSVAL) {`);
     d.push(`    /* Island-held: o[k] reads the REAL engine property (getters`);

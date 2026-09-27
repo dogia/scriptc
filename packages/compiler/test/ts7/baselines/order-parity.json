@@ -6925,6 +6925,18 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3001-caught-typeof-object.js": {
+   "order": [
+    "<repo>/tests/corpus/3001-caught-typeof-object.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3002-promise-then-two.ts": {
+   "order": [
+    "<repo>/tests/corpus/3002-promise-then-two.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/301-while.ts": {
    "order": [
     "<repo>/tests/corpus/301-while.ts"
@@ -7198,6 +7210,12 @@
   "<repo>/tests/corpus/3059-arguments-property-names.ts": {
    "order": [
     "<repo>/tests/corpus/3059-arguments-property-names.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3060-dynamic-host-global.ts": {
+   "order": [
+    "<repo>/tests/corpus/3060-dynamic-host-global.ts"
    ],
    "diags": []
   },

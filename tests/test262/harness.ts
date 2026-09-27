@@ -2,8 +2,20 @@
 // adapter avoids JS function expandos, which currently hit a static fence.
 // Keep the supported surface small and check it against the upstream helpers.
 import nodeAssert from "node:assert/strict";
+import { throwsOutcome } from "./assert-throws.js";
 
 export class Test262Error extends Error {}
+
+let asyncDone = false;
+
+export function $DONE(error?: unknown): void {
+  if (asyncDone || error) {
+    console.error("SCRIPTC_TEST262_HARNESS: async completion failed");
+    process.exit(87);
+  }
+  asyncDone = true;
+  console.log("__scriptc_test262_complete__");
+}
 
 function scalar(value: unknown): void {
   // Native-to-unknown conversion can copy references (notably arrays).
@@ -38,6 +50,16 @@ export namespace assert {
     } catch {
       throw new Test262Error(message);
     }
+  }
+
+  export function throws(expectedErrorConstructor: unknown, func: () => unknown, message = "Expected exception"): void {
+    const outcome = throwsOutcome(expectedErrorConstructor, func);
+    if (outcome === "invalid") throw new Test262Error("assert.throws requires a function to run");
+    if (outcome === "unsupported") {
+      console.error("SCRIPTC_TEST262_HARNESS: assert.throws needs an Error instance");
+      process.exit(86);
+    }
+    if (outcome !== "pass") throw new Test262Error(message);
   }
 
   export function compareArray(actual: unknown, expected: unknown, message = "Expected matching array contents"): void {

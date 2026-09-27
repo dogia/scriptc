@@ -6,7 +6,7 @@
  * the real CLI); stdout, stderr, and exit codes must agree. Mutations are
  * safe BECAUSE of the jail: every write (env add/rm, dns add/rm, alias
  * set/rm, project add) lands in the mock, whose endpoint trace pins the
- * request body byte-for-byte. the gateway e2e suite's three-legged pattern, pointed at a CLI
+ * request body exactly. the gateway e2e suite's three-legged pattern, pointed at a CLI
  * whose network stack rides the island's native fetch. The compiled leg's
  * module-graph walls fell in sequence (node:https → smol-toml's dual
  * package → node:domain); the "reaches today" pin below records the
@@ -49,12 +49,13 @@
  * attributes requests by bearer token, so concurrent lanes stay separable
  * and the per-command endpoint sequence is asserted per child.
  *
- * NORMALIZATIONS (both lanes, byte-exact otherwise): the lane cwd →
+ * NORMALIZATIONS (both lanes, other content exact): the lane cwd →
  * "<CWD>", the banner's Node version → "(Node.js <V>)" (a build pin, not
  * semantics), spinner elapsed "[123ms]" → "[<T>]", and relative-time
  * tokens ("932d", "50s", "842d ago") → "<T>" — they are rendered against
  * wall-clock "now" from the mock's fixed timestamps, so a day boundary
- * mid-run would flip them. Absolute dates (inspect's created line, logs'
+ * mid-run would flip them. Table alignment spaces also vary with age and
+ * are collapsed while retaining cell boundaries. Absolute dates (inspect's created line, logs'
  * TIME column) are NOT normalized: children run under TZ=UTC, so the
  * mock's fixed epochs render machine-independently and any lane skew in
  * Date formatting is a real divergence. */
@@ -245,6 +246,14 @@ function normalize(buf: Buffer, cwd: string): string {
       .replace(/False positive error reports may follow\n/g, "")
       .replace(/For details see https:\/\/github\.com\/google\/sanitizers\/issues\/189\n/g, "");
   }
+  // Relative ages change table column widths as the fixed mock dates recede.
+  // Preserve cell boundaries and contents while discarding alignment padding.
+  text = text.split("\n").map((line) => {
+    const unpadded = line.trimEnd();
+    return /^ +\S.* {2,}\S/.test(unpadded)
+      ? `  ${unpadded.trimStart().replace(/ {2,}/g, "  ")}`
+      : unpadded;
+  }).join("\n");
   return text;
 }
 

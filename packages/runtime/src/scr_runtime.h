@@ -2089,6 +2089,10 @@ typedef enum {
    * Carries NO payload (the value rides the generator's ret slot), so
    * scr_exc_clear/reset need no arm. Never escapes a generator fiber. */
   SCR_EXC_GENRET,
+  /* Refcounted values whose JS typeof is not object (Symbol, BigInt,
+   * functions, and checked-dynamic primitives). The payload uses the
+   * same ownership as REF. */
+  SCR_EXC_PRIMITIVE_REF,
 } ScrExcKind;
 
 /* One cell per fiber (JS has one exception in flight per execution
@@ -2119,7 +2123,12 @@ void scr_throw_str(ScrStr *v); /* takes ownership */
  * passes the payload type's `_v` adapters, like scr_union_new_ref); trace
  * is non-NULL iff the payload type carries a cycle header. */
 void scr_throw_ref(void *v, void *(*retain)(void *), void (*release)(void *),
-                    ScrTraceFn trace);
+                   ScrTraceFn trace);
+/* Store a reference whose JS typeof was checked at the throw site. */
+void scr_throw_ref_classified(void *v, void *(*retain)(void *), void (*release)(void *),
+                              ScrTraceFn trace, bool object);
+void scr_throw_primitive_ref(void *v, void *(*retain)(void *), void (*release)(void *),
+                             ScrTraceFn trace);
 /* Same ownership contract as scr_throw_ref; the payload must be a
  * hierarchy-class instance (vtable word present) — see SCR_EXC_OBJ. */
 void scr_throw_obj(void *v, void *(*retain)(void *), void (*release)(void *),
@@ -2162,6 +2171,9 @@ void scr_rethrow(const ScrCaught *c);
 /* `e instanceof C` on a catch binding: an OBJ payload whose vtable preorder
  * lies inside C's interval. False for every other payload kind. */
 bool scr_caught_instanceof(const ScrCaught *c, size_t pre, size_t post);
+/* `typeof e === "object"` on a catch binding. Throw sites choose REF or
+ * PRIMITIVE_REF from the value's JS typeof before storing the payload. */
+bool scr_caught_is_object(const ScrCaught *c);
 /* `String(e)` / `${e}` on a catch binding: JS's String() over the snapshot
  * — numbers/booleans/strings by value, Error payloads via
  * scr_error_to_string ("name: message" — String(e) carries no stack in
@@ -3597,6 +3609,12 @@ double scr_dyn_number_coerce(const ScrDyn *d);
  * back to its runtime error and the class's stamped preorder interval
  * answers. A dyn value that never came from an error answers false. */
 bool scr_dyn_err_instanceof(const ScrDyn *d, double kind);
+/* Property read on a checked-dynamic object. Own fields take precedence;
+ * runtime Error instances inherit their exact builtin constructor token.
+ * The result is owned. */
+ScrDyn *scr_dyn_obj_read(const ScrDyn *d, const char *key, size_t key_len);
+/* JS typeof comparison, including null's "object" result. */
+bool scr_dyn_is_object(const ScrDyn *d);
 
 /* structuredClone over the checked-dynamic tree: JSON-safe data + bytes deep-copy;
  * functions/handles throw the spec's catchable DataCloneError; cycles
@@ -4821,6 +4839,7 @@ ScrJsval *scr_jsval_iter_new(ScrJsval *a);
 ScrJsval *scr_jsval_plus(ScrJsval *a); /* unary + (ToNumber) */
 int scr_jsval_truthy(ScrJsval *a);
 ScrStr *scr_jsval_typeof(ScrJsval *a);
+bool scr_jsval_is_object(ScrJsval *a);
 ScrStr *scr_jsval_to_str(ScrJsval *a); /* String(v); NULL = bridged */
 
 /* Property/element access and calls. Names are NUL-terminated ScrStr

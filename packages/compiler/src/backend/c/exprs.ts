@@ -3266,6 +3266,10 @@ function emitDynamicExpr(
           const test = `scr_caught_instanceof(${c.name}, ${target.pre}, ${target.post})`;
           return emitter.newTemp(e.type, e.negated ? `!${test}` : test);
         }
+        if (e.test === "object") {
+          const test = `scr_caught_is_object(${c.name})`;
+          return emitter.newTemp(e.type, e.negated ? `!${test}` : test);
+        }
         const tag = { string: "SCR_EXC_STR", number: "SCR_EXC_F64", boolean: "SCR_EXC_BOOL" }[e.test];
         return emitter.newTemp(e.type, `${c.name}->kind ${e.negated ? "!=" : "=="} ${tag}`);
       }
@@ -3383,7 +3387,7 @@ function emitIntrinsicExpr(
             // bindings and the unhandled dispatch see the dyn value
             // itself — identity preserved.
             emitter.line(
-              `scr_throw_ref(${reason.name}, &${rc.retain}, &${rc.release}, NULL);${emitter.srcComment(e.loc)}`,
+              `scr_throw_ref_classified(${reason.name}, &${rc.retain}, &${rc.release}, NULL, scr_dyn_is_object(${reason.name}));${emitter.srcComment(e.loc)}`,
             );
           } else {
             emitter.line(
@@ -3643,6 +3647,13 @@ function emitAsyncExpr(
             } else if (t.kind === "object" && emitter.classMeta.get(t.className)?.hierarchy) {
               const rc = vAdapters(t);
               emitter.line(`scr_throw_obj(${a.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)});${emitter.srcComment(e.loc)}`);
+            } else if (t.kind === "symbol" || t.kind === "bigint" || t.kind === "func" || t.kind === "classval") {
+              const rc = vAdapters(t);
+              emitter.line(`scr_throw_primitive_ref(${a.name}, &${rc.retain}, &${rc.release}, NULL);${emitter.srcComment(e.loc)}`);
+            } else if (t.kind === "dyn" || t.kind === "jsval") {
+              const rc = vAdapters(t);
+              const test = t.kind === "dyn" ? "scr_dyn_is_object" : "scr_jsval_is_object";
+              emitter.line(`scr_throw_ref_classified(${a.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)}, ${test}(${a.name}));${emitter.srcComment(e.loc)}`);
             } else {
               const rc = vAdapters(t);
               emitter.line(`scr_throw_ref(${a.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)});${emitter.srcComment(e.loc)}`);
@@ -3699,6 +3710,13 @@ function emitAsyncExpr(
           } else if (t.kind === "object" && emitter.classMeta.get(t.className)?.hierarchy) {
             const rc = vAdapters(t);
             emitter.line(`scr_throw_obj(${a.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)});${emitter.srcComment(e.loc)}`);
+          } else if (t.kind === "symbol" || t.kind === "bigint" || t.kind === "func" || t.kind === "classval") {
+            const rc = vAdapters(t);
+            emitter.line(`scr_throw_primitive_ref(${a.name}, &${rc.retain}, &${rc.release}, NULL);${emitter.srcComment(e.loc)}`);
+          } else if (t.kind === "dyn" || t.kind === "jsval") {
+            const rc = vAdapters(t);
+            const test = t.kind === "dyn" ? "scr_dyn_is_object" : "scr_jsval_is_object";
+            emitter.line(`scr_throw_ref_classified(${a.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)}, ${test}(${a.name}));${emitter.srcComment(e.loc)}`);
           } else {
             const rc = vAdapters(t);
             emitter.line(`scr_throw_ref(${a.name}, &${rc.retain}, &${rc.release}, ${emitter.traceArgC(t)});${emitter.srcComment(e.loc)}`);

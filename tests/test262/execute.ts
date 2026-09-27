@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileFailureStatus, completion, harnessSource, prepare } from "./support.mjs";
+import { assertThrowsSource, compileFailureStatus, completion, harnessSource, prepare } from "./support.mjs";
 
 export interface Outcome {
   status: string;
@@ -62,6 +63,7 @@ export function boundedRun(command: string, args: string[], timeoutMs: number): 
 
 export async function runSource(source: string, options: {
   backend?: "default" | "llvm" | "c";
+  asyncTest?: boolean;
   sanitize?: boolean;
   compileTimeoutMs?: number;
   runtimeTimeoutMs?: number;
@@ -76,8 +78,10 @@ export async function runSource(source: string, options: {
   const requestFile = join(workDir, "request.json");
   let phase = "compile";
   try {
-    writeFileSync(entry, prepare(source));
-    writeFileSync(join(workDir, "harness.ts"), harnessSource);
+    const marker = `${completion}:${randomBytes(16).toString("hex")}`;
+    writeFileSync(entry, prepare(source, options.asyncTest ?? false, marker));
+    writeFileSync(join(workDir, "harness.ts"), harnessSource.replace(completion, marker));
+    writeFileSync(join(workDir, "assert-throws.js"), assertThrowsSource);
     writeFileSync(requestFile, JSON.stringify({
       entry, binary, workDir, result: resultFile,
       backend: options.backend ?? "default", sanitize: options.sanitize ?? false,
@@ -106,7 +110,10 @@ export async function runSource(source: string, options: {
     if (result.code === 86 && stderr === "SCRIPTC_TEST262_HARNESS: reference equality requires an identity-preserving adapter\n") {
       return finish({ ...common, status: "harness-refusal", phase, reason: "reference-assertion", stderr });
     }
-    if (result.code === 0 && !result.overflow && stderr === "" && result.stdout === `${completion}\n`) {
+    if (result.code === 86 && stderr === "SCRIPTC_TEST262_HARNESS: assert.throws needs an Error instance\n") {
+      return finish({ ...common, status: "harness-refusal", phase, reason: "non-error-assertion", stderr });
+    }
+    if (result.code === 0 && !result.overflow && stderr === "" && result.stdout === `${marker}\n`) {
       return finish({ ...common, status: "pass" });
     }
     // Require the entire diagnostic, so a sanitizer report following a known

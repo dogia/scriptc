@@ -230,7 +230,8 @@ static void scr_promise_trace(void *o, ScrTraceVisit visit, void *ctx) {
   /* Waiters are fibers (not refcounted objects) — the settled payload and
    * the combinator destinations are the strong references this promise
    * owns (destination promises are cycle-headered). */
-  if ((p->payload_kind == SCR_EXC_REF || p->payload_kind == SCR_EXC_OBJ) &&
+  if ((p->payload_kind == SCR_EXC_REF || p->payload_kind == SCR_EXC_OBJ ||
+       p->payload_kind == SCR_EXC_PRIMITIVE_REF) &&
       p->trace_fn) {
     visit(p->payload, ctx);
   }
@@ -244,7 +245,8 @@ static void scr_promise_gcfree(void *o) {
   ScrPromise *p = (ScrPromise *)o;
   if (p->payload_kind == SCR_EXC_STR) {
     scr_str_release((ScrStr *)p->payload);
-  } else if ((p->payload_kind == SCR_EXC_REF || p->payload_kind == SCR_EXC_OBJ) &&
+  } else if ((p->payload_kind == SCR_EXC_REF || p->payload_kind == SCR_EXC_OBJ ||
+              p->payload_kind == SCR_EXC_PRIMITIVE_REF) &&
              p->payload && !p->trace_fn) {
     p->release_fn(p->payload);
   }
@@ -313,7 +315,8 @@ ScrPromise *scr_promise_retain(ScrPromise *p) {
 
 static void scr_promise_release_payload(ScrPromise *p) {
   if (p->payload_kind == SCR_EXC_STR) scr_str_release((ScrStr *)p->payload);
-  else if ((p->payload_kind == SCR_EXC_REF || p->payload_kind == SCR_EXC_OBJ) &&
+  else if ((p->payload_kind == SCR_EXC_REF || p->payload_kind == SCR_EXC_OBJ ||
+            p->payload_kind == SCR_EXC_PRIMITIVE_REF) &&
            p->payload) p->release_fn(p->payload);
   p->payload_kind = SCR_EXC_NONE;
   p->payload = NULL;
@@ -1011,7 +1014,8 @@ static void scr_promise_settle_from(ScrPromise *dst, ScrPromise *src) {
     dst->payload = NULL;
     if (src->payload_kind == SCR_EXC_STR && src->payload) {
       dst->payload = scr_str_retain((ScrStr *)src->payload);
-    } else if ((src->payload_kind == SCR_EXC_REF || src->payload_kind == SCR_EXC_OBJ) &&
+    } else if ((src->payload_kind == SCR_EXC_REF || src->payload_kind == SCR_EXC_OBJ ||
+                src->payload_kind == SCR_EXC_PRIMITIVE_REF) &&
                src->payload) {
       dst->payload = src->retain_fn(src->payload);
     }
@@ -1488,6 +1492,7 @@ static void scr_promise_rethrow(ScrPromise *p) {
   case SCR_EXC_BOOL: scr_throw_bool(p->b); break;
   case SCR_EXC_STR: scr_throw_str(scr_str_retain((ScrStr *)p->payload)); break;
   case SCR_EXC_REF: scr_throw_ref(p->retain_fn(p->payload), p->retain_fn, p->release_fn, p->trace_fn); break;
+  case SCR_EXC_PRIMITIVE_REF: scr_throw_primitive_ref(p->retain_fn(p->payload), p->retain_fn, p->release_fn, p->trace_fn); break;
   case SCR_EXC_OBJ: scr_throw_obj(p->retain_fn(p->payload), p->retain_fn, p->release_fn, p->trace_fn); break;
   case SCR_EXC_NONE:
   case SCR_EXC_GENRET: /* unreachable: the sentinel never settles a promise */
@@ -3239,7 +3244,8 @@ static void scr_gen_slot_reset(ScrGenSlot *s) {
 static void scr_gen_exc_reset(ScrExcCell *cell) {
   if (cell->kind == SCR_EXC_STR) {
     scr_str_release((ScrStr *)cell->payload);
-  } else if (cell->kind == SCR_EXC_REF || cell->kind == SCR_EXC_OBJ) {
+  } else if (cell->kind == SCR_EXC_REF || cell->kind == SCR_EXC_OBJ ||
+             cell->kind == SCR_EXC_PRIMITIVE_REF) {
     cell->release_fn(cell->payload);
   }
   memset(cell, 0, sizeof *cell);

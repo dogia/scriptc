@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import { describe, expect, test } from "vitest";
 import { runSource } from "../test262/execute.js";
-import { exclusion, matchesExpectation, metadata, pin, vendorRoot, verifyVendor } from "../test262/support.mjs";
+import { exclusion, matchesExpectation, matchesParseNegative, metadata, pin, vendorRoot, verifyVendor } from "../test262/support.mjs";
 import { shardSelect, shardSuffix } from "./shard.js";
 
 const sanitize = process.env.SCRIPTC_SAN === "1";
@@ -18,6 +18,13 @@ function runUpstream(source: string): void {
 
 test("Test262 regression inputs retain their pinned upstream bytes", () => {
   verifyVendor();
+});
+
+test("negative parse cases require a matching compiler syntax diagnostic", async () => {
+  const source = "/*---\nnegative: {phase: parse, type: SyntaxError}\n---*/\n$DONOTEVALUATE();\nconst = ;";
+  expect(exclusion(source, metadata(source), "strict")).toBeUndefined();
+  const result = await runSource(source, { sanitize });
+  expect(matchesParseNegative(result, source), JSON.stringify(result, null, 2)).toBe(true);
 });
 
 const profileCases = shardSelect<string>(pin.tests, (path) => `${path}#strict`);
@@ -56,6 +63,11 @@ assert.notSameValue(1, "1");
   { name: "array element mismatch", status: "fail", source: "assert.compareArray([1, 2], [1, 3]);" },
   { name: "array signed zero mismatch", status: "fail", source: "assert.compareArray([0], [-0]);" },
   { name: "assert requires true, not truthiness", status: "fail", source: "assert(1);" },
+  { name: "exact built-in exception", status: "pass", source: "assert.throws(TypeError, () => { throw new TypeError('x'); });" },
+  { name: "wrong built-in exception", status: "fail", source: "assert.throws(TypeError, () => { throw new RangeError('x'); });" },
+  { name: "subclass is not exact", status: "fail", source: "class E extends TypeError {} assert.throws(TypeError, () => { throw new E('x'); });" },
+  { name: "missing exception", status: "fail", source: "assert.throws(TypeError, () => {});" },
+  { name: "primitive exception", status: "fail", source: "assert.throws(TypeError, () => { throw 1; });" },
 ];
 
 describe(`Test262 host assertion contract${shardSuffix()}`, () => {
@@ -96,4 +108,30 @@ describe(`Test262 host assertion contract${shardSuffix()}`, () => {
     const result = await runSource(source, { sanitize });
     expect(result, JSON.stringify(result)).toMatchObject({ status: "harness-refusal", reason: "reference-assertion" });
   });
+
+  test("non-Error objects do not masquerade as Error assertions", async () => {
+    const source = "const value = JSON.parse('{\"constructor\":\"[builtin TypeError]\"}'); assert.throws(TypeError, () => { throw value; });";
+    expect(() => runUpstream(source)).toThrow();
+    const result = await runSource(source, { sanitize });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: "harness-refusal", reason: "non-error-assertion" });
+  });
+});
+
+const asyncControls = shardSelect([
+  { name: "promise completion", status: "pass", body: "Promise.resolve(1).then(value => { assert.sameValue(value, 1); $DONE(); });" },
+  { name: "completion error", status: "fail", body: "Promise.resolve().then(() => { $DONE('failure'); });" },
+  { name: "missing completion", status: "fail", body: "Promise.resolve().then(() => {});" },
+  { name: "duplicate completion", status: "fail", body: "$DONE(); $DONE();" },
+  { name: "completion marker spoof", status: "fail", body: "console.log('__scriptc_test262_complete__');" },
+], (item) => `async:${item.name}`);
+
+if (asyncControls.length > 0) describe(`Test262 async host contract${shardSuffix()}`, () => {
+  for (const control of asyncControls) {
+    test(control.name, async () => {
+      const source = `/*---\nflags: [async]\n---*/\n${control.body}`;
+      expect(exclusion(source, metadata(source), "strict")).toBeUndefined();
+      const result = await runSource(source, { sanitize, asyncTest: true });
+      expect(result, JSON.stringify(result, null, 2)).toMatchObject({ status: control.status });
+    });
+  }
 });

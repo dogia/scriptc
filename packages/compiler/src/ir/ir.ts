@@ -5359,14 +5359,15 @@ export type IrExpr =
   | { kind: "unionFuncEq"; unionId: string; tag: number; union: IrExpr; func: IrExpr; negated: boolean; type: IrType; loc: SrcLoc }
   /** Runtime test on a catch binding (`value` is a caught-typed varRef,
    * borrowed). The primitive tests ("string"/"number"/"boolean") compare
-   * the snapshot's kind tag — exactly what `typeof e === "..."` observes;
+   * the snapshot's kind tag. "object" also checks reference payloads,
+   * excluding callable and primitive references;
    * "instanceof" requires `className` (a hierarchy class) and tests an OBJ
    * payload's vtable preorder against its interval (false for every other
    * payload kind). `negated` flips the result (the `!==` spelling). */
   | {
       kind: "caughtTest";
       value: IrExpr;
-      test: "string" | "number" | "boolean" | "instanceof";
+      test: "string" | "number" | "boolean" | "object" | "instanceof";
       className?: string;
       negated?: boolean;
       type: IrType;
@@ -6694,7 +6695,9 @@ export function moduleUsesDynAsync(mod: IrModule): boolean {
     // A DYN-typed await reads through scr_await_dyn (the checked-dynamic tree-crossing
     // await lives in the gated TU) — promise<dyn> receivers' awaits and
     // the lifted then/catch helpers alike.
-    if (node.kind === "awaitExpr" && node.type !== undefined && node.type.kind === "dyn") {
+    const boxed = (node as { value?: { type?: { kind?: unknown; ret?: { kind?: unknown } } } }).value?.type;
+    if ((node.kind === "awaitExpr" && node.type?.kind === "dyn") ||
+        (node.kind === "dynFrom" && (boxed?.kind === "promise" || (boxed?.kind === "func" && boxed.ret?.kind === "promise")))) {
       found = true;
       return;
     }
