@@ -2,9 +2,24 @@
 
 Outbound FFI lets statically compiled TypeScript call C ABI symbols directly. A strict JSON manifest connects a signature-only TypeScript declaration to a native symbol and supplies the archives or objects that resolve it at link time. There is no runtime symbol lookup and no JavaScript engine at the boundary.
 
-## A complete example
+## Replacing a Node-API addon
 
-Declare the native function in TypeScript. The declaration gives the type checker its ordinary source-level signature; it emits no JavaScript body.
+A Node-API addon exposes JavaScript functions through callbacks that take `napi_env` and `napi_callback_info`. To use its native operation through FFI, extract that operation into a plain C ABI function. Build the function into an object file or static archive, and bind its C signature in the manifest. Keep the Node-API registration and JavaScript value conversion in a separate wrapper if you also publish a Node addon. Renaming a `.node` file or linking an archive that still calls `napi_*` does not remove its dependency on Node. See [native addon limitations](/limitations#native-addons).
+
+For example, an addon client might call a small numeric helper like this:
+
+```ts:addon-client.ts
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const native = require("./native.node") as {
+  scale(value: number): number;
+};
+
+console.log(native.scale(21));
+```
+
+Replace the addon import and method call with a signature-only TypeScript declaration and a direct call. The declaration gives the type checker its ordinary source-level signature; it emits no JavaScript body.
 
 ```ts:main.ts
 declare function nativeScale(value: number): number;
@@ -134,6 +149,8 @@ The manifest is the native ABI authority. TypeScript has only `number`, so its d
 For ordinary outbound parameters, string and byte pointers are borrowed only for the duration of the call. Native code must not mutate, free, or retain them. Strings may contain embedded NUL bytes, so always use the supplied length; an empty span may have a null pointer. The current formats deliberately have no pointer, string, or byte return because those need an explicit ownership and allocator contract.
 
 For C++, export the symbol with `extern "C"` so it keeps the manifest's unmangled C name.
+
+For operating-system helpers, wrap the system call in a fixed-signature C function too. For example, Linux's variadic `prctl` needs a wrapper that supplies its operation and trailing arguments. A wrapper returning C `int32_t` uses the manifest's `i32` return class and a TypeScript `number`; check its error result in TypeScript before using the value. Build the object or archive for the same target as the scriptc binary.
 
 ## Callbacks and context pointers
 

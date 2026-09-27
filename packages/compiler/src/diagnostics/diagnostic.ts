@@ -620,6 +620,19 @@ export function noLoweringDiag(
   };
 }
 
+/** A resolved native addon needs Node's embedding ABI, even when the
+ * caller opts into scriptc's dynamic engine. The migration uses the
+ * underlying native operation through an ordinary C ABI declaration. */
+export function nativeAddonDiag(specifier: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2020",
+    message: `native addon '${specifier}' requires Node's addon runtime, which is unavailable in static and --dynamic builds`,
+    loc,
+    milestone: "later",
+    hint: "expose the native operation as a plain C ABI function in an object or static archive, then bind a signature-only TypeScript declaration with --ffi; Node-API callbacks themselves require Node (https://scriptc.dev/ffi#replacing-a-node-api-addon)",
+  };
+}
+
 /** Records are monomorphic structs, so a value's shape must match the
  * expected shape exactly OR narrow through the width-copy family
  * (recordWidthPlan / the overflow capture: target fields copied off the

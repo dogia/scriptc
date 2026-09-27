@@ -4,7 +4,7 @@ import { InternalCompilerError } from "../../errors.js";
  * methods), JSON.parse/stringify, process properties/methods and
  * process.env access, and console.log detection. */
 import { builtinModules } from "node:module";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import * as ts from "../ts7/adapter.js";
 import type { Lowerer } from "./lowerer.js";
 import { PoisonError, dynUndefinedExpr, ladderFenceExpr, nodeThrowExpr, own } from "./lowerer.js";
@@ -14,7 +14,7 @@ import { probeNodeRequireRefusal } from "../npm.js";
 import { isNpmStaticPackage } from "../npm-static.js";
 import { trackedReadFile } from "../input-tracker.js";
 import { requireResolvePathsRuntime, resolveImportMetaRuntime, resolveRequireRuntime, type RuntimeResolveError, type RuntimeResolveResult } from "../runtime-resolve.js";
-import { invalidJsonModuleDiag, requiresDynamicImportDiag } from "../../diagnostics/diagnostic.js";
+import { invalidJsonModuleDiag, nativeAddonDiag, requiresDynamicImportDiag } from "../../diagnostics/diagnostic.js";
 import {
   BuiltinModuleFn,
   builtinModuleFnOf,
@@ -651,15 +651,26 @@ function lowerBuiltinOptionalDefault(
         "imports-field specifiers have no require lowering yet — import the target statically",
       );
     }
-    if (isRelativeSpecifier(spec) || spec.startsWith("/")) {
+    if (isRelativeSpecifier(spec) || isAbsolute(spec)) {
       if (!spec.endsWith(".json")) {
+        // Only refine the existing refusal path: Node resolution detects
+        // extensionless addons and directory entries without executing
+        // them, and avoids mistaking a .node-named JS directory for one.
+        // This probe marks frontend inputs unstable, but every branch
+        // here refuses compilation, so successful-build caches keep their
+        // existing dependency proofs.
+        const resolved = resolveRequireRuntime(cr.baseFile.fileName, spec, lowerer.targetPlatform);
+        if (resolved.ok && resolved.value.endsWith(".node")) {
+          lowerer.pushDiag(nativeAddonDiag(spec, loc));
+          throw new PoisonError();
+        }
         lowerer.noLowering(
           `createRequire's require of '${spec}'`,
           call,
           "relative program modules lower when they resolve into the compiled graph; relative .json documents bake at build time",
         );
       }
-      const abs = spec.startsWith("/")
+      const abs = isAbsolute(spec)
         ? spec
         : resolve(dirname(cr.baseFile.fileName), spec);
       const text = trackedReadFile(abs);

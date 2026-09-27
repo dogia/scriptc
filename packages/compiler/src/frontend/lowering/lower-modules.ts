@@ -4,7 +4,7 @@
  * the module artifacts (globals, embedded npm tables) the IR module carries. */
 import * as ts from "../ts7/adapter.js";
 import type { Lowerer } from "./lowerer.js";
-import { dirname as dirnamePath, resolve as resolvePath } from "node:path";
+import { dirname as dirnamePath, isAbsolute, resolve as resolvePath } from "node:path";
 import { NpmGraphBuilder, packageNameOfPath, probeNodeImportRefusal, probeNodeRequireRefusal } from "../npm.js";
 import { isNpmStaticPackage } from "../npm-static.js";
 import { isJsSourceFileName } from "../tsc-codes.js";
@@ -549,7 +549,7 @@ export function appendForkModules(
           spec !== null &&
           canonicalBuiltinModule(spec) === null &&
           !isRelativeSpecifier(spec) &&
-          !spec.startsWith("/") &&
+          !isAbsolute(spec) &&
           !spec.startsWith("#") &&
           probeNodeRequireRefusal(cr.baseFile.fileName, spec) === null
         ) {

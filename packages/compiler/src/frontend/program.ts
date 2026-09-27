@@ -490,7 +490,10 @@ function createRequireProgramRoots7(program: ts.Program): string[] {
           target = npm.typesFile;
         }
       }
-      if (target === null || target.endsWith(".json")) return "skip";
+      // A directory's package.json may point at a native addon. Keep it
+      // out of TypeScript's source roots so the require call can report
+      // the native-addon boundary instead of an unsupported-file error.
+      if (target === null || target.endsWith(".json") || target.endsWith(".node")) return "skip";
       const normalized = tsgoPath(resolve(target));
       if (!known.has(normalized)) roots.add(normalized);
       return "skip";

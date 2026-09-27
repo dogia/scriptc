@@ -94,6 +94,12 @@ A static-tier program otherwise produces byte-identical stdout and the same exit
 - **Top-level `await` in embedded ESM packages** is not supported yet. It does compile in your program's own ESM graph and in npm packages compiled through `--npm-static`; the remaining limit is package code running inside the `--dynamic` island.
 - **`--npm-static` and `--provenance-sources` are experimental** — see [npm Dependencies](/dependencies) for the maturity notes.
 
+## Native addons
+
+Node-API (N-API) and V8 `.node` addons require Node's addon runtime, which scriptc does not embed in either static or `--dynamic` builds. Direct `createRequire` calls to local addons are rejected at compile time. Embedded npm packages receive a catchable `ERR_DLOPEN_FAILED` when they attempt to load an addon, allowing packages with JavaScript fallbacks to select them.
+
+Use [Native FFI](/ffi#replacing-a-node-api-addon) to call the underlying native operation through a plain C ABI function linked from an object or static archive. The guide includes a complete replacement for a small Node-API helper.
+
 ## WASI target limits
 
 The production <code>wasm32-wasi</code> target supports the complete executable language tier through LLVM: async/await, promises, generators, timers and other portable event-loop work, stdin/readline, filesystem callbacks and promises, and the <code>--dynamic</code> island. Portable WASI Preview 1 has no socket, process-spawn, OS-signal, network-interface, or filesystem-notification capabilities, so networking/fetch, child processes, signal APIs, <code>os.networkInterfaces()</code>, and <code>fs.watch</code> are rejected before linking with <code>SC3002</code>. <code>--sanitize</code>, native FFI, and library-mode archive builds are also unavailable. Filesystem access is bounded by the host's preopens; <code>scriptc run</code> exposes the current working directory and <code>/tmp</code>. See [Platform Support](/platforms) for build and run details.
