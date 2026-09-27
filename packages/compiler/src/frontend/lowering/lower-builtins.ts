@@ -151,11 +151,13 @@ function lowerOptionalNumberPredicate(
   fn: IrLibFn,
   loc: SrcLoc,
 ): IrExpr | null {
-  const widened = lowerer.runtimeOptionalWidening(value.type, F64);
-  if (!widened || widened.kind !== "union") return null;
+  // Number predicates do not coerce. In a mixed union only the numeric
+  // arm runs the predicate; every other arm answers false after evaluating
+  // the argument once. This includes the undefined added by array reads.
+  const widened = value.type;
+  if (widened.kind !== "union") return null;
   const numberTag = lowerer.armTag(widened.unionId, F64);
-  const undefinedTag = lowerer.armTag(widened.unionId, UNDEFINED_T);
-  if (numberTag < 0 || undefinedTag < 0) return null;
+  if (numberTag < 0) return null;
   const key = `number.optionalPredicate:${fn}:${widened.unionId}`;
   let helper = lowerer.widthHelpers.get(key);
   if (!helper) {
@@ -170,7 +172,7 @@ function lowerOptionalNumberPredicate(
       body: [
         {
           kind: "if",
-          cond: { kind: "unionIsTag", unionId: widened.unionId, tag: undefinedTag, negated: false, value: input, type: BOOL, loc },
+          cond: { kind: "unionIsTag", unionId: widened.unionId, tag: numberTag, negated: true, value: input, type: BOOL, loc },
           then: [{ kind: "return", value: boolLit(false, loc), loc }],
           else_: null,
           loc,
@@ -6825,7 +6827,8 @@ function lowerProcessIpcSend(lowerer: Lowerer, call: ts.CallExpression): IrExpr 
     );
   }
 
-/** `.code` on an error-hierarchy receiver — NodeJS.ErrnoException's
+/** `.code` and `.cause` on an error-hierarchy receiver. The latter reads
+   * the hidden dyn slot installed by constructor options. The former is NodeJS.ErrnoException's
    * member (the fallback declares the same shape): the runtime Error's
    * code slot as `string | undefined` — the errno name where a throw site
    * stamped one (fs, exec spawn/timeout, process.kill, the spawn 'error'
@@ -6857,9 +6860,9 @@ function lowerProcessIpcSend(lowerer: Lowerer, call: ts.CallExpression): IrExpr 
         return { kind: "libCall", fn: "error.domCause", args: [receiver], type: DYN, loc: locOf(expr) };
       }
     }
-    if (expr.name.text !== "code") return null;
+    if (expr.name.text !== "code" && expr.name.text !== "cause") return null;
     // Error-rooted classes only — builtin or user subclass (both embed the
-    // code slot in their layout prefix).
+    // code and cause slots in their layout prefix).
     let info = lowerer.classes.get(recvT.className) ?? null;
     while (info && info.base) info = info.base;
     if (!info || info.def.name !== "%Error") return null;
@@ -6867,9 +6870,9 @@ function lowerProcessIpcSend(lowerer: Lowerer, call: ts.CallExpression): IrExpr 
     const receiver = lowerer.lowerExpr(expr.expression);
     return {
       kind: "libCall",
-      fn: "error.code",
+      fn: expr.name.text === "cause" ? "error.cause" : "error.code",
       args: [receiver],
-      type: lowerer.envValueType(),
+      type: expr.name.text === "cause" ? DYN : lowerer.envValueType(),
       loc: locOf(expr),
     };
   }

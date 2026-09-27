@@ -6,7 +6,9 @@ import { InternalCompilerError } from "../errors.js";
  */
 import type { IrModule } from "./ir.js";
 
-export const IR_VERSION = 11 as const;
+// Discriminators choose native record layouts at checked JSON boundaries.
+// Older consumers must not ignore them and fall back to structural matching.
+export const IR_VERSION = 12 as const;
 
 export function serializeModule(mod: IrModule): string {
   return JSON.stringify(mod, (_key, value) => {

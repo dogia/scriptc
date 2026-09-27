@@ -7379,6 +7379,54 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3086-error-constructor-options.ts": {
+   "order": [
+    "<repo>/tests/corpus/3086-error-constructor-options.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3087-error-options-lifetime.ts": {
+   "order": [
+    "<repo>/tests/corpus/3087-error-options-lifetime.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3088-array-wide-callbacks.ts": {
+   "order": [
+    "<repo>/tests/corpus/3088-array-wide-callbacks.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3089-array-find-narrowing.ts": {
+   "order": [
+    "<repo>/tests/corpus/3089-array-find-narrowing.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3090-json-discriminated-records.ts": {
+   "order": [
+    "<repo>/tests/corpus/3090-json-discriminated-records.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3091-json-recursive-discriminants.ts": {
+   "order": [
+    "<repo>/tests/corpus/3091-json-recursive-discriminants.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3092-number-union-predicates.ts": {
+   "order": [
+    "<repo>/tests/corpus/3092-number-union-predicates.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3093-error-option-data.ts": {
+   "order": [
+    "<repo>/tests/corpus/3093-error-option-data.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"

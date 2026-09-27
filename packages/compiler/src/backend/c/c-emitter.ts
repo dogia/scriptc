@@ -683,7 +683,9 @@ export class CEmitter {
     // table is complete; the file is then assembled around them.
     for (const fn of this.mod.functions) {
       this.emitFunction(fn);
-      body.push(...this.lines);
+      // Large compiler functions can emit more lines than JavaScript's
+      // argument-count limit, particularly with sanitizer cleanup paths.
+      for (const line of this.lines) body.push(line);
       this.lines.length = 0;
     }
 

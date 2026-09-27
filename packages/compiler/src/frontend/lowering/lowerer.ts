@@ -95,7 +95,7 @@ import {
 import { CompoundOp, IslandFnEntry, boundaryIntoIslandMsg, boundaryOutOfIslandMsg, BuiltinModuleFn, builtinConstLit, builtinModuleConstOf, builtinModulesArrayLit, builtinFenceHintOf, builtinModuleFnOf, stdlibMemberFence, isStdlibMember, isStdlibSymbol, isStdlibGlobal, stdlibGlobalMember, nodeTypesOnlySymbol } from "./surfaces.js";
 import { FileParts, splitFiles, collectProgram, collectNpmImports, collectJsonImports, moduleArtifacts, collectGlobals, declSymbolOf, defaultExportSymbolOf, lowerFileInit, lowerDefaultExport, buildMain, appendDynamicImportModules, appendForkModules } from "./lower-modules.js";
 import { prepareCjsModuleGraph } from "./lower-node-module.js";
-import { ClassInfo, ClassIteratorInfo, GenericClassInfo, registerBuiltinErrorClasses, registerBuiltinEmitterClass, registerBuiltinStreamClasses, builtinErrorInfoOf, builtinEmitterInfoOf, builtinStreamInfoOf, analyzeClassDecoration, classIteratorDrainCall, classIteratorNextCall, classIteratorOf, classIteratorOpenCall, classIteratorRestDrainCall, classMemberNameOf, classValueRef, collectClassShape, exactClassOfReceiver, collectClassShapeInner, ctorAbiEquals, findMethodOn, findStaticOn, findGenericMethodOn, findGenericStaticOn, genericClassInstanceType, isSubclassOf, inHierarchy, overrideBelow, staticShadowBelow, upcastTo, lowerClassMembers, lowerClassCtor, lowerClassExpression, lowerClassExpressionInfo, lowerClassMethodMember, lowerClassValueProperty, lowerStaticMethod, throwingSetterFn, fieldInitStmts, lowerStaticFieldInits, lowerStaticFieldRead, lowerDerivedCtorBody, superCallStmt, lowerSuperMethodCall, superThisRef, lowerSuperAccessorRead, lowerSuperAccessorWrite, inheritsBuiltinErrorCtor, inheritsBuiltinEmitterCtor, errorMessageArg, lowerNew, accessorCall } from "./lower-classes.js";
+import { ClassInfo, ClassIteratorInfo, GenericClassInfo, registerBuiltinErrorClasses, registerBuiltinEmitterClass, registerBuiltinStreamClasses, builtinErrorInfoOf, builtinEmitterInfoOf, builtinStreamInfoOf, analyzeClassDecoration, classIteratorDrainCall, classIteratorNextCall, classIteratorOf, classIteratorOpenCall, classIteratorRestDrainCall, classMemberNameOf, classValueRef, collectClassShape, exactClassOfReceiver, collectClassShapeInner, ctorAbiEquals, findMethodOn, findStaticOn, findGenericMethodOn, findGenericStaticOn, genericClassInstanceType, isSubclassOf, inHierarchy, overrideBelow, staticShadowBelow, upcastTo, lowerClassMembers, lowerClassCtor, lowerClassExpression, lowerClassExpressionInfo, lowerClassMethodMember, lowerClassValueProperty, lowerStaticMethod, throwingSetterFn, fieldInitStmts, lowerStaticFieldInits, lowerStaticFieldRead, lowerDerivedCtorBody, superCallStmt, lowerSuperMethodCall, superThisRef, lowerSuperAccessorRead, lowerSuperAccessorWrite, inheritsBuiltinErrorCtor, inheritsBuiltinEmitterCtor, errorConstructorArgs, lowerNew, accessorCall } from "./lower-classes.js";
 import { MixinFnShape, mixinCallClassInfoOf, mixinIntersectionInstanceType } from "./lower-mixins.js";
 import { ParamShape, FnSig, GenericFnInfo, GenericInstance, bindingNeverReassigned, bodyReadsArguments, funcTypeFromParamShapes, implicitMonoFile, isThisParameter, paramShape, paramShapes, checkDefaultParamBodyType, completeArgs, wrappedUndefined, undefinedArgFor, requireExactArityValue, bodyReturnType, declaredReturnType, collectSignature, collectSignatureInner, collectGenericSignature, genericFnOf, lowerGenericCall, lowerGenericFnValue, inferTypeParamBindings, lowerGenericInstance, lowerCall, lowerFfiCall, lowerTimersMemberCall, lowerPromiseMethodCall, lowerFilterNarrowCall, isTopLevelFnSymbol, lowerNestedFunctionDecl, lambdaSignature, lowerLambda, lowerFunction, validateFfiImports } from "./lower-calls.js";
 import { lowerArrayMethodCall, lowerMapMethodCall, lowerMapForEachCall, buildMapForEachFn, lowerRecordOvfCaptureHelper, lowerEnvToPairsHelper, lowerSetMethodCall, lowerSetForEachCall, buildSetForEachFn } from "./lower-containers.js";
@@ -3741,7 +3741,7 @@ export class Lowerer {
       this.diags.length > 0
         ? null
         : {
-            irVersion: 11,
+            irVersion: 12,
             sourceFile: this.entry.fileName,
             functions,
             classes: artifacts.classes,
@@ -5232,9 +5232,6 @@ export class Lowerer {
       return { kind: "promiseVoidWiden", value: expr, type: expected, loc: expr.loc };
     }
     if (expected.kind === "dyn" && expr.type.kind !== "dyn") {
-      if (expr.kind === "unitLit" || this.dynConvertible(expr.type)) {
-        return { kind: "dynFrom", value: expr, type: DYN, loc: expr.loc };
-      }
       // An error-HIERARCHY object (builtin subclass or user `extends
       // Error` class) upcasts to the %Error root first — the caughtToDyn
       // encoding (scr_dyn_from_error) carries name/message/code and the
@@ -5249,6 +5246,9 @@ export class Lowerer {
           type: DYN,
           loc: expr.loc,
         };
+      }
+      if (expr.kind === "unitLit" || this.dynConvertible(expr.type)) {
+        return { kind: "dynFrom", value: expr, type: DYN, loc: expr.loc };
       }
       return expr;
     }
@@ -7730,6 +7730,23 @@ export class Lowerer {
    * lowering goes through here (via lowerExprExpecting) or calls this
    * directly when the expression was already lowered. */
   coerceInto(node: ts.Node, expr: IrExpr, expected: IrType): IrExpr {
+    if (expected.kind === "dyn") {
+      const contextual = this.checker.getContextualType(node);
+      const parts = contextual?.isUnionType() ? ts.constituentTypes(contextual) : contextual ? [contextual] : [];
+      const errorOptions = parts.some((part) => {
+        const sym = part.getAliasSymbol() ?? part.getSymbol();
+        return sym?.name === "ErrorOptions" && this.isStdlibSymbol(sym);
+      });
+      if (errorOptions) {
+        const actual = this.typeOf(node);
+        for (const part of actual.isUnionType() ? ts.constituentTypes(actual) : [actual]) {
+          const cause = this.checker.getPropertyOfType(part, "cause");
+          if (cause && cause.flags & (ts.SymbolFlags.GetAccessor | ts.SymbolFlags.SetAccessor)) {
+            this.unsupported("SC1090", node, "Error options with a cause accessor (use a data property)");
+          }
+        }
+      }
+    }
     let e = this.coerceToExpected(expr, expected);
     // An 'any' value PROVABLY null/undefined (the unit literal itself, or
     // a read of a binding nothing ever assigns a non-unit value) flowing
@@ -7880,20 +7897,20 @@ export class Lowerer {
     }
     // An OBJECT LITERAL against a checked-dynamic slot in a JS file (the
     // getSupportInfo options argument — a dyn-ABI param), or against the
-    // standard RequestInit type in TypeScript: the value's world IS the
+    // standard RequestInit/ErrorOptions types in TypeScript: the value's world IS the
     // checked-dynamic tree — build the dyn literal directly.
     if (expected?.kind === "dyn") {
       let x: ts.Expression = node;
       while (ts.isParenthesizedExpression(x)) x = x.expression;
+      const contextual = this.checker.getContextualType(x);
+      const widened = contextual ? this.checker.getBaseTypeOfLiteralType(contextual) : undefined;
+      const parts = widened?.isUnionType() ? ts.constituentTypes(widened) : widened ? [widened] : [];
+      const builtinOption = (name: string): boolean => parts.some((part) => {
+        const sym = part.getAliasSymbol() ?? part.getSymbol();
+        return sym?.name === name && this.isStdlibSymbol(sym);
+      });
       if (ts.isObjectLiteralExpression(x)) {
-        const contextual = this.checker.getContextualType(x);
-        const widened = contextual
-          ? this.checker.getBaseTypeOfLiteralType(contextual)
-          : undefined;
-        const sym = widened?.getAliasSymbol() ?? widened?.getSymbol();
-        const requestInit =
-          sym?.name === "RequestInit" && this.isStdlibSymbol(sym);
-        if (isJsSourceFile(x.getSourceFile()) || requestInit) {
+        if (isJsSourceFile(x.getSourceFile()) || builtinOption("RequestInit") || builtinOption("ErrorOptions")) {
           return lowerDynObjectLiteral(this, x);
         }
       }
@@ -9835,8 +9852,8 @@ export class Lowerer {
     return lowerFieldCompound(this, access, op, rhsNode, loc);
   }
 
-  errorMessageArg(args: readonly ts.Expression[], loc: SrcLoc, blame: ts.Node): IrExpr {
-    return errorMessageArg(this, args, loc, blame);
+  errorConstructorArgs(args: readonly ts.Expression[], loc: SrcLoc, blame: ts.Node): IrExpr[] {
+    return errorConstructorArgs(this, args, loc, blame);
   }
 
   inheritsBuiltinErrorCtor(info: ClassInfo): boolean {

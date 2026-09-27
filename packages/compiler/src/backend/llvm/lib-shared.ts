@@ -60,6 +60,8 @@ export const LIB_FN_SYMS: Record<string, string> = {
   // decodeUriComponent is NOT here: it throws (MAY_THROW_LIB_FNS), so it
   // refuses by name like the rest of the throwing tier.
   "str.encodeUriComponent": "scr_str_encode_uri_component",
+  "error.cause": "scr_error_cause",
+  "error.hasCause": "scr_error_has_cause",
   // DOMException: construction and the read surface never throw; the
   // WebIDL clone's option validation throws (may-throw pending check).
   "error.newDom": "scr_domex_new",

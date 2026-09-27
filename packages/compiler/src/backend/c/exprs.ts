@@ -4,7 +4,7 @@ import { InternalCompilerError } from "../../errors.js";
  * emitter's frames (see the discipline comment in emitter core). */
 import type { CEmitter, Temp } from "./c-emitter.js";
 import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM_T, CHILDWRITER_T, DYN, F64, IrExpr, IrLibFn, IrRecordShape, IrType, islandPromisePayloadTag, isClassOwnEnumerableFieldName, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, MAY_THROW_LIB_FNS, NETSOCKET_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, typeKey } from "../../ir/ir.js";
-import { boxAccess, BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
+import { BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleClassNew, mangleClassRetain, mangleClassStruct, mangleField, mangleFnClosure, mangleFunction, mangleGlobal, mangleLocal, mangleRecordClone, mangleRecordNew, mangleRecordStruct, mangleVtStruct } from "../mangle.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
 import { readBox, writeBox } from "./bindings.js";
@@ -8157,15 +8157,18 @@ function emitErrorsEventsLibCall(state: LibCallState): Temp {
             return finish(
               `(scr_throw_prop_type(${arg(0)}, ${arg(1)}, ${arg(2)}), ${isRefCounted(e.type) ? `(${cType(e.type).trim()})NULL` : "0"})`,
             );
+          case "error.newOptions":
           case "error.new": {
             // Which builtin the runtime constructs is named by the RESULT
-            // type; the message is borrowed (the runtime retains its copy).
-            // Never throws.
+            // type. Arguments are borrowed; raw message conversion may throw.
             if (e.type.kind !== "object") throw new InternalCompilerError("emitter bug: error.new result is not a class");
             const rec = RUNTIME_ERROR_CLASSES.get(e.type.className);
             if (!rec) throw new InternalCompilerError(`emitter bug: error.new of ${e.type.className}`);
-            return finish(`scr_error_new(${rec.kind}, ${arg(0)})`);
+            return finish(fn === "error.newOptions"
+              ? `scr_error_new_options(${rec.kind}, ${arg(0)}, ${arg(1)})`
+              : `scr_error_new(${rec.kind}, ${arg(0)})`);
           }
+          case "error.ctorOptions":
           case "error.ctor": {
             // super(message) into the builtin base: stamps name/message on
             // the receiver (borrowed, like the message). The RECEIVER'S
@@ -8174,8 +8177,14 @@ function emitErrorsEventsLibCall(state: LibCallState): Temp {
             if (recvT.kind !== "object") throw new InternalCompilerError("emitter bug: error.ctor receiver is not a class");
             const rec = RUNTIME_ERROR_CLASSES.get(recvT.className);
             if (!rec) throw new InternalCompilerError(`emitter bug: error.ctor on ${recvT.className}`);
-            return finish(`scr_error_init(${arg(0)}, ${rec.kind}, ${arg(1)})`);
+            return finish(fn === "error.ctorOptions"
+              ? `scr_error_init_options(${arg(0)}, ${rec.kind}, ${arg(1)}, ${arg(2)})`
+              : `scr_error_init(${arg(0)}, ${rec.kind}, ${arg(1)})`);
           }
+          case "error.cause":
+            return finish(`scr_error_cause(${arg(0)})`);
+          case "error.hasCause":
+            return finish(`scr_error_has_cause(${arg(0)})`);
           case "error.toString":
             // Borrowed receiver; +1 "name: message" (Node's toString rules).
             return finish(`scr_error_to_string(${arg(0)})`);

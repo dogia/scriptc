@@ -13,14 +13,14 @@ function numericReadModule(overrides: Partial<IrExpr & { kind: "arrIntrinsic" }>
     type: F64, loc, ...overrides,
   };
   return {
-    irVersion: 11, sourceFile: loc.file, entry: "main",
+    irVersion: 12, sourceFile: loc.file, entry: "main",
     functions: [{ name: "main", params: [], locals: [], returnType: VOID, body: [{ kind: "exprStmt", expr: read, loc }], loc }],
   };
 }
 
 function expressionModule(expr: IrExpr, unions: IrUnionDef[]): IrModule {
   return {
-    irVersion: 11, sourceFile: loc.file, entry: "main", unions,
+    irVersion: 12, sourceFile: loc.file, entry: "main", unions,
     functions: [{ name: "main", params: [], locals: [], returnType: VOID, body: [{ kind: "exprStmt", expr, loc }], loc }],
   };
 }
@@ -174,7 +174,7 @@ test.each([
 function tdzModule(mutable = true): IrModule {
   const value: IrExpr = { kind: "numLit", value: 0, type: F64, loc };
   return {
-    irVersion: 11, sourceFile: loc.file, entry: "main",
+    irVersion: 12, sourceFile: loc.file, entry: "main",
     functions: [{
       name: "main", params: [], returnType: VOID, loc,
       locals: [{ id: "value", name: "value", type: F64, mutable, boxed: true, tdz: true }],
@@ -271,4 +271,65 @@ test("TDZ locals require a shared box", () => {
   const mod = tdzModule();
   delete mod.functions[0]!.locals[0]!.boxed;
   expect(validateModule(mod).some((error) => error.message.includes('TDZ local "value" must be boxed'))).toBe(true);
+});
+
+function discriminatedModule(): IrModule {
+  return {
+    irVersion: 12, sourceFile: loc.file, entry: "main",
+    functions: [{ name: "main", params: [], locals: [], returnType: VOID, body: [], loc }],
+    records: [
+      { id: "empty", fields: [{ name: "kind", type: STRING }] },
+      { id: "value", fields: [{ name: "kind", type: STRING }, { name: "value", type: F64 }] },
+    ],
+    unions: [{
+      id: "variants", arms: [NULL_T, { kind: "record", shapeId: "empty" }, { kind: "record", shapeId: "value" }, UNDEFINED_T],
+      discriminant: { field: "kind", cases: [{ tag: 1, values: ["empty"] }, { tag: 2, values: ["number", "value"] }] },
+    }],
+  };
+}
+
+test("discriminator metadata validates and survives serialization", () => {
+  const mod = discriminatedModule();
+  expect(validateModule(mod)).toEqual([]);
+  expect(deserializeModule(serializeModule(mod))).toEqual(mod);
+});
+
+test.each([
+  ["missing arm", (m: IrModule) => { m.unions![0]!.discriminant!.cases.pop(); }, "missing discriminant"],
+  ["unit arm", (m: IrModule) => { m.unions![0]!.discriminant!.cases[0]!.tag = 0; }, "invalid discriminant tag"],
+  ["negative tag", (m: IrModule) => { m.unions![0]!.discriminant!.cases[0]!.tag = -1; }, "invalid discriminant tag"],
+  ["fractional tag", (m: IrModule) => { m.unions![0]!.discriminant!.cases[0]!.tag = 1.5; }, "invalid discriminant tag"],
+  ["missing field", (m: IrModule) => { m.unions![0]!.discriminant!.field = "absent"; }, "invalid discriminant tag"],
+  ["duplicate tag", (m: IrModule) => { m.unions![0]!.discriminant!.cases.push({ tag: 1, values: ["other"] }); }, "invalid discriminant tag"],
+  ["empty values", (m: IrModule) => { m.unions![0]!.discriminant!.cases[0]!.values = []; }, "empty discriminant values"],
+  ["wrong primitive", (m: IrModule) => { m.unions![0]!.discriminant!.cases[0]!.values = [false]; }, "invalid or repeated"],
+  ["shared literal", (m: IrModule) => { m.unions![0]!.discriminant!.cases[1]!.values = ["empty"]; }, "invalid or repeated"],
+  ["duplicate literal", (m: IrModule) => { m.unions![0]!.discriminant!.cases[0]!.values = ["empty", "empty"]; }, "invalid or repeated"],
+] as const)("discriminator metadata rejects %s", (_name, mutate, message) => {
+  const mod = discriminatedModule();
+  mutate(mod);
+  expect(validateModule(mod).some((error) => error.message.includes(message))).toBe(true);
+});
+
+test("numeric discriminators reject non-finite values", () => {
+  const mod = discriminatedModule();
+  for (const record of mod.records!) record.fields[0]!.type = F64;
+  const guard = mod.unions![0]!.discriminant!;
+  guard.cases[0]!.values = [0];
+  guard.cases[1]!.values = [1];
+  expect(validateModule(mod)).toEqual([]);
+  for (const invalid of [NaN, Infinity, -Infinity]) {
+    guard.cases[1]!.values = [invalid];
+    expect(validateModule(mod).some((error) => error.message.includes("invalid or repeated"))).toBe(true);
+  }
+});
+
+test("mixed literal discriminators resolve field unions declared later", () => {
+  const mod = discriminatedModule();
+  mod.records![1]!.fields[0]!.type = { kind: "union", unionId: "literal" };
+  mod.unions![0]!.discriminant!.cases[1]!.values = ["value", 1];
+  mod.unions!.push({ id: "literal", arms: [F64, STRING] });
+  expect(validateModule(mod)).toEqual([]);
+  mod.unions![0]!.discriminant!.cases[1]!.values.push(false);
+  expect(validateModule(mod).some((error) => error.message.includes("invalid or repeated"))).toBe(true);
 });

@@ -8,11 +8,14 @@ import { analyze, compile, compileC, deserializeModule, emitCModule, validateMod
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 
-test("analyzes the compiler's IR validator without exhausting type diagnostics", () => {
+test("the complete IR validator lowers statically without skipped functions", () => {
   const entry = join(root, "tests/fixtures/self-hosting/validate.ts");
   const { coverage } = analyze(entry, { dynamic: false });
   expect(coverage.preflightFailed).toBe(false);
   expect(coverage.stats.statementsTotal).toBeGreaterThan(0);
+  expect(coverage.stats.statementsFailed).toBe(0);
+  expect(coverage.stats.statementsIsland).toBe(0);
+  expect(coverage.stats.functionsSkipped).toBe(0);
 });
 
 // Keep these outside the ordinary corpus: they import implementation files
@@ -54,17 +57,17 @@ for (const component of ["source-locations", "ir-collections", "ir-types", "ir-c
 }
 
 // This is a native compiler stage: the executable imports and runs the
-// actual IR builder and analysis functions, writes IR, and that IR must
-// validate and produce a working executable. Comparing its serialized IR
+// actual IR builder, analysis functions and validator, writes IR, and that
+// IR must produce a working executable. Comparing its serialized IR
 // to Node also pins construction order and every recursive payload.
 for (const backend of ["c", "llvm"] as const) {
-  test(`self-hosting IR generation: ${backend} builds an executable program`, async () => {
+  test(`self-hosting IR generation: ${backend} builds and validates an executable program`, async () => {
     const entry = join(root, "tests/fixtures/self-hosting/ir-build.ts");
     const outDir = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "scriptc-ir-build-"));
     const sanitize = process.env["SCRIPTC_SAN"] === "1";
     const exe = (name: string): string => join(outDir, name + (process.platform === "win32" ? ".exe" : ""));
     try {
-      const built = await compile(entry, { outDir, outPath: exe("builder"), backend, dynamic: false, sanitize });
+      const built = await compile(entry, { outDir, outPath: exe("builder"), backend, dynamic: false, sanitize, optimization: "dev" });
       if (!built.ok) throw new Error(built.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
       expect(built.backend).toBe(backend);
       for (const bound of [0, 6]) {

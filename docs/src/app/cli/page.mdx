@@ -59,22 +59,7 @@ fib.s
 
 Different output kinds accumulate in `.scriptc/`; rebuilding a kind updates its file.
 
-The three source outputs require only Node. On macOS 15+ arm64, assembly and object
-outputs use the matching native helper installed with scriptc and do not
-invoke an external compiler, archiver, linker, or SDK. The object is a
-relocatable program object with undefined <code>scr_*</code> runtime symbols
-and a required <code>scr_runtime_abi_v1</code> marker, not a standalone library.
-External consumption is experimental and requires the exact runtime version
-reported by <code>--print=native-link-info</code>. That option still writes the
-object, performs no link, and prints a versioned JSON recipe with the target,
-<code>main</code> entry, installed source runtime pack, FFI inputs, and system
-libraries. It never reports private scriptc cache paths. See
-<a href="/native-objects">Native Program Objects</a> for complete C-driver and
-direct-linker examples.
-<code>--emit=exe</code> is the default. On macOS 15+ arm64, LLVM-tier builds
-emit the program object through the helper and link release-built runtime
-objects; explicit C, LLVM fallback, and sanitizer builds retain runtime C
-compilation.
+The three source outputs require only Node. On macOS 15+ arm64, assembly and object outputs use the matching native helper installed with scriptc and do not invoke an external compiler, archiver, linker, or SDK. The object is a relocatable program object with undefined <code>scr_*</code> runtime symbols and a required <code>scr_runtime_abi_v2</code> marker, not a standalone library. External consumption is experimental and requires the exact runtime version reported by <code>--print=native-link-info</code>. That option still writes the object, performs no link, and prints a versioned JSON recipe with the target, <code>main</code> entry, installed source runtime pack, FFI inputs, and system libraries. It never reports private scriptc cache paths. See <a href="/native-objects">Native Program Objects</a> for complete C-driver and direct-linker examples. <code>--emit=exe</code> is the default. On macOS 15+ arm64, LLVM-tier builds emit the program object through the helper and link release-built runtime objects; explicit C, LLVM fallback, and sanitizer builds retain runtime C compilation.
 
 ## scriptc run
 

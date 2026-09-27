@@ -166,7 +166,7 @@ describe.runIf(supported)("LLVM native helper integration", () => {
     expect(await symbols(helperObject, ["-gU"]))
       .toEqual(await symbols(clangObject, ["-gU"]));
     expect(await symbols(helperObject, ["-gU"])).toEqual(["0000000000000000 T _main"]);
-    expect(await symbols(helperObject, ["-u"])).toContain("_scr_runtime_abi_v1");
+    expect(await symbols(helperObject, ["-u"])).toContain("_scr_runtime_abi_v2");
 
     const clangExe = join(dir, "clang-program");
     const linkDriver = join(dir, "clang-driver.c");
@@ -460,7 +460,7 @@ describe.runIf(supported)("LLVM native helper integration", () => {
       .stdout.trim().split("\n");
     expect(undefinedSymbols).toContain("_sf_scale");
     expect(undefinedSymbols).toContain("_sf_callback_mix");
-    expect(undefinedSymbols).toContain("_scr_runtime_abi_v1");
+    expect(undefinedSymbols).toContain("_scr_runtime_abi_v2");
   });
 
   test("helper and clang object paths retain the same outbound FFI C ABI", async () => {

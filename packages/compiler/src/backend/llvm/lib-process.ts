@@ -714,20 +714,23 @@ export function emitErrorsEventsLibCall(host: LlvmEmitterContext, e: LibCallExpr
       host.emitPendingCheck();
       return out;
     }
-    if (e.fn === "error.new") {
+    if (e.fn === "error.new" || e.fn === "error.newOptions") {
       // Which builtin the runtime constructs is named by the RESULT type;
-      // the message is borrowed (the runtime retains its copy). Never
-      // throws.
+      // Arguments are borrowed. Raw messages may run a throwing coercion.
       if (e.type.kind !== "object") throw new InternalCompilerError("llvm emitter bug: error.new result is not a class");
       const rec = RUNTIME_ERROR_CLASSES.get(e.type.className);
       if (!rec) throw new InternalCompilerError(`llvm emitter bug: error.new of ${e.type.className}`);
       const msg = host.emitExpr(e.args[0]!);
-      host.declare(`declare ptr @scr_error_new(i32, ptr)`);
+      const options = e.fn === "error.newOptions" ? host.emitExpr(e.args[1]!) : null;
+      const sym = options ? "scr_error_new_options" : "scr_error_new";
+      host.declare(`declare ptr @${sym}(i32, ptr${options ? ", ptr" : ""})`);
       const t = B.tmp();
-      B.line(`${t} = call ptr @scr_error_new(i32 ${rec.kind}, ptr ${msg.name})`);
-      return host.own({ name: t, type: e.type });
+      B.line(`${t} = call ptr @${sym}(i32 ${rec.kind}, ptr ${msg.name}${options ? `, ptr ${options.name}` : ""})`);
+      const out = host.own({ name: t, type: e.type });
+      if (options) host.emitPendingCheck();
+      return out;
     }
-    if (e.fn === "error.ctor") {
+    if (e.fn === "error.ctor" || e.fn === "error.ctorOptions") {
       // super(message) into the builtin base: stamps name/message on the
       // receiver (borrowed, like the message). The RECEIVER'S static class
       // names which builtin name to stamp.
@@ -736,8 +739,11 @@ export function emitErrorsEventsLibCall(host: LlvmEmitterContext, e: LibCallExpr
       const rec = RUNTIME_ERROR_CLASSES.get(recvT.className);
       if (!rec) throw new InternalCompilerError(`llvm emitter bug: error.ctor on ${recvT.className}`);
       const args = e.args.map((a) => host.emitExpr(a));
-      host.declare(`declare void @scr_error_init(ptr, i32, ptr)`);
-      B.line(`call void @scr_error_init(ptr ${args[0]!.name}, i32 ${rec.kind}, ptr ${args[1]!.name})`);
+      const options = e.fn === "error.ctorOptions" ? args[2]! : null;
+      const sym = options ? "scr_error_init_options" : "scr_error_init";
+      host.declare(`declare void @${sym}(ptr, i32, ptr${options ? ", ptr" : ""})`);
+      B.line(`call void @${sym}(ptr ${args[0]!.name}, i32 ${rec.kind}, ptr ${args[1]!.name}${options ? `, ptr ${options.name}` : ""})`);
+      if (options) host.emitPendingCheck();
       return { name: "", type: e.type };
     }
     if (e.fn === "error.code") {

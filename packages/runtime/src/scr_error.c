@@ -18,6 +18,13 @@ static void scr_error_oom(void) {
 }
 
 static SCR_TL bool scr_error_traced = false;
+static SCR_TL void (*scr_error_cause_drop)(void *obj) = NULL;
+
+void scr_error_install_cause_drop(void (*fn)(void *obj)) {
+  scr_error_cause_drop = fn;
+}
+
+bool scr_error_has_cause(ScrError *e) { return e->error_cause != NULL; }
 
 void scr_error_set_traced(void) { scr_error_traced = true; }
 
@@ -40,6 +47,7 @@ static void scr_error_gcfree(void *obj) {
   scr_str_release(e->name);
   scr_str_release(e->message);
   scr_str_release(e->code); /* NULL-safe: absent on most errors */
+  if (e->error_cause && scr_error_cause_drop) scr_error_cause_drop(obj);
   scr_obj_free_note();
   scr_cyc_free(e);
 }
@@ -70,6 +78,7 @@ static void scr_error_reld(void *obj) {
     scr_str_release(e->name);
     scr_str_release(e->message);
     scr_str_release(e->code); /* NULL-safe: absent on most errors */
+    if (e->error_cause && scr_error_cause_drop) scr_error_cause_drop(obj);
     scr_obj_free_note();
     if (scr_error_traced) scr_cyc_free(e);
     else free(e);

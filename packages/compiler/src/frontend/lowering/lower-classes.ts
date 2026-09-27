@@ -343,11 +343,13 @@ export interface GenericClassInfo {
           // subclass declaring its own `code` field lays out AFTER it,
           // never colliding), and it is NOT in the fields map below: the
           // READ has its own `string | undefined` lowering (error.code),
-          // never a plain-string field access.
+          // never a plain-string field access. `%cause` is the following
+          // owned dyn slot; NULL means absent, dyn undefined means present.
           fields: [
             { name: "name", type: STRING },
             { name: "message", type: STRING },
             { name: "%code", type: STRING },
+            { name: "%cause", type: DYN },
           ],
           loc,
         },
@@ -365,10 +367,9 @@ export interface GenericClassInfo {
         decl: null,
         builtinError: true,
         ctor: null,
-        // Display shape of `new Error(message?)`. Construction and super()
-        // never complete against this — errorMessageArg owns those (the
-        // runtime ABI is one plain string; "" when omitted, like Node).
-        ctorParams: [{ type: STRING, mode: "omittable" }],
+        // Inherited constructors forward both raw arguments. The runtime
+        // applies the undefined message default and InstallErrorCause.
+        ctorParams: [{ type: DYN, mode: "omittable" }, { type: DYN, mode: "omittable" }],
         base,
         subclasses: [],
         throwingSetters: [],
@@ -1167,6 +1168,10 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
       }
 
       const fields = new Map<string, IrType>(base ? base.fields : []);
+      const errorRooted = (() => {
+        for (let c = base; c; c = c.base) if (c.builtinError) return true;
+        return false;
+      })();
       const symbolFields = new Map<ts.Symbol, string>(base?.symbolFields ?? []);
       const fieldOrder: ClassInfo["fieldOrder"] = [];
       const methods = new Map<string, { params: ParamShape[]; ret: IrType; abstract?: true; async?: true; gen?: NonNullable<IrFunction["generator"]> }>();
@@ -1346,6 +1351,10 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
         // 7's ClassElement base carries no `name`; read it structurally
         // (every named member kind stores a PropertyName there).
         const memberName = (member as { name?: ts.PropertyName }).name;
+        if (errorRooted && memberName && classMemberNameOf(lowerer, memberName) === "cause") {
+          lowerer.unsupported("SC1090", memberName,
+            "redeclaring Error.cause (pass the cause in the Error constructor options)");
+        }
         // #PRIVATE members compile: their names ('#m') are unspellable by
         // any public identifier, so they ride the ordinary fields/methods
         // maps collision-free — with the base-chain walks doubling as
@@ -1650,6 +1659,10 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               lowerer.unsupported("SC1090", p, "this parameter property form");
             }
             const name = (p.name as ts.Identifier).text;
+            if (errorRooted && name === "cause") {
+              lowerer.unsupported("SC1090", p.name,
+                "redeclaring Error.cause (pass the cause in the Error constructor options)");
+            }
             const shape = lowerer.paramShape(p);
             const type = shape.bodyType ?? shape.type;
             if (type.kind === "void") lowerer.badType(p.name, lowerer.typeOf(p.name));
@@ -4417,7 +4430,7 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
         const args = forward !== undefined
           ? forward
           : base.builtinError
-            ? [lowerer.errorMessageArg(superCall.arguments, locOf(stmt), stmt)]
+            ? lowerer.errorConstructorArgs(superCall.arguments, locOf(stmt), stmt)
             : base.builtinEmitter
               ? []
               : lowerer.completeArgs(superCall.arguments, base.ctorParams, locOf(stmt), stmt);
@@ -4472,7 +4485,7 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
         kind: "exprStmt",
         expr: {
           kind: "libCall",
-          fn: "error.ctor",
+          fn: "error.ctorOptions",
           args: [lowerer.upcastTo(thisRef, base.def.name), ...args],
           type: VOID,
           loc,
@@ -4669,8 +4682,8 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
 
 /** True when `info`'s EFFECTIVE constructor — its own, or the one
    * inherited through ctor-less bases — is a builtin error class's. Such
-   * classes construct with the error message rule, and their synthesized
-   * constructors forward one plain string to error.ctor. */
+   * classes construct with the error argument rule, and their synthesized
+   * constructors forward both checked-dynamic values to error.ctorOptions. */
   export function inheritsBuiltinErrorCtor(lowerer: Lowerer, info: ClassInfo): boolean {
     for (let c: ClassInfo | null = info; c; c = c.base) {
       if (c.builtinError) return true;
@@ -4703,28 +4716,17 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
     return false;
   }
 
-/** `new C(args)` for a class declared in the program (imports resolve
-   * through aliases, so cross-module classes construct too). */
-  /** The single message argument of a builtin Error construction or
-   * super() call: "" when omitted or explicitly undefined (Node's message
-   * property default), the string otherwise. The lib signature's second
-   * parameter (options/cause) has no lowering. */
-  export function errorMessageArg(lowerer: Lowerer, args: readonly ts.Expression[], loc: SrcLoc, blame: ts.Node): IrExpr {
-    if (args.length > 1) {
-      lowerer.unsupported("SC1090", args[1] ?? blame, "Error constructor options ('cause')");
-    }
-    if (args.length === 0) return { kind: "strLit", value: "", type: STRING, loc };
-    const value = lowerer.lowerExpr(args[0]!);
-    if (value.type.kind === "string") return value;
-    if (value.kind === "unitLit" && value.unit === "undefined") {
-      return { kind: "strLit", value: "", type: STRING, loc };
-    }
-    lowerer.unsupported(
-      "SC1090",
-      args[0]!,
-      `Error messages of type '${lowerer.fmt(value.type)}' (the message must be a string)`,
-    );
-  }
+/** Preserve argument evaluation order and option presence through builtin
+ * and inherited Error constructors. Checked-dynamic conversion retains
+ * Error identity and distinguishes a missing cause from undefined. */
+export function errorConstructorArgs(lowerer: Lowerer, args: readonly ts.Expression[], loc: SrcLoc, blame: ts.Node): IrExpr[] {
+  if (args.length > 2) lowerer.unsupported("SC1090", blame, "Error constructors with more than two arguments");
+  return [0, 1].map((i) => {
+    const arg = args[i];
+    if (!arg) return dynUndefinedExpr(loc);
+    return lowerer.lowerExprExpecting(arg, DYN);
+  });
+}
 
 /** `new C(...)` of a registered PROGRAM class — the shared tail of the
  * identifier and namespace-qualified construction forms. */
@@ -4775,11 +4777,10 @@ function lowerProgramClassNew(lowerer: Lowerer, expr: ts.NewExpression, declared
   if (lowerer.inheritsBuiltinEmitterCtor(info) && (expr.arguments ?? []).length > 0) {
     lowerer.unsupported("SC1090", expr.arguments![0]!, "EventEmitter constructor options ('captureRejections')");
   }
-  // A ctor-less chain into a builtin error base inherits `new
-  // C(message?)` — completed by the error rule (one plain string),
-  // not the general ABI completion.
+  // A ctor-less chain into a builtin error base inherits both arguments;
+  // each synthesized constructor forwards the same pair to its base.
   const args = lowerer.inheritsBuiltinErrorCtor(info)
-    ? [lowerer.errorMessageArg(expr.arguments ?? [], loc, expr)]
+    ? lowerer.errorConstructorArgs(expr.arguments ?? [], loc, expr)
     : lowerer.completeArgs(expr.arguments ?? [], info.ctorParams, loc, expr);
   return {
     kind: "new",
@@ -5011,11 +5012,11 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
         };
       }
       if (errInfo) {
-        const msg = lowerer.errorMessageArg(expr.arguments ?? [], loc, expr);
+        const args = lowerer.errorConstructorArgs(expr.arguments ?? [], loc, expr);
         return {
           kind: "libCall",
-          fn: "error.new",
-          args: [msg],
+          fn: "error.newOptions",
+          args,
           type: { kind: "object", className: errInfo.def.name },
           loc,
         };

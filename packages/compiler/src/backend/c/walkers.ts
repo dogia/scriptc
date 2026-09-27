@@ -7,12 +7,30 @@ import { InternalCompilerError } from "../../errors.js";
  * interning ORDER is part of the emitted C, so the registries stay on
  * CEmitter and these functions only consult them through it. */
 import type { CEmitter } from "./c-emitter.js";
-import { DYN_HANDLE_KINDS, IrType, isDynTypedRefType, isRefCounted, typeEquals, typeKey } from "../../ir/ir.js";
+import { DYN_HANDLE_KINDS, IrType, type IrUnionDef, isDynTypedRefType, isRefCounted, typeEquals, typeKey } from "../../ir/ir.js";
 import { dynDesc, undefinedArmTag, unionWideningTags } from "../../ir/analysis.js";
 import { cCommentText, cDecl, cStringLiteral, cType, elemAccess, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleField, mangleRecordNew, mangleRecordStruct } from "../mangle.js";
 import { jsonObjectKeyLabel } from "../json-literal.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
+
+/** Check the literal field before the structural matcher traverses a
+ * variant. Besides choosing the right layout, this avoids recursively
+ * probing every overlapping shape in a large AST union. */
+function unionArmMatch(emitter: CEmitter, def: IrUnionDef, tag: number): string {
+  const match = `${emitter.dynMatchHelper(def.arms[tag]!)}(d)`;
+  const guard = def.discriminant?.cases.find((candidate) => candidate.tag === tag);
+  if (!guard || !def.discriminant) return match;
+  const field = `(ScrStr *)&${emitter.internLiteral(def.discriminant.field)}`;
+  const values = guard.values.map((value) => {
+    if (typeof value === "string") {
+      return `scr_dyn_field_eq_str(d, ${field}, (ScrStr *)&${emitter.internLiteral(value)})`;
+    }
+    if (typeof value === "boolean") return `scr_dyn_field_eq_bool(d, ${field}, ${value})`;
+    return `scr_dyn_field_eq_num(d, ${field}, ${Object.is(value, -0) ? "-0.0" : String(value)})`;
+  });
+  return `((${values.join(" || ")}) && ${match})`;
+}
 
 /** Retag a borrowed union into a superset without copying its payload.
  * Both declared fields and owned overflow reads use the same helper;
@@ -866,7 +884,7 @@ export function jsonWriteHelper(emitter: CEmitter, t: IrType): string {
         // the checked-dynamic tree can hold the undefined value now — overflow entries
         // under `unknown` index signatures — and it matches exactly the
         // undefined arm.
-        const arms = def.arms.map((a) => `${emitter.dynMatchHelper(a)}(d)`);
+        const arms = def.arms.map((_, tag) => unionArmMatch(emitter, def, tag));
         d.push(`  return ${arms.join(" || ")};`);
         break;
       }
@@ -1370,18 +1388,17 @@ export function jsonWriteHelper(emitter: CEmitter, t: IrType): string {
       case "union": {
         const def = emitter.unionsById.get(t.unionId);
         if (!def) throw new InternalCompilerError(`emitter bug: dynCheck of unknown union ${t.unionId}`);
-        // Arms in CANONICAL order, first FULL match wins (discriminated
-        // unions disambiguate naturally: the arm whose declared fields all
-        // fit). The matched arm's builder can no longer fail.
+        // Literal discriminators select a layout before structural checks.
+        // Undiscriminated unions retain canonical first-match ordering.
         def.arms.forEach((arm, i) => {
-          const m = emitter.dynMatchHelper(arm);
+          const match = unionArmMatch(emitter, def, i);
           if (arm.kind === "undefinedT") {
             // Parsed JSON never matches here (no undefined in JSON text —
             // a MISSING record key builds this arm in the record builder
             // above), but the undefined dyn value can arrive from
             // `unknown` index-signature overflows and builds the interned
             // unit instance exactly like null.
-            d.push(`  if (${m}(d)) {`);
+            d.push(`  if (${match}) {`);
             d.push(`    return ${emitter.unitInstanceRef(t.unionId, i)};`);
             d.push(`  }`);
             return;
@@ -1390,13 +1407,13 @@ export function jsonWriteHelper(emitter: CEmitter, t: IrType): string {
             // A matched unit arm builds nothing: the result is THE interned
             // immortal instance (rc == SIZE_MAX — RC entry points and the
             // collector both skip it, so no retain is owed).
-            d.push(`  if (${m}(d)) {`);
+            d.push(`  if (${match}) {`);
             d.push(`    return ${emitter.unitInstanceRef(t.unionId, i)};`);
             d.push(`  }`);
             return;
           }
           const c = emitter.dynCheckHelper(arm);
-          d.push(`  if (${m}(d)) {`);
+          d.push(`  if (${match}) {`);
           if (arm.kind === "f64") {
             d.push(`    return scr_union_new_f64(${i}, ${c}(d, path));`);
           } else if (arm.kind === "bool") {

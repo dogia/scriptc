@@ -1050,6 +1050,10 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   // error.new's result and the receiver slots are builtin-error classes —
   // program-dependent object types, checked in the libCall case.
   "error.new": { argTypes: [STRING], result: VOID },
+  "error.newOptions": { argTypes: [DYN, DYN], result: VOID },
+  "error.ctorOptions": { argTypes: [null, DYN, DYN], result: VOID },
+  "error.cause": { argTypes: [null], result: DYN },
+  "error.hasCause": { argTypes: [null], result: BOOL },
   "error.nodeThrow": { argTypes: [F64, STRING, STRING], result: VOID },
   "dyn.toStringCoerce": { argTypes: [DYN], result: STRING },
   "dyn.toNumberCoerce": { argTypes: [DYN], result: F64 },
@@ -1696,10 +1700,17 @@ export function validateModule(mod: IrModule): IrValidationError[] {
     // field count) — anything else has no honest index/JSON story.
     if (rec.tuple) {
       const names = new Set(rec.fields.map((f) => f.name));
+      let positionsComplete = true;
+      for (let i = 0; i < rec.fields.length; i++) {
+        if (!names.has(String(i))) {
+          positionsComplete = false;
+          break;
+        }
+      }
       if (
         rec.fields.length === 0 ||
         names.size !== rec.fields.length ||
-        [...Array(rec.fields.length).keys()].some((i) => !names.has(String(i)))
+        !positionsComplete
       ) {
         errors.push({ message: `record ${rec.id}: tuple fields are not "0".."${rec.fields.length - 1}"`, loc: noLoc });
       }
@@ -1722,8 +1733,48 @@ export function validateModule(mod: IrModule): IrValidationError[] {
       errors.push({ message: `duplicate union "${u.id}"`, loc: noLoc });
     }
     unionsById.set(u.id, u);
+  }
+  for (const u of mod.unions ?? []) {
     if (u.arms.length < 2) {
       errors.push({ message: `union ${u.id}: fewer than 2 arms`, loc: noLoc });
+    }
+    if (u.discriminant) {
+      const { field, cases } = u.discriminant;
+      const tags = new Set<number>();
+      const values = new Set<string>();
+      for (const candidate of cases) {
+        const arm = u.arms[candidate.tag];
+        const record = arm?.kind === "record" ? recordsById.get(arm.shapeId) : undefined;
+        const member = record?.fields.find((entry) => entry.name === field);
+        if (!Number.isInteger(candidate.tag) || candidate.tag < 0 || !member || tags.has(candidate.tag)) {
+          errors.push({ message: `union ${u.id}: invalid discriminant tag ${candidate.tag}`, loc: noLoc });
+        }
+        tags.add(candidate.tag);
+        if (candidate.values.length === 0) {
+          errors.push({ message: `union ${u.id}: empty discriminant values for tag ${candidate.tag}`, loc: noLoc });
+        }
+        for (const value of candidate.values) {
+          if (value === undefined) {
+            errors.push({ message: `union ${u.id}: undefined discriminant value`, loc: noLoc });
+            continue;
+          }
+          const fieldTypes = member?.type.kind === "union"
+            ? unionsById.get(member.type.unionId)?.arms ?? [] : member ? [member.type] : [];
+          const valid = fieldTypes.some((type) => typeof value === "string" ? type.kind === "string"
+            : typeof value === "boolean" ? type.kind === "bool"
+            : typeof value === "number" && Number.isFinite(value) && type.kind === "f64");
+          const key = typeof value + ":" + String(value);
+          if (!valid || values.has(key)) {
+            errors.push({ message: `union ${u.id}: invalid or repeated discriminant value ${key}`, loc: noLoc });
+          }
+          values.add(key);
+        }
+      }
+      for (let tag = 0; tag < u.arms.length; tag++) {
+        if (u.arms[tag]!.kind === "record" && !tags.has(tag)) {
+          errors.push({ message: `union ${u.id}: missing discriminant for record arm ${tag}`, loc: noLoc });
+        }
+      }
     }
     u.arms.forEach((arm, i) => {
       // The unit kinds (undefinedT/nullT) are valid arms — union membership
@@ -2917,12 +2968,12 @@ function validateFunction(
           checkExpr(e.args[0]!);
           expectType(e.args[0]!, key, "mapIntrinsic get key");
           const def = e.type.kind === "union" ? unions.get(e.type.unionId) : undefined;
-          const rest = def ? def.arms.filter((a) => a.kind !== "undefinedT") : [];
+          const rest = def ? def.arms.filter((a): boolean => a.kind !== "undefinedT") : [];
           // When V is itself a union its own undefined arm (if any) folds
           // into the result's — compare the non-undefined arms pairwise.
-          const varms =
+          const varms: IrType[] =
             value.kind === "union"
-              ? (unions.get(value.unionId)?.arms ?? []).filter((a) => a.kind !== "undefinedT")
+              ? (unions.get(value.unionId)?.arms ?? []).filter((a): boolean => a.kind !== "undefinedT")
               : [value];
           const ok =
             def &&
@@ -4841,10 +4892,10 @@ function validateFunction(
           // compiler-rendered fence.
           break;
         }
-        if (e.fn === "error.new") {
+        if (e.fn === "error.new" || e.fn === "error.newOptions") {
           // Which builtin the runtime constructs is named by the result type.
           if (!isBuiltinErrorObject(e.type)) {
-            err(`libCall error.new must return a builtin error class, got ${e.type.kind}`, e.loc);
+            err(`libCall ${e.fn} must return a builtin error class, got ${e.type.kind}`, e.loc);
           }
           break;
         }
@@ -5139,7 +5190,13 @@ function validateFunction(
             break;
           }
         }
-        if (e.fn === "error.ctor" || e.fn === "error.toString") {
+        if (e.fn === "error.cause" || e.fn === "error.hasCause") {
+          const recv = e.args[0];
+          let cls = recv?.type.kind === "object" ? classes.get(recv.type.className) : undefined;
+          while (cls?.base) cls = classes.get(cls.base);
+          if (cls?.name !== "%Error") err(`libCall ${e.fn} receiver must be an error object`, e.loc);
+        }
+        if (e.fn === "error.ctor" || e.fn === "error.ctorOptions" || e.fn === "error.toString") {
           const recv = e.args[0];
           const wantErrorRoot = e.fn === "error.toString";
           const ok =

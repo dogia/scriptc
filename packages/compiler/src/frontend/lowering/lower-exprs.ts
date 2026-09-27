@@ -8185,6 +8185,9 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
       let info = lowerer.classes.get(recv.type.className) ?? null;
       while (info && info.base) info = info.base;
       if (info?.def.name === "%Error") {
+        if (key === "cause") {
+          return { kind: "libCall", fn: "error.hasCause", args: [recv], type: BOOL, loc };
+        }
         if (key === "code") {
           const codeType = lowerer.envValueType();
           if (codeType.kind !== "union") throw new InternalCompilerError("lowerer bug: error code type is not a union");

@@ -21,7 +21,4 @@ The object defines `main`; it is a complete program object, not a library to
 load into another process. Use `scriptc build --lib --profile ...` for a
 host-callable static library.
 
-The external object ABI is experimental. Always consume the runtime pack at
-the exact `runtime_pack.version` reported by the same scriptc installation.
-The object requires `scr_runtime_abi_v1`, so a mismatched runtime fails during
-the link instead of starting with an incompatible ABI.
+The external object ABI is experimental. Always consume the runtime pack at the exact `runtime_pack.version` reported by the same scriptc installation. The object requires `scr_runtime_abi_v2`, so a mismatched runtime fails during the link instead of starting with an incompatible ABI.

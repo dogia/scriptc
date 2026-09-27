@@ -23,7 +23,7 @@ import { InternalCompilerError } from "../../errors.js";
  *               FUNC=8 HANDLE=9.
  *   ScrBytes { rc +0; len +8; elem +16; data +24 }.
  *   ScrDynPath { parent, key, index } — the %ScrDynPath type. */
-import type { IrType } from "../../ir/ir.js";
+import type { IrType, IrUnionDef } from "../../ir/ir.js";
 import { DYN_HANDLE_KINDS, isDynTypedRefType, isRefCounted, typeKey } from "../../ir/ir.js";
 import { dynDesc, undefinedArmTag } from "../../ir/analysis.js";
 import { mangleRecordNew, mangleRecordStruct } from "../mangle.js";
@@ -92,6 +92,32 @@ export class LlDyn {
   readonly defs: string[] = [];
 
   constructor(private readonly host: DynHost) {}
+
+  /** Branch to a variant only after its literal discriminator and complete
+   * structure match. Use the same path for predicates and builders. */
+  private unionArmMatch(B: BlockBuilder, def: IrUnionDef, tag: number, yes: string, no: string): void {
+    const guard = def.discriminant?.cases.find((candidate) => candidate.tag === tag);
+    if (guard && def.discriminant) {
+      const structure = B.newLabel("du.shape");
+      const field = this.host.internLiteral(def.discriminant.field);
+      guard.values.forEach((value, index) => {
+        const suffix = typeof value === "string" ? "str" : typeof value === "boolean" ? "bool" : "num";
+        const ty = typeof value === "string" ? "ptr" : typeof value === "boolean" ? "i1" : "double";
+        const operand = typeof value === "string" ? this.host.internLiteral(value)
+          : typeof value === "boolean" ? String(value) : f64Lit(value);
+        this.host.declare(`declare zeroext i1 @scr_dyn_field_eq_${suffix}(ptr, ptr, ${ty}${ty === "i1" ? " zeroext" : ""})`);
+        const matches = B.tmp();
+        B.line(`${matches} = call zeroext i1 @scr_dyn_field_eq_${suffix}(ptr %d, ptr ${field}, ${ty} ${operand})`);
+        const next = index === guard.values.length - 1 ? no : B.newLabel("du.literal");
+        B.condBr(matches, structure, next);
+        if (index !== guard.values.length - 1) B.startBlock(next);
+      });
+      B.startBlock(structure);
+    }
+    const matches = B.tmp();
+    B.line(`${matches} = call zeroext i1 @${this.dynMatchHelper(def.arms[tag]!)}(ptr %d)`);
+    B.condBr(matches, yes, no);
+  }
 
   private get S(): "i32" | "i64" { return this.host.sizeType; }
   private abiOffset(native64: number, wasm32: number): number {
@@ -525,11 +551,9 @@ export class LlDyn {
         if (!def) throw new InternalCompilerError(`llvm emitter bug: dynCheck of unknown union ${t.unionId}`);
         // Arms in canonical order; any full match answers true.
         const yes = B.newLabel("dm.y");
-        for (const arm of def.arms) {
-          const ok = B.tmp();
-          B.line(`${ok} = call zeroext i1 @${this.dynMatchHelper(arm)}(ptr %d)`);
+        for (let tag = 0; tag < def.arms.length; tag++) {
           const ln = B.newLabel("dm.n");
-          B.condBr(ok, yes, ln);
+          this.unionArmMatch(B, def, tag, yes, ln);
           B.startBlock(ln);
         }
         B.terminate(`ret i1 false`);
@@ -1047,12 +1071,9 @@ export class LlDyn {
         // Arms in CANONICAL order, first FULL match wins. The matched
         // arm's builder can no longer fail.
         def.arms.forEach((arm, i) => {
-          const m = this.dynMatchHelper(arm);
-          const hit = B.tmp();
-          B.line(`${hit} = call zeroext i1 @${m}(ptr %d)`);
           const lHit = B.newLabel("dcu.h");
           const lNext = B.newLabel("dcu.n");
-          B.condBr(hit, lHit, lNext);
+          this.unionArmMatch(B, def, i, lHit, lNext);
           B.startBlock(lHit);
           if (arm.kind === "undefinedT" || arm.kind === "nullT") {
             // A matched unit arm builds nothing: THE interned immortal

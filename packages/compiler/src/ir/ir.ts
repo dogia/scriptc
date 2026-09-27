@@ -811,7 +811,7 @@ export function isRefCounted(t: IrType): boolean {
 
 export interface IrModule {
   /** Bumped on any breaking IR change; serialize.ts refuses mismatches. */
-  irVersion: 11;
+  irVersion: 12;
   sourceFile: string;
   functions: IrFunction[];
   /** Class shapes. Constructors and methods are ordinary module functions
@@ -962,11 +962,13 @@ export function ffiClassType(
 export function ffiCallbackType(
   callback: IrFfiCallbackParam["callback"] | IrFfiReleaseParam["callback"],
 ): IrType & { kind: "func" } {
+  const params: IrType[] = [];
+  for (const param of callback.params) {
+    if (!isFfiContextParam(param)) params.push(ffiClassType(param));
+  }
   return {
     kind: "func",
-    params: callback.params
-      .filter((param): param is IrFfiCallbackParamClass => !isFfiContextParam(param))
-      .map(ffiClassType),
+    params,
     ret: ffiClassType(callback.returns),
   };
 }
@@ -1296,6 +1298,14 @@ export function shapeHasAccessorSlots(shape: IrRecordShape): boolean {
   return shape.fields.some((f) => accessorSlotProp(f.name) !== null);
 }
 
+/** Literal fields that select a record layout at a checked-dynamic boundary.
+ * These are part of union identity: equal storage arms can have different
+ * discriminator contracts. Several source variants can share one layout. */
+export interface IrUnionDiscriminant {
+  field: string;
+  cases: { tag: number; values: (string | number | boolean)[] }[];
+}
+
 export interface IrUnionDef {
   /** Frontend-assigned union id (`u0`, `u1`, ...). */
   id: string;
@@ -1303,6 +1313,7 @@ export interface IrUnionDef {
    * an arm's index here is its runtime tag. Never void/func/union; the
    * unit kinds (undefinedT/nullT) are payload-less arms. */
   arms: IrType[];
+  discriminant?: IrUnionDiscriminant;
 }
 
 export interface IrFunction {
@@ -3724,6 +3735,15 @@ export type IrLibFn =
    * field to stamp. error.toString: borrowed `%Error`-typed receiver, +1
    * string in Node's "name: message" shape. None of the three throws. */
   | "error.new"
+  /** ECMAScript constructors with raw checked-dynamic message/options.
+   * Options retain cause presence; constructor calls borrow their args.
+   * Message coercion may throw before the cause is installed. */
+  | "error.newOptions"
+  | "error.ctorOptions"
+  /** Borrowed Error receiver. cause returns an owned dyn value (undefined
+   * when absent); hasCause distinguishes absence from present undefined. */
+  | "error.cause"
+  | "error.hasCause"
   /** The compiler-resolved Node-parity throw for always-throwing lowered
    * arms (ERR_INVALID_THIS receivers, ERR_MISSING_ARGS arity ladders,
    * the symbol-to-string TypeError): args are [error-kind f64 (the
@@ -7630,6 +7650,9 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "error.nodeThrow",
   // USVString coercion runs user toString/valueOf — throws propagate.
   "dyn.toStringCoerce",
+  // Error messages use the same coercion protocol before installing cause.
+  "error.newOptions",
+  "error.ctorOptions",
   "dyn.objectTag",
   // Numeric coercion runs user valueOf/toString — throws propagate.
   "dyn.toNumberCoerce",

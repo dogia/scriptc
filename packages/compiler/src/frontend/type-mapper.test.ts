@@ -87,3 +87,30 @@ describe("IR type diagnostics", () => {
     expect(longName.endsWith("...")).toBe(true);
   });
 });
+
+describe("union discriminator identity", () => {
+  test("equal storage layouts retain independent literal contracts", () => {
+    const registry = new UnionRegistry();
+    const arms: IrType[] = [{ kind: "record", shapeId: "empty" }, { kind: "record", shapeId: "value" }];
+    const first = { field: "kind", cases: [{ tag: 0, values: ["empty"] }, { tag: 1, values: ["value"] }] };
+    const second = { field: "kind", cases: [{ tag: 0, values: ["none"] }, { tag: 1, values: ["some"] }] };
+    const a = registry.intern(arms, first);
+    const b = registry.intern(arms, second);
+    const plain = registry.intern(arms);
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(plain);
+    expect(registry.intern(arms, structuredClone(first))).toBe(a);
+    expect(registry.get(a)?.discriminant).toEqual(first);
+    expect(registry.get(b)?.discriminant).toEqual(second);
+    expect(registry.get(plain)?.discriminant).toBeUndefined();
+  });
+
+  test("primitive literal kinds are not conflated", () => {
+    const registry = new UnionRegistry();
+    const arms: IrType[] = [{ kind: "record", shapeId: "a" }, { kind: "record", shapeId: "b" }];
+    const numeric = registry.intern(arms, { field: "tag", cases: [{ tag: 0, values: [1] }, { tag: 1, values: [2] }] });
+    const string = registry.intern(arms, { field: "tag", cases: [{ tag: 0, values: ["1"] }, { tag: 1, values: ["2"] }] });
+    const bool = registry.intern(arms, { field: "tag", cases: [{ tag: 0, values: [false] }, { tag: 1, values: [true] }] });
+    expect(new Set([numeric, string, bool]).size).toBe(3);
+  });
+});

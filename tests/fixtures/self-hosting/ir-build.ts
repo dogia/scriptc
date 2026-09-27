@@ -1,6 +1,7 @@
 import { boolLit, countedFor, numLit, strLit, varRef } from "../../../packages/compiler/src/ir/build.js";
 import { endsWithJump, isStableReceiverOperand, matchStringSelfConcat, streamTypedRefEligible, undefinedArmTag } from "../../../packages/compiler/src/ir/analysis.js";
 import { F64, STRING, VOID, type IrExpr, type IrFunction, type IrModule, type IrStmt, type IrUnionDef, type SrcLoc } from "../../../packages/compiler/src/ir/ir.js";
+import { validateModule } from "../../../packages/compiler/src/ir/validate.js";
 
 const loc: SrcLoc = { file: "native-generated.ts", start: 0, end: 1 };
 const bound = Number(process.argv[2] ?? "6");
@@ -64,5 +65,7 @@ const fn: IrFunction = {
   ],
   body, loc,
 };
-const mod: IrModule = { irVersion: 11, sourceFile: loc.file, functions: [fn], entry: "main" };
+const mod: IrModule = { irVersion: 12, sourceFile: loc.file, functions: [fn], entry: "main" };
+const errors = validateModule(mod);
+if (errors.length > 0) throw new Error(JSON.stringify(errors));
 console.log(JSON.stringify(mod));

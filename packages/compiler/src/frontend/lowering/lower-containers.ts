@@ -1202,6 +1202,16 @@ function arraySearchHelper(
       }
       lowerer.implicitParamTypes = previousImplicit;
     }
+    // A callback can accept a wider parameter type than the array supplies
+    // (a reusable predicate over a union is common). Its closure still has
+    // that wider ABI: adapt each actual argument before invoking it, just
+    // as assignment to a narrower function slot does. Require a conversion
+    // plan so this path never manufactures a stranded callback.
+    if (fnArg.type.kind === "func" && fnArg.type.params.length <= full.length &&
+      fnArg.type.params.every((param, i) => lowerer.coercibleValue(full[i]!, param))) {
+      const callbackType = funcOf(full.slice(0, fnArg.type.params.length), fnArg.type.ret);
+      if (!typeEquals(fnArg.type, callbackType)) fnArg = lowerer.coerceToExpected(fnArg, callbackType);
+    }
     // Array storage widens indexed reads with undefined so holes remain
     // observable. The HOF helper guards every callback behind arrayHas,
     // so an exact-ABI builtin closure may safely adapt from its declared
@@ -2000,16 +2010,31 @@ export function tryLowerNumericIndexRead(lowerer: Lowerer, operand: IrExpr, loc:
         loc,
       };
     }
-    // find: the result is the checker's `T | undefined` union. When the
-    // element type IS that union already (it carries an undefined arm), the
-    // found element passes through untouched; otherwise it wraps into its
-    // arm. A union element whose result union differs would need the
-    // union-into-union re-tag that doesn't exist — fenced.
+    // find visits holes as undefined and can infer a predicate that selects
+    // a subset of the element union. Only an inline, inferred predicate is
+    // evidence for that narrower representation; explicit assertions keep
+    // the same refusal boundary as filter.
     const resultT = bindUntyped ? arrayValueType(lowerer, elem) : lowerer.irTypeOf(call);
     if (resultT.kind !== "union") lowerer.badType(call, lowerer.typeOf(call)); // defensive: T | undefined always maps to a union
     const undefTag = lowerer.armTag(resultT.unionId, UNDEFINED_T);
     if (undefTag < 0) lowerer.badType(call, lowerer.typeOf(call));
-    const helper = findHelper(lowerer, elem, resultT, undefTag, fnRet, arity, last, loc);
+    const valueT = arrayValueType(lowerer, elem);
+    let retag: string | null = null;
+    if (!lowerer.coercibleValue(valueT, resultT)) {
+      const inline = ts.isArrowFunction(argNode) || ts.isFunctionExpression(argNode);
+      if (!inline || argNode.type !== undefined) {
+        lowerer.unsupported("SC1090", argNode,
+          `narrowing '.${method}' requires an inline callback with an inferred predicate (annotate the return ': boolean' to keep the receiver's element type)`);
+      }
+      const signature = lowerer.checker.getSignatureFromDeclaration(argNode);
+      const predicate = signature ? lowerer.checker.getTypePredicateOfSignature(signature) : undefined;
+      if (!predicate || predicate.parameterIndex !== 0 || valueT.kind !== "union") {
+        lowerer.unsupported("SC1090", call, `'.${method}' result narrowing without a predicate over its element`);
+      }
+      retag = lowerer.narrowedRetagHelper(call, valueT.unionId, resultT.unionId, loc);
+      if (retag === null) lowerer.unsupported("SC1090", call, `'.${method}' narrowing to an incompatible result layout`);
+    }
+    const helper = findHelper(lowerer, elem, resultT, undefTag, fnRet, arity, last, loc, retag);
     return { kind: "call", callee: helper, args: [receiver, fnArg], type: resultT, loc };
   }
 
@@ -2033,7 +2058,8 @@ export function tryLowerNumericIndexRead(lowerer: Lowerer, operand: IrExpr, loc:
     fnRet: IrType,
     arity: number,
     last: boolean,
-    loc: SrcLoc,): string {
+    loc: SrcLoc,
+    retag: string | null,): string {
     const method = last ? "findLast" : "find";
     const key = `${method}:${typeKey(elem)}:${typeKey(resultT)}:${typeKey(fnRet)}:${arity}`;
     const existing = lowerer.arrHofHelpers.get(key);
@@ -2045,7 +2071,8 @@ export function tryLowerNumericIndexRead(lowerer: Lowerer, operand: IrExpr, loc:
 
     const valueT = arrayValueType(lowerer, elem);
     const v = varRef("v.0", valueT, loc);
-    const found = lowerer.coerceToExpected(v, resultT);
+    const found: IrExpr = retag === null ? lowerer.coerceToExpected(v, resultT) :
+      { kind: "call", callee: retag, args: [v], type: resultT, loc };
     const miss: IrExpr = {
       kind: "unionWrap",
       unionId: resultT.unionId,

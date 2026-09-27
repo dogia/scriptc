@@ -1071,10 +1071,10 @@ class LlEmitter {
       // commits swap its mutable dense, sparse, presence, and property
       // storage while preserving the target object's identity.
       `%ScrArr = type { ${this.sizeType}, ${this.sizeType}, ${this.sizeType}, i32, ptr, ptr, ptr, ptr, ptr, ptr, ${this.sizeType}, ${this.sizeType}, ptr, ${this.sizeType}, ${this.sizeType} }`,
-      // The runtime error prefix { rc, vt, name, message, code } and the
+      // The runtime error prefix { rc, vt, name, message, code, cause } and the
       // class-object shape { rc, pre, post, ctor, name } — field reads on
       // builtin errors and classval loads GEP through these.
-      `%ScrError = type { ${this.sizeType}, ptr, ptr, ptr, ptr }`,
+      `%ScrError = type { ${this.sizeType}, ptr, ptr, ptr, ptr, ptr }`,
       `%ScrClassObj = type { ${this.sizeType}, ${this.sizeType}, ${this.sizeType}, ptr, ptr }`,
       // The runtime emitter prefix { rc, vt, reg, cls } — user subclasses
       // embed it (classes.ts), and bare-emitter GEPs address through it.
@@ -2672,7 +2672,7 @@ class LlEmitter {
   /** The field-slot pointer of a class member: rc at 0, the vtable word at
    * 1 on hierarchy members, then the flattened field list. Runtime error
    * classes GEP through %ScrError (their structs live in the runtime; the
-   * def's [name, message, %code] order matches the layout). */
+   * def's [name, message, %code, %cause] order matches the layout). */
   private classFieldPtr(objName: string, className: string, field: string): { ptr: string; type: IrType } {
     const meta = this.classMetaOf(className);
     const { index, type } = classFieldIndex(meta, field);

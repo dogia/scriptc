@@ -1,7 +1,7 @@
 import { InternalCompilerError } from "../errors.js";
 import * as ts from "./ts7/adapter.js";
 import { bodyReadsArguments } from "./arguments-usage.js";
-import type { IrRecordShape, IrType, IrUnionDef } from "../ir/ir.js";
+import type { IrRecordShape, IrType, IrUnionDef, IrUnionDiscriminant } from "../ir/ir.js";
 import { arrayOf, BOOL, bytesOf, canConvertToDyn, CHILD_T, CRYPTOHASH_T, CRYPTOHMAC_T, DATE_T, DYN, F64, funcOf, isSupportedArrayElem, isSupportedIndexValue, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, JSVAL, mapOf, NULL_T, PROCSTREAM_T, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, setOf, STRING, SYMBOL_T, typeEquals, typeKey, UNDEFINED_T, VOID } from "../ir/ir.js";
 import { BIGINT_T } from "../ir/ir.js";
 
@@ -323,10 +323,9 @@ export class ShapeRegistry {
 }
 
 /** The frontend's union interner — mirrors ShapeRegistry. A union's
- * canonical identity is its typeKey-sorted arm list; two ts unions whose
- * arms map to the same IR types share one unionId (and later one runtime
- * tag numbering: an arm's index in the canonical list IS its tag). Owned by
- * the Lowerer; threaded through mapType exactly like ShapeRegistry. */
+ * canonical identity includes its typeKey-sorted arms and literal
+ * discriminator contract. An arm's index in that list IS its runtime tag.
+ * Owned by the Lowerer; threaded through mapType like ShapeRegistry. */
 export class UnionRegistry {
   private readonly byKey = new Map<string, string>();
   private readonly byId = new Map<string, IrUnionDef>();
@@ -376,27 +375,27 @@ export class UnionRegistry {
 
   /** Completes a recursive placeholder with its canonical arm list and
    * registers the structural key (first writer wins, like shapes). */
-  finalizeRecursive(t: ts.Type, arms: IrType[]): string {
+  finalizeRecursive(t: ts.Type, arms: IrType[], discriminant?: IrUnionDiscriminant): string {
     const id = this.recIds.get(t);
     if (id === undefined) throw new InternalCompilerError("union registry bug: finalizeRecursive without a placeholder");
     if (this.pendingRec.has(id)) {
       const def = this.byId.get(id)!;
       def.arms.push(...arms);
+      if (discriminant) def.discriminant = discriminant;
       this.pendingRec.delete(id);
-      const key = JSON.stringify(arms.map(typeKey));
+      const key = JSON.stringify([arms.map(typeKey), discriminant]);
       if (!this.byKey.has(key)) this.byKey.set(key, id);
     }
     return id;
   }
 
-  /** Interns a canonical (typeKey-sorted, deduplicated) arm list, returning
-   * its unionId. */
-  intern(arms: IrType[]): string {
-    const key = JSON.stringify(arms.map(typeKey));
+  /** Interns canonical arms and discriminator cases, returning their unionId. */
+  intern(arms: IrType[], discriminant?: IrUnionDiscriminant): string {
+    const key = JSON.stringify([arms.map(typeKey), discriminant]);
     let id = this.byKey.get(key);
     if (id === undefined) {
       id = `u${this.unions.length}`;
-      const def: IrUnionDef = { id, arms };
+      const def: IrUnionDef = { id, arms, ...(discriminant ? { discriminant } : {}) };
       this.byKey.set(key, id);
       this.byId.set(id, def);
       this.unions.push(def);
@@ -995,6 +994,15 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
   if (flags & ts.TypeFlags.Number) return F64;
   if (flags & ts.TypeFlags.String) return STRING;
   if (flags & ts.TypeFlags.Boolean || flags & ts.TypeFlags.BooleanLiteral) return BOOL;
+  // ErrorOptions carries a presence-sensitive unknown value. A fixed
+  // optional field cannot distinguish {} from { cause: undefined }; the
+  // checked-dynamic object retains that distinction through forwarding
+  // constructors. Only the standard library's interface gets this ABI.
+  const errorOptionsSymbol = widened.getSymbol();
+  if (errorOptionsSymbol?.name === "ErrorOptions" &&
+    checker.declarationsOf(errorOptionsSymbol).some((d) => ctx.isStdlibFile(d.getSourceFile()))) {
+    return DYN;
+  }
   // node:util.parseArgs config/results are declaration-heavy conditional
   // and discriminated-union types over a value that is naturally a checked-
   // dynamic tree. Keep the named public surface (plus @types/node's private
@@ -2769,7 +2777,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
   // literal unions like `"a" | "b"` — parts that map to the SAME IR type
   // collapse (deduplicated by typeKey), so a single surviving arm is just
   // that type. Two or more distinct arms become a TAGGED union: the
-  // typeKey-sorted arm list is interned (its identity), and an arm's index
+  // typeKey-sorted arm list and discriminator are interned, and an arm's index
   // in that list is its runtime tag. `undefined` and `null` PARTS become
   // the unit arms undefinedT/nullT — strictNullChecks spells optionality
   // as exactly these unions (`string | undefined`, `number | null`), and
@@ -2792,6 +2800,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     const sensitivityAtEntry = contextResolutions;
     try {
       const byKey = new Map<string, IrType>();
+      const recordParts: { source: ts.Type; mapped: IrType & { kind: "record" } }[] = [];
       for (const part of ts.constituentTypes(widened)) {
         // TypeScript's client can retain impossible intersections in a
         // distributed union. They have no inhabitants and no runtime tag.
@@ -2829,6 +2838,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
           return null;
         }
         byKey.set(typeKey(mapped), mapped);
+        if (mapped.kind === "record") recordParts.push({ source: part, mapped });
       }
       const arms = [...byKey.values()];
       if (arms.length === 0) return F64; // same unreachable placeholder as standalone never
@@ -2899,6 +2909,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
         return null;
       }
       arms.sort((a, b) => (typeKey(a) < typeKey(b) ? -1 : 1));
+      const discriminant = unionDiscriminant(recordParts, arms, ctx);
       if (unions.recursivePending(widened)) {
         // The knot closed through this union. A frame that resolved
         // through context-sensitive hooks (generic type parameters, mixin
@@ -2906,14 +2917,82 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
         // same ts.Type answers differently per instantiation — so
         // recursive generic-open unions stay fenced.
         if (contextResolutions !== sensitivityAtEntry) return null;
-        return { kind: "union", unionId: unions.finalizeRecursive(widened, arms) };
+        return { kind: "union", unionId: unions.finalizeRecursive(widened, arms, discriminant) };
       }
-      return { kind: "union", unionId: unions.intern(arms) };
+      return { kind: "union", unionId: unions.intern(arms, discriminant) };
     } finally {
       unions.inProgress.delete(widened);
     }
   }
   return null;
+}
+
+/** Retain a literal discriminator before widening erases its values. A
+ * structural match alone is insufficient: `{ kind: "loop", body: ... }`
+ * also fits a smaller `{ kind: "empty" }` record. Choosing that layout
+ * makes a later switch on kind read fields outside the allocated object.
+ *
+ * Require one common, required data property with finite literal values.
+ * Values may repeat within a single storage arm (several variants share a
+ * shape), but never select different arms. Non-record arms keep their
+ * ordinary kind checks. Types without an unambiguous discriminator retain
+ * their structural boundary behavior. */
+function unionDiscriminant(
+  parts: { source: ts.Type; mapped: IrType & { kind: "record" } }[],
+  arms: IrType[],
+  ctx: TypeMapperCtx,
+): IrUnionDiscriminant | undefined {
+  if (arms.filter((arm) => arm.kind === "record").length < 2 || parts.length < 2) return undefined;
+  const { checker } = ctx;
+  const literals = (type: ts.Type): (string | number | boolean)[] | null => {
+    const values: (string | number | boolean)[] = [];
+    for (const part of type.isUnionType() ? ts.constituentTypes(type) : [type]) {
+      if (part.flags & ts.TypeFlags.StringLiteral) values.push((part as ts.StringLiteralType).value);
+      else if (part.flags & ts.TypeFlags.NumberLiteral) {
+        const value = (part as ts.NumberLiteralType).value;
+        if (!Number.isFinite(value)) return null;
+        values.push(value);
+      }
+      else if (part.flags & ts.TypeFlags.BooleanLiteral) values.push((part as ts.BooleanLiteralType).value);
+      else return null;
+    }
+    return values.length ? values : null;
+  };
+  for (const candidate of checker.getPropertiesOfType(parts[0]!.source)) {
+    if (candidate.name.startsWith("__@")) continue;
+    const byTag = new Map<number, (string | number | boolean)[]>();
+    const owner = new Map<string, number>();
+    let complete = true;
+    for (const part of parts) {
+      const prop = checker.getPropertyOfType(part.source, candidate.name);
+      if (!prop || prop.flags & (ts.SymbolFlags.Optional | ts.SymbolFlags.GetAccessor | ts.SymbolFlags.SetAccessor)) {
+        complete = false;
+        break;
+      }
+      const values = literals(checker.getTypeOfSymbol(prop));
+      if (!values) { complete = false; break; }
+      const tag = arms.findIndex((arm) => typeEquals(arm, part.mapped));
+      const grouped = byTag.get(tag) ?? [];
+      for (const value of values) {
+        const key = JSON.stringify(value);
+        const previous = owner.get(key);
+        if (previous !== undefined && previous !== tag) { complete = false; break; }
+        owner.set(key, tag);
+        if (!grouped.includes(value)) grouped.push(value);
+      }
+      if (!complete) break;
+      byTag.set(tag, grouped);
+    }
+    if (complete) {
+      return {
+        field: candidate.name,
+        cases: [...byTag].sort(([a], [b]) => a - b).map(([tag, values]) => ({
+          tag, values: values.sort((a, b) => JSON.stringify(a) < JSON.stringify(b) ? -1 : JSON.stringify(a) > JSON.stringify(b) ? 1 : 0),
+        })),
+      };
+    }
+  }
+  return undefined;
 }
 
 /** Interface views of native collections may inherit their runtime surface

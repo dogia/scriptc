@@ -62,7 +62,7 @@ void scr_init(void);
 /* Program objects emitted by the bundled LLVM helper reference this symbol.
  * Its versioned spelling makes a mismatched manual runtime link fail before
  * the program can start. */
-void scr_runtime_abi_v1(void);
+void scr_runtime_abi_v2(void);
 
 /* ── the trap funnel (scr_console.c; scr_library.c under -DSCR_LIB) ──────
  * Every unrecoverable runtime trap — OOM, semantic range traps, internal-
@@ -519,6 +519,7 @@ typedef struct ScrError {
                     * the layout prefix: the compiler's %Error class defs
                     * carry a matching third field, so user subclasses
                     * embed the slot and release it NULL-guarded. */
+  struct ScrDyn *error_cause; /* NULL = absent; dyn undefined = present */
 } ScrError;
 
 enum {
@@ -544,6 +545,7 @@ typedef struct ScrDomException {
   ScrStr *name;    /* "Error" default, or the resolved WebIDL name */
   ScrStr *message; /* "" when constructed without one */
   ScrStr *code;    /* the Node string-code slot (stays NULL here) */
+  struct ScrDyn *error_cause; /* shared ScrError prefix; unused by DOMException */
   double dom_code; /* the WebIDL legacy code (0 when the name is off-table) */
   bool has_cause;  /* the options form carried a `cause` member */
   struct ScrDyn *cause; /* owned; NULL when has_cause is false */
@@ -586,6 +588,15 @@ ScrError *scr_error_new(int kind, ScrStr *message);
  * the super(message) call of a compiled `extends Error` constructor. Both
  * arguments are borrowed. */
 void scr_error_init(void *obj, int kind, ScrStr *message);
+/* ECMAScript constructor arguments: dyn undefined defaults the message
+ * to ""; an options object's present cause is retained. All args borrowed.
+ * Message conversion can throw; new returns NULL with an exception pending.
+ * Kept separate so runtime-only throw sites need not link scr_json.c. */
+ScrError *scr_error_new_options(int kind, const struct ScrDyn *message, const struct ScrDyn *options);
+void scr_error_init_options(void *obj, int kind, const struct ScrDyn *message, const struct ScrDyn *options);
+void scr_error_install_cause_drop(void (*fn)(void *obj));
+bool scr_error_has_cause(ScrError *e);
+struct ScrDyn *scr_error_cause(ScrError *e); /* +1, undefined when absent */
 /* ECMA Error.prototype.toString: "", name, message, or "name: message".
  * Borrows e, returns +1. */
 ScrStr *scr_error_to_string(ScrError *e);
@@ -3462,6 +3473,11 @@ ScrDyn *scr_json_parse(ScrStr *text);
 
 /* BORROWED member lookup on a SCR_DYN_OBJ; NULL when the key is absent. */
 ScrDyn *scr_dyn_obj_get(const ScrDyn *d, const char *key, size_t key_len);
+/* Literal discriminator tests used before selecting a typed record layout.
+ * Missing fields and different primitive kinds never match. Borrowed args. */
+bool scr_dyn_field_eq_str(const ScrDyn *d, const ScrStr *key, const ScrStr *value);
+bool scr_dyn_field_eq_num(const ScrDyn *d, const ScrStr *key, double value);
+bool scr_dyn_field_eq_bool(const ScrDyn *d, const ScrStr *key, bool value);
 
 /* Object.keys/values/entries over the checked-dynamic tree: JS own-key order (array-index
  * keys ascending first), dyn-array results (+1); values/entries RETAIN

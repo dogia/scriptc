@@ -436,6 +436,42 @@ ScrDyn *scr_dyn_obj_get(const ScrDyn *d, const char *key, size_t key_len) {
   return NULL;
 }
 
+/* Read through a typed capsule without exposing its native layout to a
+ * matcher for another type. The returned member owns its reference after
+ * the materialized view is released. */
+static ScrDyn *scr_dyn_discriminant(const ScrDyn *d, const ScrStr *key) {
+  if (d && d->kind == SCR_DYN_TYPED_REF) {
+    ScrDyn *view = scr_dyn_typed_ref_materialize(d);
+    ScrDyn *out = scr_dyn_discriminant(view, key);
+    scr_dyn_release(view);
+    return out;
+  }
+  if (!d || d->kind != SCR_DYN_OBJ) return NULL;
+  ScrDyn *value = scr_dyn_obj_get(d, key->data, key->len);
+  return value ? scr_dyn_retain(value) : NULL;
+}
+
+bool scr_dyn_field_eq_str(const ScrDyn *d, const ScrStr *key, const ScrStr *value) {
+  ScrDyn *member = scr_dyn_discriminant(d, key);
+  bool matches = member && member->kind == SCR_DYN_STR && scr_str_eq(member->v.str, (ScrStr *)value);
+  scr_dyn_release(member);
+  return matches;
+}
+
+bool scr_dyn_field_eq_num(const ScrDyn *d, const ScrStr *key, double value) {
+  ScrDyn *member = scr_dyn_discriminant(d, key);
+  bool matches = member && member->kind == SCR_DYN_NUM && member->v.num == value;
+  scr_dyn_release(member);
+  return matches;
+}
+
+bool scr_dyn_field_eq_bool(const ScrDyn *d, const ScrStr *key, bool value) {
+  ScrDyn *member = scr_dyn_discriminant(d, key);
+  bool matches = member && member->kind == SCR_DYN_BOOL && member->v.b == value;
+  scr_dyn_release(member);
+  return matches;
+}
+
 /* Public: the compiler-emitted static→dyn converters push through this
  * too. Ownership of the item moves in. */
 void scr_dyn_arr_push(ScrDyn *arr, ScrDyn *item) {
@@ -1601,6 +1637,7 @@ ScrDyn *scr_dyn_from_error(const ScrError *e) {
   scr_dyn_obj_set(d, "name", 4, scr_dyn_new_str(e->name));
   scr_dyn_obj_set(d, "message", 7, scr_dyn_new_str(e->message));
   if (e->code) scr_dyn_obj_set(d, "code", 4, scr_dyn_new_str(e->code));
+  if (e->error_cause) scr_dyn_obj_set(d, "cause", 5, scr_dyn_retain(e->error_cause));
   /* DOMException: `code` is the WebIDL legacy NUMBER (never the errno
    * string slot), and the options form's cause crosses as itself. */
   if (e->vt == &scr_error_vts[SCR_ERR_DOMEX]) {
@@ -1635,6 +1672,8 @@ ScrDyn *scr_dyn_from_error(const ScrError *e) {
  * its name/message/code (the vtable kind resolves from the name so a
  * later `instanceof TypeError` still answers) and ENTERS the cache, so
  * its next boxing answers the same dyn node. The dyn node is borrowed. */
+static void scr_error_cause_drop_impl(void *obj);
+
 ScrError *scr_error_from_dyn(const ScrDyn *d) {
   ScrError *hit = scr_errdyn_err_of(d);
   if (hit) return hit;
@@ -1654,6 +1693,11 @@ ScrError *scr_error_from_dyn(const ScrDyn *d) {
     e->name = scr_str_retain(en->v.str);
   }
   if (ec && ec->kind == SCR_DYN_STR) e->code = scr_str_retain(ec->v.str);
+  ScrDyn *cause = scr_dyn_obj_get(d, "cause", 5);
+  if (cause) {
+    scr_error_install_cause_drop(&scr_error_cause_drop_impl);
+    e->error_cause = scr_dyn_retain(cause);
+  }
   scr_errdyn_put(e, (ScrDyn *)d);
   return e;
 }
@@ -3385,11 +3429,62 @@ bool scr_dyn_has_own(const ScrDyn *v, const ScrStr *key) {
 ScrDyn *scr_dyn_obj_values(const ScrDyn *v) { return scr_dyn_objwalk(v, SCR_OBJWALK_VALUES); }
 ScrDyn *scr_dyn_obj_entries(const ScrDyn *v) { return scr_dyn_objwalk(v, SCR_OBJWALK_ENTRIES); }
 
-/* ── DOMException's dyn-touching half ─────────────────────────────────
+/* ── Error and DOMException checked-dynamic constructors ──────────────
  * Construction/cause/clone live HERE (not scr_error.c) so the error unit
  * stays linkable without the checked-dynamic tree (the runtime C-unit tests link
  * subsets). The cause teardown installs through scr_error.c's hook
  * before any cause can exist. */
+
+/* Error's cause uses the same split as DOMException: plain runtime
+ * throws stay independent of the checked-dynamic implementation. A NULL
+ * slot means no own property; a stored dyn undefined is a present cause.
+ * Compiled subclasses release the matching hidden dyn field themselves. */
+static void scr_error_cause_drop_impl(void *obj) {
+  ScrError *e = (ScrError *)obj;
+  scr_dyn_release(e->error_cause);
+  e->error_cause = NULL;
+}
+
+void scr_error_init_options(void *obj, int kind, const ScrDyn *message, const ScrDyn *options) {
+  ScrStr *text = message == NULL || message->kind == SCR_DYN_UNDEF
+      ? scr_str_new("", 0) : scr_dyn_string_coerce_js(message);
+  if (scr_exc_pending()) {
+    scr_str_release(text);
+    return;
+  }
+  scr_error_init(obj, kind, text);
+  scr_str_release(text);
+  ScrDyn *view = options && options->kind == SCR_DYN_TYPED_REF
+      ? scr_dyn_typed_ref_materialize(options) : NULL;
+  if (view) options = view;
+  if (options && options->kind == SCR_DYN_OBJ) {
+    ScrDyn *cause = scr_dyn_obj_get(options, "cause", 5);
+    if (cause) {
+      scr_error_install_cause_drop(&scr_error_cause_drop_impl);
+      ((ScrError *)obj)->error_cause = scr_dyn_retain(cause);
+    }
+  }
+  scr_dyn_release(view);
+}
+
+ScrError *scr_error_new_options(int kind, const ScrDyn *message, const ScrDyn *options) {
+  ScrError *e = scr_error_new(kind, NULL);
+  /* scr_error_init_options initializes the prefix of an empty subclass;
+   * discard the allocating constructor's defaults before using it here. */
+  scr_str_release(e->name);
+  scr_str_release(e->message);
+  e->name = e->message = NULL;
+  scr_error_init_options(e, kind, message, options);
+  if (scr_exc_pending()) {
+    scr_error_release(e);
+    return NULL;
+  }
+  return e;
+}
+
+ScrDyn *scr_error_cause(ScrError *e) {
+  return e->error_cause ? scr_dyn_retain(e->error_cause) : scr_dyn_undefined();
+}
 
 static void scr_domex_cause_drop_impl(void *obj) {
   ScrDomException *d = (ScrDomException *)obj;
