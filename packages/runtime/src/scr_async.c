@@ -34,7 +34,7 @@
 #include <string.h>
 #include <time.h>
 #ifdef _WIN32
-/* Windows arm: fibers come from the Win32 Fibers API (CreateFiber /
+/* Windows arm: fibers come from the Win32 Fibers API (CreateFiberEx /
  * SwitchToFiber — the direct ucontext analog: cooperatively scheduled,
  * same thread, own stack); the idle sleep is nanosleep (mingw-w64 ships
  * it, over Sleep). poll(2) has no Windows arm — see the sleep seam in
@@ -457,7 +457,9 @@ static size_t scr_ready_head = 0, scr_ready_len = 0, scr_ready_cap = 0;
 
 static void scr_ready_push(ScrFiber *f) {
   if (scr_ready_head + scr_ready_len == scr_ready_cap) {
-    memmove(scr_ready, scr_ready + scr_ready_head, scr_ready_len * sizeof *scr_ready);
+    if (scr_ready_len > 0) {
+      memmove(scr_ready, scr_ready + scr_ready_head, scr_ready_len * sizeof *scr_ready);
+    }
     scr_ready_head = 0;
     if (scr_ready_len == scr_ready_cap) {
       scr_ready_cap = scr_ready_cap ? scr_ready_cap * 2 : 16;
@@ -1257,6 +1259,34 @@ static void scr_trampoline(void) {
   /* unreachable */
 }
 
+#if !defined(_WIN32) && !defined(__wasi__)
+/* Apple Silicon's makecontext clears all of uc_stack before installing the
+ * initial registers. Passing the whole mapping eagerly commits 256 KiB
+ * (8 MiB under ASan) per call, defeating the lazy allocation above. Its
+ * zero-argument startup frame only needs the top of the downward-growing
+ * stack. Initialize that window, then publish the FULL stack bounds before
+ * any execution or sanitizer switch. The stack top and saved SP are the
+ * same as when initializing the full mapping; ordinary calls can still
+ * use all of SCR_FIBER_STACK.
+ * See libplatform/src/ucontext/generic/makecontext.c's arm64 implementation. */
+static void scr_fiber_context_init(ScrFiber *f) {
+  f->stack = scr_fiber_stack_new();
+  if (getcontext(&f->ctx) != 0) scr_trap("scriptc: getcontext failed\n");
+  f->ctx.uc_stack.ss_sp = f->stack;
+  f->ctx.uc_stack.ss_size = SCR_FIBER_STACK;
+  f->ctx.uc_stack.ss_flags = 0;
+  f->ctx.uc_link = NULL;
+#if defined(__APPLE__) && defined(__aarch64__)
+  const size_t bootstrap = 16 * 1024;
+  f->ctx.uc_stack.ss_sp = f->stack + SCR_FIBER_STACK - bootstrap;
+  f->ctx.uc_stack.ss_size = bootstrap;
+#endif
+  makecontext(&f->ctx, scr_trampoline, 0);
+  f->ctx.uc_stack.ss_sp = f->stack;
+  f->ctx.uc_stack.ss_size = SCR_FIBER_STACK;
+}
+#endif
+
 /* Frees a finished fiber's execution resources (the promise release and
  * bookkeeping stay at the call sites). Windows: DeleteFiber tears down the
  * fiber object and its stack — legal here because a finished fiber has
@@ -1290,10 +1320,11 @@ ScrPromise *scr_async_spawn(void (*entry)(ScrFiber *, void *), void *argpack) {
   scr_fibers_live++;
 
 #ifdef _WIN32
-  /* The commit size is the ucontext stack's size; the reserve stays the
-   * default 1MB. Committed lazily by the OS, like the malloc'd stacks. */
+  /* Commit one page initially; Windows commits further pages as the stack
+   * grows. Keep the executable's stack reserve, as with CreateFiber,
+   * without committing SCR_FIBER_STACK for every idle fiber. */
   ScrCtx here = scr_win_self();
-  f->ctx = CreateFiber(SCR_FIBER_STACK, scr_trampoline, NULL);
+  f->ctx = CreateFiberEx(4096, 0, 0, scr_trampoline, NULL);
   if (f->ctx == NULL) scr_oom();
 #elif defined(__wasi__)
   ScrFiber *spawner = scr_current;
@@ -1312,12 +1343,7 @@ ScrPromise *scr_async_spawn(void (*entry)(ScrFiber *, void *), void *argpack) {
   }
   return result;
 #else
-  f->stack = scr_fiber_stack_new();
-  getcontext(&f->ctx);
-  f->ctx.uc_stack.ss_sp = f->stack;
-  f->ctx.uc_stack.ss_size = SCR_FIBER_STACK;
-  f->ctx.uc_link = NULL;
-  makecontext(&f->ctx, scr_trampoline, 0);
+  scr_fiber_context_init(f);
 
   ucontext_t here;
 #endif
@@ -3268,17 +3294,12 @@ static ScrGen *scr_gen_new_common(void (*entry)(ScrFiber *, void *), void *argpa
   f->als = scr_als_ctx_retain(*scr_als_active);
   scr_fibers_live++;
 #ifdef _WIN32
-  f->ctx = CreateFiber(SCR_FIBER_STACK, scr_trampoline, NULL);
+  f->ctx = CreateFiberEx(4096, 0, 0, scr_trampoline, NULL);
   if (f->ctx == NULL) scr_oom();
 #elif defined(__wasi__)
   f->ctx = 0;
 #else
-  f->stack = scr_fiber_stack_new();
-  getcontext(&f->ctx);
-  f->ctx.uc_stack.ss_sp = f->stack;
-  f->ctx.uc_stack.ss_size = SCR_FIBER_STACK;
-  f->ctx.uc_link = NULL;
-  makecontext(&f->ctx, scr_trampoline, 0);
+  scr_fiber_context_init(f);
 #endif
   g->fiber = f;
   return g;
