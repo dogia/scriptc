@@ -4,6 +4,7 @@ import { InternalCompilerError } from "../../errors.js";
  * flow (if/while/for/for-of/do, switch, try/catch, abrupt completions),
  * explicit resource management, and blocked-binding poisoning. */
 import * as ts from "../ts7/adapter.js";
+import { bindingSource } from "../binding-source.js";
 import type { Lowerer } from "./lowerer.js";
 import { arrayValueRead, arrayValueStore, arrayValueType } from "./array-values.js";
 import { lowerForAwaitGenerator, lowerForOfGenerator, lowerYieldStarStatement, type GenType } from "./lower-generators.js";
@@ -730,7 +731,7 @@ export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDec
     const name = nameNode.text;
     const count = lowerer.ctx.localCounters.get(name) ?? 0;
     lowerer.ctx.localCounters.set(name, count + 1);
-    const local: IrLocal = { id: `${name}.${count}`, name, type, mutable: true };
+    const local: IrLocal = { id: `${name}.${count}`, name, type, mutable: true, source: bindingSource(nameNode) };
     lowerer.ctx.locals.push(local);
     lowerer.ctx.scopes[0]!.set(symbol, local);
     // A checked-dynamic slot holds the dyn undefined (a NULL dyn is a
@@ -789,7 +790,7 @@ export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDec
     const name = nameNode.text;
     const count = ctx.localCounters.get(name) ?? 0;
     ctx.localCounters.set(name, count + 1);
-    const local: IrLocal = { id: `${name}.${count}`, name, type, mutable: true };
+    const local: IrLocal = { id: `${name}.${count}`, name, type, mutable: true, source: bindingSource(decl.name) };
     ctx.locals.push(local);
     ctx.scopes[0]!.set(symbol, local);
     root.out.push({ kind: "varDecl", localId: local.id, init: wrapped, loc: locOf(decl) });

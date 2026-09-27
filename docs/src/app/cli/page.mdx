@@ -120,7 +120,7 @@ Prebuilds release runtime objects and native TLS/dynamic-engine archives for tar
   <dd>Remove symbol and debug payload when linking an executable, including cross-compiled targets. This opt-in flag works with either backend and <code>--from-c</code> without changing code optimization.</dd>
 
   <dt><code>--optimization &lt;release|dev&gt;</code></dt>
-  <dd>Select native optimization for executable, assembly, or object output. The default is <code>release</code> (<code>-O2</code>). <code>dev</code> uses <code>-O0</code> and emits source locations for TypeScript and JavaScript breakpoints and stack frames. macOS executable builds also produce an adjacent <code>.dSYM</code> bundle.</dd>
+  <dd>Select native optimization for executable, assembly, or object output. The default is <code>release</code> (<code>-O2</code>). <code>dev</code> uses <code>-O0</code> and emits source locations for TypeScript and JavaScript breakpoints and stack frames. LLVM builds include source variable names and native storage descriptions; see <a href="/limitations#native-debugging">Native debugging</a> for the supported representations. macOS executable builds also produce an adjacent <code>.dSYM</code> bundle.</dd>
 
   <dt><code>--windows-subsystem &lt;console|gui&gt;</code></dt>
   <dd>Select the subsystem of a Windows executable. <code>console</code> is the default; <code>gui</code> prevents Windows from opening a console window for the app. Valid only for executable builds targeting Windows, including <code>--from-c</code>.</dd>

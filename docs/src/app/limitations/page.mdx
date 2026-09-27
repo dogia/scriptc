@@ -4,7 +4,7 @@ Honesty is the product. The static surface is large but not total, and a few beh
 
 ## Native debugging
 
-Executable builds with `--optimization=dev` support source breakpoints and native stack frames for statically compiled TypeScript and JavaScript. Debuggers see native representations; TypeScript variable inspection, expression evaluation, and stepping through code executed by the dynamic engine are not implemented. Release builds and builds with `--strip` omit these source mappings. macOS uses an adjacent `.dSYM` bundle generated with the Command Line Tools' `dsymutil`.
+Executable builds with `--optimization=dev` support source breakpoints and native stack frames for statically compiled TypeScript and JavaScript. LLVM builds also describe source locals, parameters, captured bindings, and module globals using their source names and lexical scopes. Numbers and booleans display directly; strings expose their native `ScrStr` layout, including UTF-8 `data` and byte `len`, and tagged unions expose their `tag` and `slot` arms. Other heap values and forward-captured scalar bindings can appear as opaque native pointers. The C backend exposes generated C names and representations. TypeScript expression evaluation, JavaScript object formatting, and stepping through code executed by the dynamic engine are not implemented. Release builds and builds with `--strip` omit these source mappings. macOS uses an adjacent `.dSYM` bundle generated with the Command Line Tools' `dsymutil`.
 
 ## What doesn't compile (yet)
 

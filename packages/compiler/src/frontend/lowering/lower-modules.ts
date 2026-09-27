@@ -3,6 +3,7 @@
  * seeds), npm/JSON import collection, per-file %init functions, %main, and
  * the module artifacts (globals, embedded npm tables) the IR module carries. */
 import * as ts from "../ts7/adapter.js";
+import { bindingSource } from "../binding-source.js";
 import type { Lowerer } from "./lowerer.js";
 import { dirname as dirnamePath, isAbsolute, resolve as resolvePath } from "node:path";
 import { NpmGraphBuilder, packageNameOfPath, probeNodeImportRefusal, probeNodeRequireRefusal } from "../npm.js";
@@ -1412,7 +1413,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             ) {
               const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
               if (symbol) {
-                const g: IrGlobal = { id: `%g.${tag}${nameNode.text}`, name: nameNode.text, type: DYN, mutable: isLet };
+                const g: IrGlobal = { id: `%g.${tag}${nameNode.text}`, name: nameNode.text, type: DYN, mutable: isLet, source: bindingSource(nameNode) };
                 lowerer.globalsBySymbol.set(symbol, g);
                 lowerer.globalsList.push(g);
               }
@@ -1445,7 +1446,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             ) {
               const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
               if (symbol && !lowerer.globalsBySymbol.has(symbol)) {
-                const g: IrGlobal = { id: `%g.${tag}${nameNode.text}`, name: nameNode.text, type: DYN, mutable: isLet };
+                const g: IrGlobal = { id: `%g.${tag}${nameNode.text}`, name: nameNode.text, type: DYN, mutable: isLet, source: bindingSource(nameNode) };
                 lowerer.globalsBySymbol.set(symbol, g);
                 lowerer.globalsList.push(g);
               }
@@ -1472,7 +1473,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             ) {
               const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
               if (symbol && !lowerer.globalsBySymbol.has(symbol)) {
-                const g: IrGlobal = { id: `%g.${tag}${nsPrefix}${nameNode.text}`, name: nameNode.text, type: DYN, mutable: isLet };
+                const g: IrGlobal = { id: `%g.${tag}${nsPrefix}${nameNode.text}`, name: nameNode.text, type: DYN, mutable: isLet, source: bindingSource(nameNode) };
                 lowerer.globalsBySymbol.set(symbol, g);
                 lowerer.globalsList.push(g);
                 // Mutable dyn globals hold the dyn undefined from module
@@ -1498,7 +1499,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             ) {
               const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
               if (symbol && !lowerer.globalsBySymbol.has(symbol)) {
-                const g: IrGlobal = { id: `%g.${tag}${nsPrefix}${nameNode.text}`, name: nameNode.text, type: JSVAL, mutable: isLet };
+                const g: IrGlobal = { id: `%g.${tag}${nsPrefix}${nameNode.text}`, name: nameNode.text, type: JSVAL, mutable: isLet, source: bindingSource(nameNode) };
                 lowerer.globalsBySymbol.set(symbol, g);
                 lowerer.globalsList.push(g);
               }
@@ -1616,6 +1617,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               name: nameNode.text,
               type,
               mutable: isLet,
+              source: bindingSource(nameNode),
             };
             lowerer.globalsBySymbol.set(symbol, g);
             lowerer.globalsList.push(g);
@@ -1738,7 +1740,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             }
             const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
             if (!symbol || lowerer.globalsBySymbol.has(symbol)) continue;
-            const g: IrGlobal = { id: `%g.${tag}${nameNode.text}`, name: nameNode.text, type, mutable: true };
+            const g: IrGlobal = { id: `%g.${tag}${nameNode.text}`, name: nameNode.text, type, mutable: true, source: bindingSource(nameNode) };
             lowerer.globalsBySymbol.set(symbol, g);
             lowerer.globalsList.push(g);
             noteVarGlobalEntryInit(lowerer, sf, g);

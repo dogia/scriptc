@@ -73,6 +73,9 @@ test.runIf(process.platform === "darwin")("dev LLVM object and assembly outputs 
         const { stdout } = await exec("dwarfdump", ["--debug-line", outPath]);
         expect(stdout).toContain("main.ts");
         expect(stdout).toContain("helper.ts");
+        const info = await exec("dwarfdump", ["--debug-info", outPath]);
+        expect(info.stdout).toContain("DW_TAG_variable");
+        expect(info.stdout).toContain("DW_TAG_formal_parameter");
       } else {
         const assembly = await readFile(outPath, "utf8");
         expect(assembly).toContain(".loc");

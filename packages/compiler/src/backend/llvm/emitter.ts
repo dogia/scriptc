@@ -171,7 +171,7 @@ interface LlScopeEntry {
 }
 
 export interface LlvmTargetOptions {
-  /** Exact frontend sources for dev-build line tables and stack frames. */
+  /** Exact frontend sources for dev-build locations and variable metadata. */
   debugSources?: ReadonlyMap<string, string>;
   /** Pointer width of the target C ABI. Native targets are 64-bit today. */
   pointerBits?: 32 | 64;
@@ -186,7 +186,8 @@ export interface LlvmTargetOptions {
 }
 
 export function emitLlvmModule(mod: IrModule, options: LlvmTargetOptions = {}): string {
-  return new LlEmitter(scalarizeNumericRecords(mod), options).emit();
+  // Keep source storage intact for debugger inspection in dev builds.
+  return new LlEmitter(options.debugSources === undefined ? scalarizeNumericRecords(mod) : mod, options).emit();
 }
 
 /** LLVM c"..." payload for a UTF-8 literal, NUL-terminated like the C
@@ -382,7 +383,7 @@ class LlEmitter {
   private logArgSlots = 0;
 
   constructor(private readonly mod: IrModule, options: LlvmTargetOptions) {
-    this.debug = options.debugSources === undefined ? null : new LlvmDebugInfo(mod.sourceFile, options.debugSources);
+    this.debug = options.debugSources === undefined ? null : new LlvmDebugInfo(mod.sourceFile, options.debugSources, options.pointerBits, mod.unions);
     this.constantNumericTables = findConstantNumericTables(mod);
     this.sizeType = options.pointerBits === 32 ? "i32" : "i64";
     this.wasi = options.wasi === true;
@@ -1254,7 +1255,8 @@ class LlEmitter {
     for (const g of globals) {
       const ty = this.llType(g.type);
       const zero = ty === "double" ? f64Lit(0) : ty === "ptr" ? "null" : "false";
-      out.push(`@${mangleGlobal(g.id)} = internal ${tl}global ${ty} ${zero} ; ${g.name}`);
+      const debug = this.debug?.global(g);
+      out.push(`@${mangleGlobal(g.id)} = internal ${tl}global ${ty} ${zero}${debug ? `, !dbg ${debug}` : ""} ; ${g.name}`);
     }
     if (globals.length > 0) out.push(``);
     out.push(...helpers);
@@ -2772,6 +2774,13 @@ class LlEmitter {
     return { kind: "global", slot: `@${mangleGlobal(id)}`, type: g };
   }
 
+  private emitDebugLocal(local: IrLocal, slot: string, arg = 0, captured = false): void {
+    const debug = this.debug?.local(local, this.debugScope, arg, captured);
+    if (!debug) return;
+    this.declare("declare void @llvm.dbg.declare(metadata, metadata, metadata)");
+    this.B.entryAllocas.push(`call void @llvm.dbg.declare(metadata ptr ${slot}, metadata ${debug.variable}, metadata ${debug.expression}), !dbg ${debug.location}`);
+  }
+
   /** Loads a boxed binding's box pointer out of its slot. */
   private loadBox(slot: string): string {
     const b = this.B.tmp();
@@ -3038,6 +3047,7 @@ class LlEmitter {
           ? "ptr"
           : this.llType(local.type);
       B.entryAllocas.push(`%${mangleLocal(local.id)} = alloca ${slotTy} ; ${local.name}`);
+      this.emitDebugLocal(local, `%${mangleLocal(local.id)}`, fn.params.findIndex((p) => p.localId === local.id) + 1, this.captureIds.has(local.id));
       // Refcounted/boxed locals start NULL (the C prologue's `= NULL`):
       // scope-exit releases run whether or not an assign ever did.
       if (paramIds.has(local.id) || this.captureIds.has(local.id)) continue;
@@ -3555,7 +3565,7 @@ class LlEmitter {
       case "for": {
         // The init's scope wraps the whole loop (break/continue must NOT
         // release it — scopeDepth captured after the push, C parity).
-        const integerLoop = matchIntegerBytesForLoop(s, this.currentLocals);
+        const integerLoop = this.debug === null ? matchIntegerBytesForLoop(s, this.currentLocals) : null;
         this.scopes.push([]);
         let integerSlot: string | null = null;
         if (integerLoop) {

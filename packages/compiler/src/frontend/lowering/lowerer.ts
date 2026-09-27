@@ -14,6 +14,7 @@ import { InternalCompilerError } from "../../errors.js";
  *   ("x.0", "x.1" for shadowing); the IR is scope-flat.
  */
 import { resolve } from "node:path";
+import { bindingSource } from "../binding-source.js";
 import { tsgoPath } from "../dts-paths.js";
 import * as ts from "../ts7/adapter.js";
 import type { ScrDiagnostic } from "../../diagnostics/diagnostic.js";
@@ -8569,7 +8570,7 @@ export class Lowerer {
     const ctx = this.ctx;
     const count = ctx.localCounters.get(name) ?? 0;
     ctx.localCounters.set(name, count + 1);
-    const local: IrLocal = { id: `${name}.${count}`, name, type, mutable };
+    const local: IrLocal = { id: `${name}.${count}`, name, type, mutable, source: bindingSource(nameNode) };
     ctx.locals.push(local);
     const symbol = this.checker.getSymbolAtLocation(nameNode);
     if (symbol) ctx.scopes[ctx.scopes.length - 1]!.set(symbol, local);
@@ -8942,6 +8943,7 @@ export class Lowerer {
             type: origin.type,
             mutable: origin.mutable,
             boxed: true,
+            ...(origin.source ? { source: origin.source } : {}),
             // TDZ travels with the binding: reads through ANY capture of a
             // forward-captured const must trap while the box is empty.
             ...(origin.tdz ? { tdz: true as const } : {}),

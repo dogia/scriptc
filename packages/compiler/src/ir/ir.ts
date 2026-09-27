@@ -1361,6 +1361,13 @@ export interface IrGlobal {
   name: string;
   type: IrType;
   mutable: boolean;
+  /** Original declaration and lexical scope, when this is a source binding. */
+  source?: IrBindingSource;
+}
+
+export interface IrBindingSource {
+  loc: SrcLoc;
+  scope: SrcLoc;
 }
 
 export interface IrLocal {
@@ -1368,6 +1375,8 @@ export interface IrLocal {
   name: string;
   type: IrType;
   mutable: boolean;
+  /** Absent for compiler temporaries and hidden ABI parameters. */
+  source?: IrBindingSource;
   /** Captured by a nested function: the variable lives in a refcounted box
    * (a shared binding — mutations are visible through every capture). All
    * access, including in the declaring function, goes through the box. */
