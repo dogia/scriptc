@@ -48,7 +48,7 @@ export function emitLiteralExpr(host: LlvmEmitterContext, e: ExprOf<"numLit" | "
         const b = host.binding(e.localId);
         if (b.kind === "boxed") {
           // Reads go through the shared binding; ref kinds come out +1.
-          // Forward-captured consts (tdz) test the box's payload slot
+          // Forward-captured bindings (tdz) test the box's payload slot
           // first: empty is the temporal dead zone (catchable
           // ReferenceError, Node's message).
           const box = host.loadBox(b.slot);
@@ -155,10 +155,10 @@ export function emitOperatorExpr(host: LlvmEmitterContext, e: ExprOf<"bin" | "un
         const b = host.binding(e.localId);
         if (b.kind === "boxed") {
           const box = host.loadBox(b.slot);
-          const old = host.boxGet(box, e.type);
+          const old = b.local!.tdz ? host.tdzBoxRead(box, e.type, b.local!.name) : host.boxGet(box, e.type);
           const next = B.tmp();
           B.line(`${next} = ${e.op === "+" ? "fadd" : "fsub"} double ${old}, ${f64Lit(1)}`);
-          host.boxSet(box, e.type, next);
+          host.writeBindingBox(box, b.local!, next);
           return { name: e.prefix ? next : old, type: e.type };
         }
         const old = B.tmp();
@@ -215,8 +215,7 @@ export function emitOperatorExpr(host: LlvmEmitterContext, e: ExprOf<"bin" | "un
         if (b.kind === "boxed") {
           // box_set takes ownership of the passed reference, so hand it a
           // retained copy and keep the temp's own reference for the yield.
-          const stored = isRefCounted(v.type) ? host.retainValue(v.name, v.type) : v.name;
-          host.boxSet(host.loadBox(b.slot), b.type, stored);
+          host.writeBindingBox(host.loadBox(b.slot), b.local!, v.name, false, true);
           return v;
         }
         if (isRefCounted(b.type)) {
@@ -563,7 +562,7 @@ export function emitContainerExpr(host: LlvmEmitterContext, e: ExprOf<"arrayLit"
     }
   }
 
-export function emitRecordExpr(host: LlvmEmitterContext, e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys">): LlValue {
+export function emitRecordExpr(host: LlvmEmitterContext, e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys" | "recordOvfHas">): LlValue {
     const B = host.B;
     switch (e.kind) {
       case "fieldGet": {
@@ -642,6 +641,15 @@ export function emitRecordExpr(host: LlvmEmitterContext, e: ExprOf<"fieldGet" | 
       }
       case "recordKeyGet":
         return host.emitRecordKeyGet(e);
+      case "recordOvfHas": {
+        const obj = host.emitExpr(e.obj);
+        const key = host.emitExpr(e.key);
+        const ovf = host.recordOvfPtr(obj.name, e.shapeId);
+        host.declare(`declare zeroext i1 @scr_map_has_str(ptr, ptr)`);
+        const t = B.tmp();
+        B.line(`${t} = call zeroext i1 @scr_map_has_str(ptr ${ovf}, ptr ${key.name})`);
+        return { name: t, type: e.type };
+      }
       case "recordOvfKeys": {
         // The overflow map's live keys in JS own-key order — a fresh
         // string[] snapshot (+1); the record is borrowed.

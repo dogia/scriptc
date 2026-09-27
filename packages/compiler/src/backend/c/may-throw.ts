@@ -47,9 +47,10 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
   }
   for (const fn of mod.functions) {
     const f: Facts = { throws: false, callees: [], callsValue: false };
-    // TDZ locals (forward-captured consts): every read tests the box and
-    // throws the catchable ReferenceError while it is empty.
+    // TDZ reads and non-initializing writes can throw ReferenceError.
+    // Capture locals carry the same flag as the declaring binding.
     const tdzIds = new Set(fn.locals.filter((l) => l.tdz).map((l) => l.id));
+    const mutableTdzIds = new Set(fn.locals.filter((l) => l.tdz && l.mutable).map((l) => l.id));
     // The IR is plain JSON: a generic walk keyed on `kind` stays correct as
     // nodes grow fields (types' own `kind`s never collide with these).
     const visit = (node: unknown): void => {
@@ -67,7 +68,15 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           f.throws = true;
           break;
         case "varRef":
-          if (tdzIds.size > 0 && tdzIds.has(rec["localId"] as string)) f.throws = true;
+        case "incDec":
+        case "assignExpr":
+          if (tdzIds.has(rec["localId"] as string)) f.throws = true;
+          break;
+        case "assign":
+          // A declaration is allowed to fill an empty box. Legacy const
+          // TDZ stores also initialize; only mutable subsequent stores
+          // introduce the new write-side exception edge.
+          if (rec["initializes"] !== true && mutableTdzIds.has(rec["localId"] as string)) f.throws = true;
           break;
         case "dynCheck":
         case "caughtCheck":

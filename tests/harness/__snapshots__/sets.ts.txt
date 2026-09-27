@@ -5,7 +5,7 @@ sets.ts:8:16 - error SC2020: 'new Set(values)' is part of the standard library t
     |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
   9 | 
 
-  hint: construct the Set empty and add() each value — only an array or fixed tuple of already-legal elements (string or number) seeds a Set
+  hint: construct the Set empty and add() each value — only a string, array, or fixed tuple of already-legal elements (string or number) seeds a Set
 
 sets.ts:12:7 - error SC2009: values of type 'Set<boolean>' cannot be compiled: the Set shape is supported, but elements are limited to numbers and strings — 'boolean' is outside that domain
 

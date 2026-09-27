@@ -18,7 +18,7 @@ test("analyzes the compiler's IR validator without exhausting type diagnostics",
 // Keep these outside the ordinary corpus: they import implementation files
 // beyond the fixture directory, which the corpus oracle cache does not hash.
 // Node executes the actual TS modules through tsx's .js → .ts resolution.
-for (const component of ["source-locations", "ir-collections", "ir-types"]) {
+for (const component of ["source-locations", "ir-collections", "ir-types", "ir-control-flow"]) {
   for (const backend of ["c", "llvm"] as const) {
     test(`self-hosting ${component}: ${backend} matches Node`, async () => {
       const entry = join(root, "tests/fixtures/self-hosting", `${component}.ts`);

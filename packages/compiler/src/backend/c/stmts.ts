@@ -9,6 +9,7 @@ import { mangleField, mangleGlobal, mangleLocal, mangleRawParam } from "../mangl
 import { BOOL, CAUGHT, IrExpr, IrStmt, RUNTIME_ERROR_CLASSES, isRefCounted } from "../../ir/ir.js";
 import { boxAccess, cDecl, cStringLiteral, elemAccess, vAdapters } from "./types.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
+import { writeBox } from "./bindings.js";
 import { emitStableReceiver } from "./exprs.js";
 import { matchIntegerBytesForLoop } from "../../ir/integer-loops.js";
 import { analyzeIntegerRanges } from "../../ir/integer-ranges.js";
@@ -280,19 +281,9 @@ function emitStmtBody(emitter: CEmitter, s: IrStmt): void {
         const target = mangleLocal(s.localId);
         const v = emitter.emitExpr(s.value);
         if (local!.boxed) {
-          // A scalar TDZ box (forward-captured const): the initializing
-          // write mints the one-element array cell — set_ref moves it in
-          // (and the empty-slot sentinel ends here).
-          if (local!.tdz && boxAccess(local!.type) !== "ref") {
-            const acc = boxAccess(local!.type);
-            const cell = `sc_t${emitter.tempCounter++}`;
-            emitter.line(`ScrArr *${cell} = ${emitter.arrNewC(local!.type, 1)};${emitter.srcComment(s.loc)}`);
-            emitter.line(`scr_arr_push_${acc}(${cell}, ${v.name});`);
-            emitter.line(`scr_box_set_ref(${target}, ${cell});`);
-            break;
-          }
-          if (isRefCounted(v.type)) emitter.moveTemp(v); // set_ref releases the old value
-          emitter.line(`scr_box_set_${boxAccess(local!.type)}(${target}, ${v.name});${emitter.srcComment(s.loc)}`);
+          writeBox(emitter, local, v.name, s.initializes);
+          // A TDZ failure must still unwind the evaluated RHS.
+          if (isRefCounted(v.type)) emitter.moveTemp(v);
           break;
         }
         emitter.moveTemp(v);

@@ -170,3 +170,105 @@ test.each([
 ] satisfies [Partial<IrExpr & { kind: "arrIntrinsic" }>, string][])("numeric array-read intrinsic rejects malformed IR %#", (overrides, message) => {
   expect(validateModule(numericReadModule(overrides)).some((error) => error.message.includes(message))).toBe(true);
 });
+
+function tdzModule(mutable = true): IrModule {
+  const value: IrExpr = { kind: "numLit", value: 0, type: F64, loc };
+  return {
+    irVersion: 11, sourceFile: loc.file, entry: "main",
+    functions: [{
+      name: "main", params: [], returnType: VOID, loc,
+      locals: [{ id: "value", name: "value", type: F64, mutable, boxed: true, tdz: true }],
+      body: [
+        { kind: "varDecl", localId: "value", init: null, loc },
+        { kind: "assign", localId: "value", value, initializes: true, loc },
+      ],
+    }],
+  };
+}
+
+test.each([true, false])("TDZ declarations round-trip their initialization marker (mutable=%s)", (mutable) => {
+  const mod = tdzModule(mutable);
+  expect(validateModule(mod)).toEqual([]);
+  expect(deserializeModule(serializeModule(mod))).toEqual(mod);
+});
+
+test("an initialization marker cannot bypass an ordinary immutable binding", () => {
+  const mod = tdzModule(false);
+  delete mod.functions[0]!.locals[0]!.tdz;
+  const messages = validateModule(mod).map((error) => error.message);
+  expect(messages.some((message) => message.includes('initializing assign requires a TDZ local "value"'))).toBe(true);
+  expect(messages.some((message) => message.includes('assign to immutable local "value"'))).toBe(true);
+});
+
+test("global assignments cannot masquerade as lexical initialization", () => {
+  const mod = tdzModule();
+  mod.globals = [{ id: "value", name: "value", type: F64, mutable: true }];
+  mod.functions[0]!.locals = [];
+  mod.functions[0]!.body.shift();
+  expect(validateModule(mod).some((error) => error.message.includes("initializing assign requires a TDZ local"))).toBe(true);
+});
+
+test("legacy const TDZ declarations remain readable", () => {
+  const mod = tdzModule(false);
+  const store = mod.functions[0]!.body[1]!;
+  if (store.kind !== "assign") throw new Error("fixture");
+  delete store.initializes;
+  expect(validateModule(mod)).toEqual([]);
+});
+
+test("TDZ initialization still checks the payload representation", () => {
+  const mod = tdzModule();
+  const store = mod.functions[0]!.body[1]!;
+  if (store.kind !== "assign") throw new Error("fixture");
+  store.value = { kind: "strLit", value: "wrong", type: STRING, loc };
+  expect(validateModule(mod).some((error) => error.message.includes('assign "value"'))).toBe(true);
+});
+
+function overflowPresenceModule(): IrModule {
+  const record: IrType = { kind: "record", shapeId: "dictionary" };
+  const check: IrExpr = {
+    kind: "recordOvfHas", shapeId: "dictionary",
+    obj: { kind: "recordLit", fields: [], type: record, loc },
+    key: { kind: "strLit", value: "key", type: STRING, loc }, type: BOOL, loc,
+  };
+  const mod = expressionModule(check, []);
+  mod.records = [{ id: "dictionary", fields: [], indexValue: F64 }];
+  return mod;
+}
+
+test("overflow presence checks validate and serialize", () => {
+  const mod = overflowPresenceModule();
+  expect(validateModule(mod)).toEqual([]);
+  expect(deserializeModule(serializeModule(mod))).toEqual(mod);
+});
+
+test("overflow presence requires a map-bearing shape", () => {
+  const mod = overflowPresenceModule();
+  delete mod.records![0]!.indexValue;
+  expect(validateModule(mod).some((error) => error.message.includes("requires an index-signature record"))).toBe(true);
+});
+
+test("overflow presence rejects an undeclared shape", () => {
+  const mod = overflowPresenceModule();
+  mod.records = [];
+  expect(validateModule(mod).some((error) => error.message.includes("recordOvfHas on undeclared shape"))).toBe(true);
+});
+
+test.each(["receiver", "key", "result"] as const)("overflow presence checks its %s type", (slot) => {
+  const mod = overflowPresenceModule();
+  const statement = mod.functions[0]!.body[0]!;
+  if (statement.kind !== "exprStmt" || statement.expr.kind !== "recordOvfHas") throw new Error("fixture");
+  const check = statement.expr;
+  const wrong: IrExpr = { kind: "numLit", value: 1, type: F64, loc };
+  if (slot === "receiver") check.obj = wrong;
+  else if (slot === "key") check.key = wrong;
+  else check.type = F64;
+  const message = slot === "result" ? "recordOvfHas must be bool" : `recordOvfHas ${slot}`;
+  expect(validateModule(mod).some((error) => error.message.includes(message))).toBe(true);
+});
+
+test("TDZ locals require a shared box", () => {
+  const mod = tdzModule();
+  delete mod.functions[0]!.locals[0]!.boxed;
+  expect(validateModule(mod).some((error) => error.message.includes('TDZ local "value" must be boxed'))).toBe(true);
+});

@@ -537,15 +537,16 @@ export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDec
    * threads captures normally. The source declaration later becomes the
    * initializing `assign` (lowerVarDecl consumes tdzPredeclared). Reads
    * test the box and throw Node's exact catchable ReferenceError while it
-   * is empty. CONST ONLY: `let` would need the same trap on writes, a
-   * surface nothing yet needs. */
+   * is empty. Mutable bindings also guard writes; only the declaration's
+   * initializing assignment may leave the temporal dead zone. */
   export function predeclareForwardCapture(lowerer: Lowerer, symbol: ts.Symbol): boolean {
     const decl = lowerer.checker.valueDeclarationOf(symbol);
     if (!decl || !ts.isVariableDeclaration(decl) || decl.name === undefined || !ts.isIdentifier(decl.name)) return false;
     if (!decl.initializer) return false;
-    if ((ts.getCombinedNodeFlags(decl) & ts.NodeFlags.Const) === 0) return false;
+    const flags = ts.getCombinedNodeFlags(decl);
+    if ((flags & ts.NodeFlags.BlockScoped) === 0 || (flags & ts.NodeFlags.Using) !== 0) return false;
     if (lowerer.tdzPredeclared.has(symbol)) return false; // defensive: never twice
-    // MODULE-scope consts are pre-registered globals (collectGlobals):
+    // MODULE-scope bindings are pre-registered globals (collectGlobals):
     // references resolve through globalOf after the local search fails, so
     // a TDZ box here would SHADOW the global and never fill (the top-level
     // `const id = setInterval(cb)` self-capture — the global slot is the
@@ -570,7 +571,10 @@ export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDec
       const name = decl.name.text;
       const count = entry.ctx.localCounters.get(name) ?? 0;
       entry.ctx.localCounters.set(name, count + 1);
-      const local: IrLocal = { id: `${name}.${count}`, name, type, mutable: false, boxed: true, tdz: true };
+      const local: IrLocal = {
+        id: `${name}.${count}`, name, type,
+        mutable: (flags & ts.NodeFlags.Const) === 0, boxed: true, tdz: true,
+      };
       entry.ctx.locals.push(local);
       entry.frame.set(symbol, local);
       entry.out.push({ kind: "varDecl", localId: local.id, init: null, loc: locOf(decl) });
@@ -3663,7 +3667,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
       return { kind: "assign", localId: g.id, value: init, loc: locOf(decl) };
     }
 
-    // A forward-captured const pre-declared as a TDZ box (an earlier
+    // A forward-captured binding pre-declared as a TDZ box (an earlier
     // function in this scope captured it — predeclareForwardCapture): the
     // binding and its scope-entry varDecl already exist; the source
     // declaration is the one initializing `assign` into the shared box.
@@ -3671,7 +3675,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     if (pre && decl.initializer) {
       lowerer.tdzPredeclared.delete(declSymbol!);
       const init = lowerer.lowerExprExpecting(decl.initializer, pre.type);
-      return { kind: "assign", localId: pre.id, value: init, loc: locOf(decl) };
+      return { kind: "assign", localId: pre.id, value: init, initializes: true, loc: locOf(decl) };
     }
 
     // `var x = e` — an ASSIGNMENT into the function-scoped hoisted slot
@@ -3918,6 +3922,15 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     settledType = lowerer.runtimeOptionalBindingType(decl.name, settledType);
     if (optionalSelfWriteType !== null) settledType = optionalSelfWriteType;
     if (returnedEmptyArrayType !== null) settledType = returnedEmptyArrayType;
+    // Exhaustiveness witnesses (`const unreachable: never = value`) have
+    // no useful checker layout, but their initializer still has a runtime
+    // representation. Preserve it instead of forcing never's numeric
+    // placeholder onto a recursive union or string. Keeping the value also
+    // preserves behavior when an explicit assertion makes this reachable.
+    if (!isLet && lowerer.checker.isNeverType(lowerer.typeOf(decl.name)) &&
+        init.type.kind !== "void" && !isUnitType(init.type)) {
+      settledType = init.type;
+    }
     // `const x: void = undefined` / `let y: undefined = undefined`: the
     // unit-only union — the initializer's unit literal wraps into its arm
     // like any optional completion. Non-literal void initializers (a
@@ -4000,7 +4013,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
       settledType = init.type;
     }
     // A TDZ box minted DURING this very initializer (a callback inside it
-    // captured this const — predeclareForwardCapture's current-statement
+    // captured this binding — predeclareForwardCapture's current-statement
     // case): the binding and its scope-entry varDecl already exist, so
     // this declaration is the initializing `assign` into the shared box,
     // not a fresh local.
@@ -4008,7 +4021,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     if (preSelf) {
       lowerer.tdzPredeclared.delete(declSymbol!);
       init = lowerer.coerceInto(decl.initializer, init, preSelf.type);
-      return { kind: "assign", localId: preSelf.id, value: init, loc: locOf(decl) };
+      return { kind: "assign", localId: preSelf.id, value: init, initializes: true, loc: locOf(decl) };
     }
     // Slot coercion: `const r: A | B = bValue;` wraps implicitly; width
     // subtyping (`const p: {a: number} = wider;`) is rejected, not coerced.

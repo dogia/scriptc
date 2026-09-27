@@ -104,7 +104,7 @@ export interface LlvmEmitterContext extends ShapeHost {
   emitPendingCheck(): void;
   emitPrimitiveLibCall(e: LibCallExpr): LlValue;
   emitProcessLibCall(e: LibCallExpr): LlValue;
-  emitRecordExpr(e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys">): LlValue;
+  emitRecordExpr(e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys" | "recordOvfHas">): LlValue;
   emitRecordKeyGet(e: IrExpr & { kind: "recordKeyGet" }): LlValue;
   emitRegexIntrinsic(e: IrExpr & { kind: "regexIntrinsic" }): LlValue;
   emitSerializationExpr(e: ExprOf<"jsonStringify" | "dynCheck">): LlValue;
@@ -179,6 +179,7 @@ export interface LlvmEmitterContext extends ShapeHost {
   streamTypedRefMaterializeAdapter(t: IrType, ctx: LlStreamTypedRefContext, preferredSnapshot?: string): LlStreamTypedRefAdapter;
   tagInSet(uName: string, tags: number[]): string;
   tdzBoxRead(box: string, t: IrType, name: string): string;
+  writeBindingBox(box: string, local: IrLocal, value: string, initializes?: boolean, borrowed?: boolean): void;
   templateStringsInstances: Map<string, { sym: string; slots: string[]; }>;
   truthy(v: LlValue): string;
   unionExtract(uName: string, arm: IrType): string;

@@ -2857,7 +2857,7 @@ class LlEmitter {
    * the temporal dead zone — throw Node's exact catchable ReferenceError
    * (exprs.ts's varRef guard). Scalars then peek the one-element
    * array cell; ref kinds read the box normally (+1). */
-  private tdzBoxRead(box: string, t: IrType, name: string): string {
+  private checkTdz(box: string, name: string): string {
     const B = this.B;
     const slotp = B.tmp();
     const slotv = B.tmp();
@@ -2877,6 +2877,12 @@ class LlEmitter {
     B.line(`call void @scr_throw_error_named(ptr ${errName}, ptr ${msg})`);
     this.emitUnwind();
     B.startBlock(lk);
+    return slotv;
+  }
+
+  private tdzBoxRead(box: string, t: IrType, name: string): string {
+    const slotv = this.checkTdz(box, name);
+    const B = this.B;
     const acc = boxAccess(t);
     if (acc === "ref") return this.boxGet(box, t);
     // The scalar cell peek: the box keeps the array alive, so no
@@ -2888,6 +2894,28 @@ class LlEmitter {
     const v = B.tmp();
     B.line(`${v} = call ${accTy} @scr_arr_get_${acc}(ptr ${cell}, double ${f64Lit(0)})`);
     return v;
+  }
+
+  /** Declaration stores initialize an empty TDZ box. Later stores check
+   * it after the RHS and update scalar cells in place. References move in. */
+  private writeBindingBox(box: string, local: IrLocal, value: string, initializes = false, borrowed = false): void {
+    if (local.tdz) {
+      const first = initializes || !local.mutable;
+      const slotv = first ? null : this.checkTdz(box, local.name);
+      const acc = boxAccess(local.type);
+      if (acc !== "ref") {
+        if (first) this.tdzScalarInit(box, local.type, value);
+        else {
+          const cell = this.B.tmp();
+          this.B.line(`${cell} = inttoptr i64 ${slotv!} to ptr`);
+          const ty = acc === "bool" ? "i1" : "double";
+          this.declare(`declare void @scr_arr_set_${acc}(ptr, double, ${acc === "bool" ? "i1 zeroext" : ty})`);
+          this.B.line(`call void @scr_arr_set_${acc}(ptr ${cell}, double ${f64Lit(0)}, ${ty} ${value})`);
+        }
+        return;
+      }
+    }
+    this.boxSet(box, local.type, borrowed && isRefCounted(local.type) ? this.retainValue(value, local.type) : value);
   }
 
   // ── functions ───────────────────────────────────────────────────────────
@@ -3254,15 +3282,9 @@ class LlEmitter {
         const b = this.binding(s.localId);
         const v = this.emitExpr(s.value);
         if (b.kind === "boxed") {
-          if (isRefCounted(v.type)) this.moveTemp(v); // set_ref releases the old value
-          // A scalar TDZ box (forward-captured const): the initializing
-          // write mints the one-element array cell — set_ref moves it in
-          // (and the empty-slot sentinel ends here).
-          if (b.local!.tdz === true && boxAccess(b.type) !== "ref") {
-            this.tdzScalarInit(this.loadBox(b.slot), b.type, v.name);
-            break;
-          }
-          this.boxSet(this.loadBox(b.slot), b.type, v.name);
+          this.writeBindingBox(this.loadBox(b.slot), b.local!, v.name, s.initializes);
+          // The RHS remains frame-owned until a possible TDZ throw passes.
+          if (isRefCounted(v.type)) this.moveTemp(v);
           break;
         }
         this.moveTemp(v);
@@ -4204,7 +4226,7 @@ class LlEmitter {
     return emitCallExpr(this.expressionContext(), e);
   }
 
-  private emitRecordExpr(e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys">): LlValue {
+  private emitRecordExpr(e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys" | "recordOvfHas">): LlValue {
     return emitRecordExpr(this.expressionContext(), e);
   }
 

@@ -7,6 +7,7 @@ import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM
 import { boxAccess, BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleClassNew, mangleClassRetain, mangleClassStruct, mangleField, mangleFnClosure, mangleFunction, mangleGlobal, mangleLocal, mangleRecordClone, mangleRecordNew, mangleRecordStruct, mangleVtStruct } from "../mangle.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
+import { readBox, writeBox } from "./bindings.js";
 import { dynDestrCheckHelper, dynIterNHelper, dynKeyGetHelper, unionWidenHelper } from "./walkers.js";
 import { collectFfiRetainedOps, parseFfiCallbackKey } from "../ffi-callbacks.js";
 import { genResultThunkFor } from "./async.js";
@@ -798,35 +799,7 @@ function emitLiteralExpr(
         }
         const name = mangleLocal(e.localId);
         if (local?.boxed) {
-          // Reads go through the shared binding; ref kinds come out +1.
-          const acc = boxAccess(e.type);
-          // A scalar TDZ box stores its value in a one-element ARRAY cell
-          // (the raw scalar slot has no spare sentinel state): reads peek
-          // the cell through the slot — the box keeps the array alive, so
-          // no retain/release pair is needed for the copied-out scalar.
-          const read =
-            acc === "ref"
-              ? `(${cType(e.type).trim()})scr_box_get_ref(${name})`
-              : local?.tdz
-                ? `scr_arr_get_${acc}((ScrArr *)(uintptr_t)${name}->slot, 0)`
-                : `scr_box_get_${acc}(${name})`;
-          if (local.tdz) {
-            // Forward-captured const: an empty box is the temporal dead
-            // zone — throw Node's exact catchable ReferenceError. The test
-            // peeks the payload slot BEFORE the retaining read (get_ref on
-            // an empty box would dereference NULL; the scalar cell peek
-            // would too). Interned literals are immortal (rc SIZE_MAX), so
-            // handing them to the ownership-taking thrower is safe.
-            const errName = emitter.internLiteral("ReferenceError");
-            const msg = emitter.internLiteral(`Cannot access '${local.name}' before initialization`);
-            emitter.line(`if (${name}->slot == 0) { /* TDZ: read before initialization */`);
-            emitter.indent++;
-            emitter.line(`scr_throw_error_named((ScrStr *)&${errName}, (ScrStr *)&${msg});`);
-            emitter.emitUnwind();
-            emitter.indent--;
-            emitter.line(`}`);
-          }
-          return emitter.newTemp(e.type, read);
+          return emitter.newTemp(e.type, readBox(emitter, local));
         }
         return emitter.newTemp(e.type, isRefCounted(e.type) ? retainCallC(e.type, name) : name);
       }
@@ -912,14 +885,13 @@ function emitOperatorExpr(
         const local = emitter.currentLocals.get(e.localId);
         const one = e.op === "+" ? "+ 1" : "- 1";
         if (local?.boxed) {
-          const box = mangleLocal(e.localId);
-          const old = emitter.newTemp(e.type, `scr_box_get_${boxAccess(e.type)}(${box})`);
+          const old = emitter.newTemp(e.type, readBox(emitter, local));
           if (e.prefix) {
             const t = emitter.newTemp(e.type, `${old.name} ${one}`);
-            emitter.line(`scr_box_set_${boxAccess(e.type)}(${box}, ${t.name});`);
+            writeBox(emitter, local, t.name);
             return t;
           }
-          emitter.line(`scr_box_set_${boxAccess(e.type)}(${box}, ${old.name} ${one});`);
+          writeBox(emitter, local, `${old.name} ${one}`);
           return old;
         }
         if (!local && !emitter.globalsById.has(e.localId)) {
@@ -1003,7 +975,7 @@ function emitOperatorExpr(
           // box_set takes ownership of the passed reference, so hand it a
           // retained copy and keep the temp's own reference for the yield.
           const stored = isRefCounted(v.type) ? retainCallC(v.type, v.name) : v.name;
-          emitter.line(`scr_box_set_${boxAccess(local.type)}(${mangleLocal(e.localId)}, ${stored});`);
+          writeBox(emitter, local, stored);
           return v;
         }
         if (!local && !emitter.globalsById.has(e.localId)) {
@@ -2739,7 +2711,7 @@ function emitCallExpr(
 
 function emitRecordExpr(
   emitter: CEmitter,
-  e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys">,
+  e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys" | "recordOvfHas">,
 ): Temp {
   switch (e.kind) {
       case "fieldGet":
@@ -2818,6 +2790,11 @@ function emitRecordExpr(
         const key = emitter.emitExpr(e.key);
         const helper = emitter.recordKeyGetHelper(e.shapeId, e.type, e.overflowOnly === true);
         return emitter.newTemp(e.type, `${helper}(${obj.name}, ${key.name})`);
+      }
+      case "recordOvfHas": {
+        const obj = emitter.emitExpr(e.obj);
+        const key = emitter.emitExpr(e.key);
+        return emitter.newTemp(e.type, `scr_map_has_str(${obj.name}->${OVERFLOW_MEMBER}, ${key.name})`);
       }
       case "recordOvfKeys": {
         // The overflow map's live keys in JS own-key order — a fresh
@@ -9206,6 +9183,7 @@ export function emitExpr(emitter: CEmitter, e: IrExpr): Temp {
     case "recordClone":
     case "recordKeyGet":
     case "recordOvfKeys":
+    case "recordOvfHas":
       return emitRecordExpr(emitter, e);
     case "dynFrom":
     case "dynFromJsval":

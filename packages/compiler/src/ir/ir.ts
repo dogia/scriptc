@@ -1381,14 +1381,15 @@ export interface IrLocal {
    * (a shared binding — mutations are visible through every capture). All
    * access, including in the declaring function, goes through the box. */
   boxed?: true;
-  /** A forward-captured const (a function declared BEFORE the const it
+  /** A forward-captured lexical binding (a function declared BEFORE the binding it
    * captures): the box is allocated TDZ-empty at scope entry (a `varDecl`
    * with `init: null`) so earlier closures can capture it, and the source
-   * declaration initializes it via `assign`. Every read tests the box —
+   * declaration initializes it via `assign` with `initializes: true`.
+   * Every read and non-initializing write tests the box —
    * empty throws JS's catchable ReferenceError ("Cannot access 'name'
    * before initialization"), exactly Node's temporal dead zone. Always
-   * paired with `boxed`; restricted to pointer-backed types (the NULL slot
-   * IS the TDZ sentinel). Capture entries inherit the flag. */
+   * paired with `boxed`; scalar payloads use a one-element array cell so
+   * the NULL slot remains the TDZ sentinel. Capture entries inherit the flag. */
   tdz?: true;
 }
 
@@ -1403,7 +1404,9 @@ export type IrStmt =
    * initialized-check; refcounted locals simply stay NULL until the first
    * `assign`. */
   | { kind: "varDecl"; localId: string; init: IrExpr | null; loc: SrcLoc }
-  | { kind: "assign"; localId: string; value: IrExpr; loc: SrcLoc }
+  /** `initializes` marks a TDZ binding's declaration, whose store may
+   * initialize an empty box. Ordinary assignments must check it first. */
+  | { kind: "assign"; localId: string; value: IrExpr; initializes?: true; loc: SrcLoc }
   | { kind: "exprStmt"; expr: IrExpr; loc: SrcLoc }
   | { kind: "if"; cond: IrExpr; then: IrStmt[]; else_: IrStmt[] | null; loc: SrcLoc }
   /** `labels` (here and on doWhile/for/forOf/switch/block): the JS label
@@ -5347,6 +5350,11 @@ export type IrExpr =
    * listed (they never live in the overflow map — the lowering prepends
    * them from the shape). Never throws. */
   | { kind: "recordOvfKeys"; obj: IrExpr; shapeId: string; type: IrType; loc: SrcLoc }
+  /** Own-key presence in an index-signature record's overflow map. Unlike
+   * a keyed read, this distinguishes a missing key from a stored undefined
+   * value. Declared fields are handled separately by the lowering. Both
+   * operands are borrowed, the key is string, the result is bool. */
+  | { kind: "recordOvfHas"; obj: IrExpr; shapeId: string; key: IrExpr; type: IrType; loc: SrcLoc }
   /** Union construction: wrap an arm value into a fresh tagged box (the
    * frontend inserts these wherever a `B` flows into an `A | B` slot).
    * `tag` is the arm's index in the union's canonical arm list; `value` has

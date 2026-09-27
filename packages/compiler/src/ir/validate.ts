@@ -21,6 +21,7 @@ import type {
 import { arrayOf, BOOL, BYTES_U8, bytesOf, canAdaptDynFuncTo, canConvertToDyn, canExitIslandToType, canMarshalIntoIsland, canMarshalTypedFuncIntoIsland, CHILD_T, CHILDSTREAM_T, CHILDWRITER_T, CRYPTOHASH_T, CRYPTOHMAC_T, DATE_T, DGRAMSOCK_T, DYN, DYN_HANDLE_KINDS, F64, ffiClassType, ffiSourceParamTypes, FILEHANDLE_T, FSWATCHER_T, HTTP2SESSION_T, HTTP2STREAM_T, HTTPCLIENTREQ_T, HTTPREQ_T, HTTPRES_T, islandPromisePayloadTag, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isJsonSafeType, isJsonStringifySafeType, isRefCounted, isSupportedArrayElem, isSupportedIndexValue, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, jsOpResultKind, JSVAL, NETSERVER_T, NETSOCKET_T, PROCSTREAM_T, REF_TRUTHY_KINDS, REGEX, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, SEARCH_PARAMS_T, SECURECTX_T, shapeHasAccessorSlots, SPAWNRES_T, STATS_T, STRING, SYMBOL_T, TESTCTX_T, typeEquals, typeKey, unionFuncSetArmsOk, URL_T, VOID } from "./ir.js";
 import { BIGINT_T } from "./ir.js";
 import { unionWideningTags } from "./analysis.js";
+import { alwaysReturns } from "./control-flow.js";
 
 /** Per-method signature for strIntrinsic: `argTypes` lists every argument
  * position (optional ones included); `minArgs` is how many may be omitted
@@ -1960,6 +1961,7 @@ function validateFunction(
   // Unit kinds live only inside unions: a bare-unit local, param, or
   // return type is frontend breakage (mapType never produces them).
   for (const l of fn.locals) {
+    if (l.tdz && !l.boxed) err(`TDZ local "${l.name}" must be boxed`, fn.loc);
     if (isUnitType(l.type)) err(`local "${l.name}" has bare unit type ${l.type.kind}`, fn.loc);
   }
   if (isUnitType(fn.returnType)) {
@@ -3496,6 +3498,17 @@ function validateFunction(
         if (shape.indexValue && e.type.kind !== "dyn" && !surfaces(shape.indexValue)) {
           err(`recordKeyGet on ${e.shapeId}: the overflow value cannot surface as the result type`, e.loc);
         }
+        break;
+      }
+      case "recordOvfHas": {
+        checkExpr(e.obj);
+        checkExpr(e.key);
+        const shape = records.get(e.shapeId);
+        if (!shape) err(`recordOvfHas on undeclared shape "${e.shapeId}"`, e.loc);
+        else if (!shape.indexValue || shape.tuple) err(`recordOvfHas on ${e.shapeId}: requires an index-signature record`, e.loc);
+        expectType(e.obj, { kind: "record", shapeId: e.shapeId }, "recordOvfHas receiver");
+        expectType(e.key, STRING, "recordOvfHas key");
+        if (e.type.kind !== "bool") err("recordOvfHas must be bool", e.loc);
         break;
       }
       case "recordOvfKeys": {
@@ -5554,6 +5567,9 @@ function validateFunction(
       }
       case "assign": {
         const binding = locals.get(s.localId) ?? globals.get(s.localId);
+        if (s.initializes && !locals.get(s.localId)?.tdz) {
+          err(`initializing assign requires a TDZ local "${s.localId}"`, s.loc);
+        }
         if (!binding) err(`assign to undeclared local/global "${s.localId}"`, s.loc);
         // Global initialization happens via assign inside %init functions,
         // so a const global legitimately receives exactly one assign there;
@@ -5561,7 +5577,7 @@ function validateFunction(
         // emits the init-time one. Locals keep the strict check — except a
         // TDZ const, whose source declaration IS an assign into the
         // scope-entry box (tsc rejects user reassignment there too).
-        else if (!binding.mutable && locals.has(s.localId) && !("tdz" in binding && binding.tdz)) {
+        else if (!binding.mutable && locals.has(s.localId) && !locals.get(s.localId)?.tdz) {
           err(`assign to immutable local "${binding.name}"`, s.loc);
         }
         if (binding?.type.kind === "caught") {
@@ -5853,140 +5869,4 @@ function validateFunction(
   if (!typeEquals(fn.returnType, VOID) && !alwaysReturns(fn.body, unions)) {
     err(`non-void function may complete without returning`, fn.loc);
   }
-}
-
-/** Conservative "all paths return" — mirrors what tsc already guarantees. */
-function alwaysReturns(stmts: IrStmt[], unions: Map<string, IrUnionDef>): boolean {
-  for (const s of stmts) {
-    switch (s.kind) {
-      case "return":
-        return true;
-      case "throw":
-      case "rethrow":
-      case "runtimeFence":
-        // Terminates the path like return: control unwinds (to a handler or
-        // out of the function), never falling off the end. tsc agrees —
-        // `function f(): T { throw x; }` typechecks without a return.
-        return true;
-      case "exprStmt":
-        // process.exit never returns (fflush + _Exit): the path terminates
-        // like a throw. Mirrors tsc's own never-based reachability, which
-        // accepted the function without a trailing return — the
-        // parseAsync().catch entry handler ends exactly this way.
-        if (s.expr.kind === "libCall" && s.expr.fn === "process.exit") return true;
-        break;
-      case "tryCatch":
-        // Normal completion requires the try body to complete normally (and
-        // the catch, when the try raised) — if both always terminate, so
-        // does the whole statement. Without a catch, an exception keeps
-        // propagating (never a normal completion), so the try body alone
-        // decides. A finally that always terminates (throw) also decides.
-        if (
-          alwaysReturns(s.tryBody, unions) &&
-          (s.catchBody === null || alwaysReturns(s.catchBody, unions))
-        ) {
-          return true;
-        }
-        if (s.finallyBody && alwaysReturns(s.finallyBody, unions)) return true;
-        break;
-      case "if":
-        if (s.else_ && alwaysReturns(s.then, unions) && alwaysReturns(s.else_, unions)) return true;
-        break;
-      case "while":
-        // `while (true)` with no break never completes normally (tsc treats
-        // it the same way), so anything after it is unreachable.
-        if (s.cond.kind === "boolLit" && s.cond.value && !containsBreak(s.body)) return true;
-        break;
-      case "for":
-        // `for (;;)` — no condition, or a literal-true one — with no break
-        // never completes normally either (the walk-up-until-root idiom:
-        // every exit is a return).
-        if (
-          (s.cond === null || (s.cond.kind === "boolLit" && s.cond.value)) &&
-          !containsBreak(s.body)
-        ) {
-          return true;
-        }
-        break;
-      case "block":
-        if (alwaysReturns(s.body, unions)) return true;
-        break;
-      case "doWhile":
-        // The body runs at least once: if it returns on all paths, so does
-        // the loop. `do {} while (true)` with no break never completes.
-        if (alwaysReturns(s.body, unions)) return true;
-        if (s.cond.kind === "boolLit" && s.cond.value && !containsBreak(s.body)) return true;
-        break;
-      case "switch": {
-        // A switch always returns when no case body ever breaks out, every
-        // possible entry point (any case) reaches a return, and dispatch
-        // cannot miss every case: either a default exists, or the switch is
-        // an EXHAUSTIVE discriminant switch — the discriminant is a
-        // `unionDisc` over a union with N arms, every test is a distinct
-        // literal, and there are at least N of them. (At least: several
-        // discriminant VALUES can share one deduped IR arm, e.g.
-        // `{op: 0; a} | {op: 2; a}` is one record shape.) The real
-        // exhaustiveness guarantee is tsc's — it accepted the function
-        // without a trailing return (trust-the-checker, like narrowing
-        // itself); this condition only keeps hand-written IR conservative.
-        // With no switch-level breaks, execution from case i runs bodies
-        // i..end as a straight line — check that flattened suffix.
-        const hasDefault = s.cases.some((c) => c.test === null);
-        const literalTests = s.cases.map((c) => c.test).filter(
-          (t): t is IrExpr & { kind: "numLit" | "strLit" | "boolLit" } =>
-            t !== null && (t.kind === "numLit" || t.kind === "strLit" || t.kind === "boolLit"),
-        );
-        const distinct = new Set(literalTests.map((t) => `${t.kind}:${String(t.value)}`));
-        const exhaustive =
-          !hasDefault &&
-          s.disc.kind === "unionDisc" &&
-          literalTests.length === s.cases.length &&
-          distinct.size === s.cases.length &&
-          s.cases.length >= (unions.get(s.disc.unionId)?.arms.length ?? Infinity);
-        if (!hasDefault && !exhaustive) break;
-        if (s.cases.some((c) => containsBreak(c.body))) break;
-        const bodies = s.cases.map((c) => c.body);
-        const everyEntryReturns = bodies.every((_, i) =>
-          alwaysReturns(bodies.slice(i).flat(), unions),
-        );
-        if (everyEntryReturns) return true;
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  return false;
-}
-
-/** Break at this level (not inside a nested loop or switch, whose bodies
- * own their breaks). */
-function containsBreak(stmts: IrStmt[]): boolean {
-  for (const s of stmts) {
-    switch (s.kind) {
-      case "break":
-        return true;
-      case "if":
-        if (containsBreak(s.then) || (s.else_ && containsBreak(s.else_))) return true;
-        break;
-      case "block":
-        if (containsBreak(s.body)) return true;
-        break;
-      case "tryCatch":
-        // Plain try/catch does not capture breaks — a break inside binds to
-        // the enclosing loop/switch (finally-crossing jumps are rejected
-        // upstream, so reachable IR only has these in plain try/catch).
-        if (
-          containsBreak(s.tryBody) ||
-          (s.catchBody !== null && containsBreak(s.catchBody)) ||
-          (s.finallyBody !== null && containsBreak(s.finallyBody))
-        ) {
-          return true;
-        }
-        break;
-      default:
-        break; // while/for/doWhile/switch bodies own their breaks
-    }
-  }
-  return false;
 }

@@ -2133,7 +2133,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
    * API doesn't surface it (a ternary as a SPREAD source — lowerArrayLiteral
    * threads the literal's own type in). */
   function lowerTernary(lowerer: Lowerer, expr: ts.ConditionalExpression,
-    expected?: IrType & { kind: "array" },): IrExpr {
+    expected?: IrType & { kind: "array" | "record" },): IrExpr {
     const loc = locOf(expr);
       // `Array.isArray(x) ? x : [x]` over a `T | readonly T[]` union: tsc
       // narrows the TRUE branch to `any[]` (maybeNarrow's isArray bridge
@@ -2203,7 +2203,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       // lowerArrayLiteral, and just as unambiguous — tsc already typed the
       // whole ternary by the filled arm alone. Both arms empty stays
       // fenced (no element type exists anywhere).
-      const ctxArray = expected ?? (ctxMapped?.kind === "array" ? ctxMapped : null);
+      const ctxArray = expected?.kind === "array" ? expected : (ctxMapped?.kind === "array" ? ctxMapped : null);
       const armLiteral = (e: ts.Expression): ts.ArrayLiteralExpression | null => {
         let x = e;
         while (ts.isParenthesizedExpression(x)) x = x.expression;
@@ -2223,7 +2223,19 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
         }
         return false;
       };
+      // Inferred signature tables often join a populated argument array
+      // with nested empty-array branches. Carry the whole record layout
+      // through those branches before constructing their fresh fields.
+      const ownJoin = lowerer.mapTypeOf(lowerer.typeOf(expr));
+      const recordJoin = expected?.kind === "record" ? expected : ctxMapped?.kind === "record" ? ctxMapped :
+        ownJoin?.kind === "record" ? ownJoin : undefined;
       const lowerArm = (e: ts.Expression, siblingType?: IrType): IrExpr => {
+        let fresh = e;
+        while (ts.isParenthesizedExpression(fresh)) fresh = fresh.expression;
+        if (recordJoin && ts.isConditionalExpression(fresh)) return lowerTernary(lowerer, fresh, recordJoin);
+        if (recordJoin && ts.isObjectLiteralExpression(fresh)) {
+          return lowerer.lowerObjectLiteral(fresh, recordJoin);
+        }
         const lit = armLiteral(e);
         if (lit && ctxArray) return lowerer.lowerArrayLiteral(lit, ctxArray);
         if (lit && siblingType?.kind === "array") {
@@ -2361,7 +2373,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
           }
         }
       }
-      const type =
+      const type = expected?.kind === "record" ? expected :
         thenRaw.type.kind === "array" && typeEquals(thenRaw.type, elseRaw.type)
           ? thenRaw.type
           : dynJoin

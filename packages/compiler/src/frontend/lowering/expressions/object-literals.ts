@@ -504,7 +504,8 @@ const selected: IrExpr = {
 return prefix.length === 0 ? selected : { kind: "seqExpr", stmts: prefix, result: selected, type: recordType, loc };
 }
 
-export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpression): IrExpr {
+export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpression,
+  expected?: IrType & { kind: "record" },): IrExpr {
   const loc = locOf(expr);
   // The RUNTIME-KEYED literal (JS): a computed key that doesn't fold to a
   // compile-time string means the literal's shape is not a compile-time
@@ -595,6 +596,9 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
   }
 
   let tsType = lowerer.checker.getContextualType(expr) ?? lowerer.typeOf(expr);
+  // `as never` supplies no construction layout. Keep the literal's own
+  // fields so an exhaustiveness witness cannot erase a reachable value.
+  if (lowerer.checker.isNeverType(tsType)) tsType = lowerer.typeOf(expr);
   // `lit satisfies T` is TYPE-LEVEL only: the expression's checker type —
   // and therefore the shape every downstream consumer sees — is the
   // literal's OWN type (T still contextually types members, so inferred
@@ -779,6 +783,22 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
   }
   if (!mapped || mapped.kind !== "record") lowerer.badType(expr, tsType);
   let type: IrType = mapped;
+  // A fresh, plain literal can construct its fields directly for a known
+  // destination with the same field set. This matters for inferred
+  // conditional records: an empty array in one arm has no element layout
+  // until the join supplies it. Existing values still use width coercion;
+  // extra fields, spreads, accessors, and keyed shapes retain their paths.
+  if (expected && !isJsSourceFile(expr.getSourceFile()) &&
+      expr.properties.every((p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p))) {
+    const own = lowerer.shapes.get(type.shapeId)!;
+    const target = lowerer.shapes.get(expected.shapeId)!;
+    if (!own.tuple && !target.tuple && !own.indexValue && !target.indexValue &&
+        !shapeHasAccessorSlots(own) && !shapeHasAccessorSlots(target) &&
+        own.fields.length === target.fields.length &&
+        own.fields.every((field) => target.fields.some((candidate) => candidate.name === field.name))) {
+      type = { kind: "record", shapeId: expected.shapeId };
+    }
+  }
   let shape = lowerer.shapes.get(type.shapeId)!;
   // ACCESSOR properties, JS literals only (TS accessors fill the shape's
   // %get:/%set: closure slots below): no record storage exists for them,

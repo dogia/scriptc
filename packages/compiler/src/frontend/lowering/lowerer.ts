@@ -1836,7 +1836,7 @@ export class Lowerer {
     frame: Map<ts.Symbol, IrLocal>;
     out: IrStmt[];
   }[] = [];
-  /** Forward-captured consts pre-declared as TDZ boxes, keyed by symbol:
+  /** Forward-captured bindings pre-declared as TDZ boxes, keyed by symbol:
    * lowerVarDecl consumes the entry when the source declaration arrives and
    * emits the initializing `assign` instead of a fresh declaration. */
   readonly tdzPredeclared = new Map<ts.Symbol, IrLocal>();
@@ -7871,6 +7871,13 @@ export class Lowerer {
         return this.coerceInto(node, this.lowerArrayLiteral(x, expected), expected);
       }
     }
+    if (expected?.kind === "record") {
+      let x = node;
+      while (ts.isParenthesizedExpression(x)) x = x.expression;
+      if (ts.isObjectLiteralExpression(x)) {
+        return this.coerceInto(node, this.lowerObjectLiteral(x, expected), expected);
+      }
+    }
     // An OBJECT LITERAL against a checked-dynamic slot in a JS file (the
     // getSupportInfo options argument — a dyn-ABI param), or against the
     // standard RequestInit type in TypeScript: the value's world IS the
@@ -7891,17 +7898,16 @@ export class Lowerer {
         }
       }
     }
-    // An ARRAY LITERAL against a UNION slot whose own type has no static
-    // home (the JS dyn fallback — the checker gave no usable context):
-    // when the union has exactly ONE array-family arm — an array, or an
-    // arity-matching tuple (the option-table `default: [{ value: [] }]`
-    // shape) — build AS that arm and wrap; the IR-directed twin of
-    // lowerArrayLiteral's contextual-union rule.
+    // A fresh array can use the unique array-family destination inside a
+    // union too. In nullable recursive fields the checker can report the
+    // whole union as context: an identity lift of that context does not
+    // mean the literal's independently inferred element layout fits.
+    // Construct the elements for the selected arm before wrapping it.
+    // Multiple eligible arms retain the ordinary ambiguity rules.
     if (expected?.kind === "union") {
       let x: ts.Expression = node;
       while (ts.isParenthesizedExpression(x)) x = x.expression;
       if (ts.isArrayLiteralExpression(x)) {
-        const own = this.mapTypeOf(this.checker.getContextualType(x) ?? this.typeOf(x));
         // Elements beyond bare null/undefined literals can never live in
         // a unit-only-element array — a checker type that degraded to one
         // (`[]`-flavored inference over a populated literal) carries no
@@ -7912,25 +7918,19 @@ export class Lowerer {
             el.kind !== ts.SyntaxKind.NullKeyword &&
             !(ts.isIdentifier(el) && el.text === "undefined"),
         );
-        if (
-          own === null || own.kind === "dyn" || own.kind === "jsval" ||
-          (own.kind === "array" && nonUnitElems && this.unitOnlyElem(own.elem)) ||
-          this.widthLiftPlan(own, expected) === null
-        ) {
-          const def = this.unions.get(expected.unionId);
-          const arms = (def?.arms ?? []).filter(
-            (a) =>
-              (a.kind === "array" && !(nonUnitElems && this.unitOnlyElem(a.elem))) ||
-              (a.kind === "record" &&
-                !!this.shapes.get(a.shapeId)?.tuple &&
-                this.shapes.get(a.shapeId)!.fields.length === x.elements.length &&
-                !x.elements.some(ts.isSpreadElement)),
-          );
-          if (arms.length === 1) {
-            const arm = arms[0]!;
-            const built = this.lowerArrayLiteral(x, arm as IrType & { kind: "array" } | (IrType & { kind: "record" }));
-            return this.coerceInto(node, built, expected);
-          }
+        const def = this.unions.get(expected.unionId);
+        const arms = (def?.arms ?? []).filter(
+          (a) =>
+            (a.kind === "array" && !(nonUnitElems && this.unitOnlyElem(a.elem))) ||
+            (a.kind === "record" &&
+              !!this.shapes.get(a.shapeId)?.tuple &&
+              this.shapes.get(a.shapeId)!.fields.length === x.elements.length &&
+              !x.elements.some(ts.isSpreadElement)),
+        );
+        if (arms.length === 1) {
+          const arm = arms[0]!;
+          const built = this.lowerArrayLiteral(x, arm as IrType & { kind: "array" } | (IrType & { kind: "record" }));
+          return this.coerceInto(node, built, expected);
         }
       }
     }
@@ -9459,8 +9459,8 @@ export class Lowerer {
     return lowerArrayLiteral(this, expr, expected);
   }
 
-  lowerObjectLiteral(expr: ts.ObjectLiteralExpression): IrExpr {
-    return lowerObjectLiteral(this, expr);
+  lowerObjectLiteral(expr: ts.ObjectLiteralExpression, expected?: IrType & { kind: "record" }): IrExpr {
+    return lowerObjectLiteral(this, expr, expected);
   }
 
   lowerShorthandValue(prop: ts.ShorthandPropertyAssignment): IrExpr {

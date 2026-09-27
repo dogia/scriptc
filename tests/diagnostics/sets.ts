@@ -3,7 +3,7 @@
 // hashing is honest for exactly those); everything else is fenced.
 
 // Array seeds lower (`new Set(["a", "b"])` is a corpus program now); a
-// non-array seed — another Set, any iterable — typechecks against the lib
+// other iterable seed — another Set — typechecks against the lib
 // but keeps the fence: never silently an empty set.
 const seeded = new Set(new Set(["a", "b"]));
 

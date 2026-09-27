@@ -11,7 +11,7 @@ import { MAX_GENERIC_INSTANCES, appendImplicitUndefinedReturn, generatorMeta, ge
 import { isGenericCallableMemberType, typeKey } from "../type-mapper.js";
 import { cjsClassExprWholeExportOf, isCjsJsFile, isJsSourceFile, isModuleExportsAccess, isNodeTypesPath, locOf } from "../program.js";
 import { PoisonError, dynFallbackType, dynUndefinedExpr, newFnCtx, own } from "./lowerer.js";
-import { lowerArrayConstructor, lowerMapSeedArrayNew } from "./lower-containers.js";
+import { lowerArrayConstructor, lowerMapSeedArrayNew, strCharsCall } from "./lower-containers.js";
 import { bufEncoding } from "./containers/bytes.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
 import { lowerSearchParamsNew } from "./lower-builtins.js";
@@ -5327,7 +5327,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
         lowerer.badType(expr, tsType);
       }
       // `new Set<T>()`: Map's sibling. The SEEDED form lowers for arrays
-      // and fixed tuples of legal elements — literal or variable — as
+      // and fixed tuples of legal elements, or strings by code point, as
       // construct + bulk add (duplicates collapse, insertion order
       // preserved, exactly JS). Other iterables keep the fence.
       // Unsupported element types are named specifically.
@@ -5363,6 +5363,13 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
           }
           if (!ts.isSpreadElement(argNode)) {
             const argIr = lowerer.mapTypeOf(lowerer.typeOf(argNode));
+            // String iteration is by Unicode code point, not UTF-16 code
+            // unit. Share Array.from's iterator snapshot; evaluation of
+            // the source occurs once and insertion preserves first order.
+            if (argIr?.kind === "string" && mapped.elem.kind === "string") {
+              const source = lowerer.lowerExprExpecting(argNode, STRING);
+              return { kind: "setNew", seed: strCharsCall(lowerer, source, loc), type: mapped, loc };
+            }
             if (argIr?.kind === "array" && typeEquals(argIr.elem, mapped.elem)) {
               let seed = lowerer.lowerExpr(argNode);
               // A T[]-DECLARED seed whose value is an island handle (a
@@ -5430,7 +5437,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
           lowerer.noLowering(
             "new Set(values)",
             expr,
-            "construct the Set empty and add() each value — only an array or fixed tuple of " +
+            "construct the Set empty and add() each value — only a string, array, or fixed tuple of " +
               "already-legal elements (string or number) seeds a Set",
           );
         }

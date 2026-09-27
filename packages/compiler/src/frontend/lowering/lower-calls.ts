@@ -33,7 +33,7 @@ import { ambientNsRootOf, ambientUndefReadType, ambientUndefVarRootOf, ambientUn
 import { declSymbolOf } from "./lower-modules.js";
 import { expandoMemberRead } from "./lower-expando.js";
 import { npmStaticPackageOfPath } from "../npm-static.js";
-import { countedFor, varRef } from "../../ir/build.js";
+import { countedFor, numLit, varRef } from "../../ir/build.js";
 import { rejectStaticThis } from "./static-this.js";
 import { fenceNodeModuleMutationCall, lowerRequireCacheKeys } from "./lower-node-module.js";
 import { defaultAfterUndefined, lowerOptionalArgument, lowerStaticallyUndefinedArgument, positionNumber } from "./optional-arguments.js";
@@ -5221,6 +5221,23 @@ function lowerObjectOwnMethodCall(
   return lowerObjectOwnCall(lowerer, call, access.expression, call.arguments[0], call.arguments.slice(1), method);
 }
 
+/** ToPropertyKey for the scalar keys represented by native own-key
+ * probes. A lowered array-loop key may carry an undefined arm even when
+ * its checker type is string; that arm spells "undefined" at runtime. */
+function ownPropertyKey(lowerer: Lowerer, key: IrExpr): IrExpr | null {
+  if (key.type.kind === "string") return key;
+  if (key.type.kind === "bigint") {
+    return { kind: "libCall", fn: "bigint.toString", args: [key, numLit(10, key.loc)], type: STRING, loc: key.loc };
+  }
+  const scalar = (type: IrType): boolean =>
+    type.kind === "string" || type.kind === "f64" || type.kind === "bool" || isUnitType(type);
+  if (key.type.kind === "f64" || key.type.kind === "bool" || key.type.kind === "dyn" ||
+      (key.type.kind === "union" && lowerer.unions.get(key.type.unionId)?.arms.every(scalar))) {
+    return { kind: "toString", operand: key, type: STRING, loc: key.loc };
+  }
+  return null;
+}
+
 function lowerObjectOwnCall(
   lowerer: Lowerer,
   call: ts.CallExpression,
@@ -5259,8 +5276,8 @@ function lowerObjectOwnCall(
     key = { kind: "strLit", value: "undefined", type: STRING, loc };
   } else if (rawKey?.type.kind === "nullT") {
     key = { kind: "strLit", value: "null", type: STRING, loc };
-  } else if (key && (key.type.kind === "f64" || key.type.kind === "bool" || key.type.kind === "bigint")) {
-    key = { kind: "toString", operand: key, type: STRING, loc };
+  } else if (key) {
+    key = ownPropertyKey(lowerer, key);
   }
   if (!key || key.type.kind !== "string") {
     lowerer.noLowering("Object.prototype." + method + " with this property key", keyNode ?? call);
@@ -5271,7 +5288,7 @@ function lowerObjectOwnCall(
     result = nodeThrowExpr(1, "", "Cannot convert undefined or null to object", BOOL, loc);
   } else if (type.kind === "record") {
     const shape = lowerer.shapes.get(type.shapeId);
-    if (!shape || shape.tuple || shape.indexValue || shapeHasAccessorSlots(shape)) {
+    if (!shape || shape.tuple || shapeHasAccessorSlots(shape)) {
       lowerer.noLowering("Object.prototype." + method + " over this record shape", receiverNode ?? call);
     }
     result = { kind: "call", callee: recordHasOwnHelper(lowerer, type.shapeId, loc), args: [receiverRef, key], type: BOOL, loc };
@@ -8291,10 +8308,11 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
   }
 
   /** Interned `%obj.hasOwn.<n>(r, k)` — Object.hasOwn's membership walk
-   * over a signature-free record shape: the key compares against each
+   * over a record shape: the key compares against each
    * declared field name, undefined-armed fields answering by their tag
    * (a key is own exactly when Object.keys would list it — the two share
-   * the guard), everything else true, no match false. */
+   * the guard), everything else true. Unmatched keys probe the overflow
+   * map when present, so explicit undefined values remain own keys. */
   function recordHasOwnHelper(lowerer: Lowerer, shapeId: string, loc: SrcLoc): string {
     const key = `obj.hasOwn:${shapeId}`;
     const existing = lowerer.arrHofHelpers.get(key);
@@ -8328,7 +8346,10 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
         loc,
       });
     }
-    body.push({ kind: "return", value: { kind: "boolLit", value: false, type: BOOL, loc }, loc });
+    const fallback: IrExpr = shape.indexValue
+      ? { kind: "recordOvfHas", obj: rRef, shapeId, key: kRef, type: BOOL, loc }
+      : { kind: "boolLit", value: false, type: BOOL, loc };
+    body.push({ kind: "return", value: fallback, loc });
     lowerer.liftedFns.push({
       name: helper,
       params: [
@@ -8932,9 +8953,9 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
     // fields answer by their runtime tag — the explicit-undefined-is-absent
     // stance: an omitted optional field holds the undefined arm and reads
     // as NOT own, exactly Node's absent key (an EXPLICIT `k: undefined`
-    // diverges — documented next to the child-env/JSON rule). Tuple,
-    // index-signature (overflow membership lives in the runtime map), and
-    // accessor-carrying shapes keep the SC2020 fence; non-record receivers
+    // diverges — documented next to the child-env/JSON rule). Tuple
+    // and accessor-carrying shapes keep the SC2020 fence. Index-signature
+    // records additionally probe the overflow map; non-record receivers
     // do too.
     if (member === "hasOwn" && call.arguments.length === 2 && !call.arguments.some((a) => ts.isSpreadElement(a))) {
       const recvNode = call.arguments[0]!;
@@ -8946,26 +8967,18 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
       if (probed?.type.kind === "dyn") {
         const loc = locOf(call);
         const receiver = lowerer.lowerExpr(recvNode);
-        let key = lowerer.lowerExpr(keyNode);
-        if (key.type.kind === "f64" || key.type.kind === "bool" || key.type.kind === "dyn") {
-          key = { kind: "toString", operand: key, type: STRING, loc: locOf(keyNode) };
-        }
-        if (key.type.kind !== "string") return null;
+        const key = ownPropertyKey(lowerer, lowerer.lowerExpr(keyNode));
+        if (!key) return null;
         return { kind: "libCall", fn: "dyn.hasOwn", args: [receiver, key], type: BOOL, loc };
       }
       if (probed?.type.kind !== "record") return null;
       const shape = lowerer.shapes.get(probed.type.shapeId);
-      if (!shape || shape.tuple || shape.indexValue || shapeHasAccessorSlots(shape)) return null;
+      if (!shape || shape.tuple || shapeHasAccessorSlots(shape)) return null;
       const loc = locOf(call);
       const receiver = lowerer.lowerExpr(recvNode);
       if (receiver.type.kind !== "record") return null; // probe/lower drift: keep the fence
-      let key = lowerer.lowerExpr(keyNode);
-      // Number/boolean/dyn keys stringify — ToPropertyKey, the keyed-write
-      // path's rule; symbol and composite keys keep the fence.
-      if (key.type.kind === "f64" || key.type.kind === "bool" || key.type.kind === "dyn") {
-        key = { kind: "toString", operand: key, type: STRING, loc: locOf(keyNode) };
-      }
-      if (key.type.kind !== "string") return null;
+      const key = ownPropertyKey(lowerer, lowerer.lowerExpr(keyNode));
+      if (!key) return null;
       const helper = recordHasOwnHelper(lowerer, receiver.type.shapeId, loc);
       return { kind: "call", callee: helper, args: [receiver, key], type: BOOL, loc };
     }

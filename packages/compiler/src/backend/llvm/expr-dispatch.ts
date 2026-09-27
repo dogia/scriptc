@@ -107,6 +107,7 @@ export function emitExpr(host: LlvmEmitterContext, e: IrExpr): LlValue {
       case "recordClone":
       case "recordKeyGet":
       case "recordOvfKeys":
+      case "recordOvfHas":
         return host.emitRecordExpr(e);
       case "dynFrom":
       case "dynFromJsval":

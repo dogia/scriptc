@@ -7331,6 +7331,54 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3078-forward-mutable-captures.ts": {
+   "order": [
+    "<repo>/tests/corpus/3078-forward-mutable-captures.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3079-forward-mutable-tdz.ts": {
+   "order": [
+    "<repo>/tests/corpus/3079-forward-mutable-tdz.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3080-exhaustive-never-bindings.ts": {
+   "order": [
+    "<repo>/tests/corpus/3080-exhaustive-never-bindings.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3081-recursive-array-destinations.ts": {
+   "order": [
+    "<repo>/tests/corpus/3081-recursive-array-destinations.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3082-forward-write-unwind.ts": {
+   "order": [
+    "<repo>/tests/corpus/3082-forward-write-unwind.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3083-set-string-seed.ts": {
+   "order": [
+    "<repo>/tests/corpus/3083-set-string-seed.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3084-record-own-membership.ts": {
+   "order": [
+    "<repo>/tests/corpus/3084-record-own-membership.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3085-conditional-record-construction.ts": {
+   "order": [
+    "<repo>/tests/corpus/3085-conditional-record-construction.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
