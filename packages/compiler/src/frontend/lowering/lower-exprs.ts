@@ -2467,7 +2467,27 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       return expr;
     }
     const tag = lowerer.armTag(expr.type.unionId, narrowed);
-    if (tag < 0) return expr;
+    if (tag < 0) {
+      // A proven-present optional base class can narrow further to a
+      // subclass. The payload is still stored under the base class tag;
+      // unwrap it before applying the ordinary class downcast.
+      const arms = lowerer.unions.get(expr.type.unionId)?.arms ?? [];
+      const valueTag = arms.findIndex((arm) => !isUnitType(arm));
+      const valueType = arms[valueTag];
+      if (
+        narrowed.kind === "object" && valueType?.kind === "object" &&
+        arms.every((arm, i) => i === valueTag || isUnitType(arm)) &&
+        lowerer.isSubclassOf(narrowed.className, valueType.className)
+      ) {
+        return {
+          kind: "downcast",
+          value: { kind: "unionNarrow", unionId: expr.type.unionId, tag: valueTag, value: expr, type: valueType, loc: expr.loc },
+          type: narrowed,
+          loc: expr.loc,
+        };
+      }
+      return expr;
+    }
     return {
       kind: "unionNarrow",
       unionId: expr.type.unionId,
@@ -2533,11 +2553,10 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       }
       return { kind: "call", callee: helper, args: [varRef(local.id, local.type, loc)], type: narrowed, loc };
     }
-    const valueTag = lowerer.armTag(local.type.unionId, narrowed);
     const undefTag = lowerer.armTag(local.type.unionId, UNDEFINED_T);
-    if (valueTag < 0 || undefTag < 0) throw new InternalCompilerError("runtime-optional local is missing its value or undefined arm");
     const def = lowerer.unions.get(local.type.unionId);
-    if (!def || def.arms.length !== 2) {
+    if (!def || undefTag < 0) throw new InternalCompilerError("runtime-optional local is missing its undefined arm");
+    if (def.arms.length !== 2) {
       // The checker may narrow a runtime-optional capture to one arm of a
       // value union (`Circle | Square | undefined` -> `Circle`). The
       // two-arm fast path below cannot extract that arm safely: a later
@@ -2550,10 +2569,19 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       }
       return { kind: "call", callee: helper, args: [varRef(local.id, local.type, loc)], type: narrowed, loc };
     }
+    // A predicate can strengthen a record's fields or narrow a base class
+    // to a subclass without changing the slot's stored value arm. Extract
+    // that actual arm first: record reads need its original field layout,
+    // and class reads apply the ordinary downcast bridge afterward.
+    const valueTag = undefTag === 0 ? 1 : 0;
+    const valueType = def.arms[valueTag];
+    if (!valueType || isUnitType(valueType)) {
+      lowerer.unsupported("SC1090", expr, "a runtime-optional receiver without a representable value arm");
+    }
     const message = property === null
       ? `${expr.text} is not a function`
       : `Cannot read properties of undefined (reading '${property}')`;
-    return {
+    return lowerer.maybeNarrow({
       kind: "ternary",
       cond: {
         kind: "unionIsTag",
@@ -2568,7 +2596,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
         1,
         "",
         message,
-        narrowed,
+        valueType,
         loc,
       ),
       else_: {
@@ -2576,12 +2604,12 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
         unionId: local.type.unionId,
         tag: valueTag,
         value: varRef(local.id, local.type, loc),
-        type: narrowed,
+        type: valueType,
         loc,
       },
-      type: narrowed,
+      type: valueType,
       loc,
-    };
+    }, narrowedNode);
   }
 
   type RuntimeOptionalUse =
@@ -4703,6 +4731,15 @@ export function lowerOptionalNumber(
       // index value (and therefore validates it); ===/!==, ||, and ?? need
       // to observe the missing value instead of throwing during that check.
       return includeUndefined ? read : lowerer.maybeNarrow(read, expr);
+    }
+    // Predicates can strengthen optional fields without changing the
+    // receiver's stored layout. Use that layout for bracket reads just as
+    // fieldTarget does for the corresponding dot reads.
+    if (obj.type.kind === "record") {
+      const actualShape = lowerer.shapes.get(obj.type.shapeId);
+      if (!actualShape) throw new InternalCompilerError("record receiver is missing its stored shape");
+      shapeId = obj.type.shapeId;
+      shape = actualShape;
     }
     if (litKey !== null) {
       const field = shape.fields.find((f) => f.name === litKey);

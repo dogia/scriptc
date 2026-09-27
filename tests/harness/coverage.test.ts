@@ -58,6 +58,28 @@ test("fully static JavaScript program reports 100%", () => {
   expect(out).toContain("fully static");
 });
 
+test.each([
+  "3062-runtime-optional-record-guards.ts",
+  "3063-runtime-optional-class-guards.ts",
+])("runtime-optional guard receivers stay static: %s", (name) => {
+  for (const dynamic of [false, true]) {
+    const { coverage } = analyze(join(repoRoot, "tests/corpus", name), { dynamic });
+    expect(coverage.preflightFailed).toBe(false);
+    expect(coverage.diagnostics).toEqual([]);
+    expect(coverage.stats.statementsFailed).toBe(0);
+    expect(coverage.stats.statementsIsland).toBe(0);
+  }
+});
+
+test("runtime-optional refined unions report blockers without crashing", () => {
+  for (const dynamic of [false, true]) {
+    const { coverage } = analyze(join(repoRoot, "tests/diagnostics/runtime-optional-refined-union.ts"), { dynamic });
+    expect(coverage.preflightFailed).toBe(false);
+    expect(coverage.diagnostics.map((d) => d.code)).toEqual(["SC1090", "SC1090"]);
+    expect(coverage.stats.statementsFailed).toBe(2);
+  }
+});
+
 test("settled generic rest-order fences count each source statement once", () => {
   const { coverage } = analyze(join(repoRoot, "tests/diagnostics/retained-generic-rest-order.ts"));
   expect(coverage.diagnostics.map((d) => d.code)).toEqual(["SC1031", "SC2004"]);

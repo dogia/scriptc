@@ -7201,6 +7201,18 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3062-runtime-optional-record-guards.ts": {
+   "order": [
+    "<repo>/tests/corpus/3062-runtime-optional-record-guards.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3063-runtime-optional-class-guards.ts": {
+   "order": [
+    "<repo>/tests/corpus/3063-runtime-optional-class-guards.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
@@ -9343,6 +9355,12 @@
   "<repo>/tests/diagnostics/runtime-optional-capture-chain.ts": {
    "order": [
     "<repo>/tests/diagnostics/runtime-optional-capture-chain.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/diagnostics/runtime-optional-refined-union.ts": {
+   "order": [
+    "<repo>/tests/diagnostics/runtime-optional-refined-union.ts"
    ],
    "diags": []
   },
