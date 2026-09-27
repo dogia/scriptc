@@ -35,9 +35,9 @@ interface ObjectConstructor {
 /* `parse` returns `unknown`, not the lib's `any` — the dynamic boundary. A
  * checked cast (`JSON.parse(s) as Config`) validates the value against the
  * target type at runtime and THROWS on mismatch — the mechanism that makes
- * trusting TS types sound at data boundaries. The lib's any-returning
- * overload stays reachable only through the reviver form, which the
- * lowerer rejects (as it does stringify's replacer/space parameters).
+ * trusting TS types sound at data boundaries. Reviver results use the same
+ * checked boundary. A function replacer can omit the root, so that form
+ * returns string | undefined even though the stock lib promises string.
  *
  * `stringify` takes `unknown`, not the lib's `any`: the same honest
  * surface, but the parameter must not CONTEXTUALLY TYPE literal arguments
@@ -46,7 +46,9 @@ interface ObjectConstructor {
  * type-directedly). */
 interface JSON {
   parse(text: string): unknown;
+  parse(text: string, reviver: (this: unknown, key: string, value: unknown) => unknown): unknown;
   stringify(value: unknown): string;
+  stringify(value: unknown, replacer: (this: unknown, key: string, value: unknown) => unknown, space?: string | number): string | undefined;
 }
 
 /* The supported Promise construction shape: an executor whose resolve takes

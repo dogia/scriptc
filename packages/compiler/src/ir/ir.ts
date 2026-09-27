@@ -1950,8 +1950,9 @@ export type IrRegexIntrinsicMethod =
  * union — every member has a signature in the validator's LIB_FN_SIGS and a
  * scr_* implementation in the runtime (scr_lib.c / scr_json.c). fs.*
  * failures and json.parse syntax errors THROW (catchable, via the runtime
- * exception cell); process.* members never throw. JSON.stringify is NOT a
- * libCall — it lowers to the type-directed `jsonStringify` node below.
+ * exception cell); process.* members never throw. JSON.stringify without a
+ * callback lowers to the type-directed `jsonStringify` node below; callback
+ * forms use the shared native JSON walker through libCall.
  * island.eval (the internal __island_eval testing hook) exists only in
  * --dynamic builds — the frontend rejects it otherwise, so backends may
  * assume the island runtime is linked when they see it; island exceptions
@@ -2001,6 +2002,8 @@ export type IrLibFn =
    * --dynamic only. */
   | "island.castFail"
   | "json.parse"
+  | "json.parseReviver"
+  | "json.stringifyReplacer"
   /** Keyed WRITE on a dyn value — `h.onDone = cb` / `h["k"] = v` on a
    * checked-dynamic object (args: receiver, key string, value — all
    * borrowed; the runtime copies the key and retains the value in). An
@@ -5783,15 +5786,18 @@ function isJsonSafeAt(
   stringify: boolean,
   undefinedAllowed: boolean,
   visiting: Set<string>,
+  dynFields = false,
 ): boolean {
   if (HANDLE_KINDS.has(t.kind)) return false;
   switch (t.kind) {
+    case "dyn":
+      return dynFields;
     case "f64":
     case "string":
     case "bool":
       return true;
     case "array":
-      return isJsonSafeAt(t.elem, getRecord, getUnion, stringify, stringify, visiting);
+      return isJsonSafeAt(t.elem, getRecord, getUnion, stringify, stringify, visiting, dynFields);
     case "record": {
       const shape = getRecord(t.shapeId);
       if (!shape) return false;
@@ -5800,7 +5806,7 @@ function isJsonSafeAt(
       // short-circuits every `every` up the walk).
       if (visiting.has(t.shapeId)) return true;
       visiting.add(t.shapeId);
-      if (!shape.fields.every((f) => isJsonSafeAt(f.type, getRecord, getUnion, stringify, !shape.tuple || stringify, visiting))) {
+      if (!shape.fields.every((f) => isJsonSafeAt(f.type, getRecord, getUnion, stringify, !shape.tuple || stringify, visiting, dynFields))) {
         return false;
       }
       // Overflow values sit in record-key position too: dyn is JSON-safe
@@ -5808,7 +5814,7 @@ function isJsonSafeAt(
       // like any undefined-valued key), everything else follows the
       // record-field rule.
       if (shape.indexValue && shape.indexValue.kind !== "dyn") {
-        return isJsonSafeAt(shape.indexValue, getRecord, getUnion, stringify, true, visiting);
+        return isJsonSafeAt(shape.indexValue, getRecord, getUnion, stringify, true, visiting, dynFields);
       }
       return true;
     }
@@ -5818,7 +5824,7 @@ function isJsonSafeAt(
       const key = `${t.unionId}:${stringify}:${undefinedAllowed}`;
       if (visiting.has(key)) return true; // the recursive knot, union-flavored
       visiting.add(key);
-      return def.arms.every((a) => a.kind === "undefinedT" ? undefinedAllowed : isJsonSafeAt(a, getRecord, getUnion, stringify, undefinedAllowed, visiting));
+      return def.arms.every((a) => a.kind === "undefinedT" ? undefinedAllowed : isJsonSafeAt(a, getRecord, getUnion, stringify, undefinedAllowed, visiting, dynFields));
     }
     case "func":
     case "object":
@@ -5848,7 +5854,6 @@ function isJsonSafeAt(
     // Buffers as {type:"Buffer",data:[...]} in Node — neither shape is
     // representable type-directedly; rejected like Maps.
     case "bytes":
-    case "dyn":
     case "jsval":
     case "caught":
     case "promise":
@@ -6177,14 +6182,19 @@ export function canDynCheckTo(
   getRecord: (shapeId: string) => IrRecordShape | undefined,
   getUnion: (unionId: string) => IrUnionDef | undefined,
 ): boolean {
-  if (isJsonSafeType(t, getRecord, getUnion)) return true;
+  // Unknown fields keep an owned dyn subtree; checking the surrounding
+  // record/array still validates its layout. This is broader than the
+  // stringify/island JSON domain, which cannot assume opaque slots are
+  // serializable. Backends already retain dyn fields and fill missing
+  // unknown record fields with the undefined value.
+  if (isJsonSafeAt(t, getRecord, getUnion, false, false, new Set(), true)) return true;
   if (t.kind === "bytes" && t.elem === "u8") return true;
   if (t.kind === "object" && t.className === "%Error") return true;
   if (t.kind === "func") return canAdaptDynFuncTo(t, getRecord, getUnion);
   if (DYN_HANDLE_KINDS.has(t.kind)) return true;
   if (t.kind === "union") {
     const def = getUnion(t.unionId);
-    return !!def && def.arms.every((a) => a.kind === "undefinedT" || isJsonSafeType(a, getRecord, getUnion));
+    return !!def && def.arms.every((a) => a.kind === "undefinedT" || isJsonSafeAt(a, getRecord, getUnion, false, false, new Set(), true));
   }
   return false;
 }
@@ -7690,6 +7700,8 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "island.import",
   "island.castFail",
   "json.parse",
+  "json.parseReviver",
+  "json.stringifyReplacer",
   "util.parseArgs",
   // decodeURIComponent throws the spec's URIError on bad hex/invalid
   // UTF-8 octets (encodeURIComponent never throws — see the IrLibFn doc).

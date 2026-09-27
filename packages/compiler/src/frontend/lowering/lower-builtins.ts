@@ -4760,39 +4760,30 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
     return name;
   }
 
-/** `JSON.parse(text)` / `JSON.stringify(value)`.
-   * - parse → a may-throw `libCall` producing a dyn value (the runtime JSON
-   *   dyn); malformed input throws a catchable SyntaxError-shaped string.
-   *   The divergence override types the one-argument form `unknown`; the
-   *   lib's reviver form typechecks (returning `any`) and is fenced here.
-   * - stringify → the type-DIRECTED `jsonStringify` node: the lib
-   *   signature honestly says `any`, but lowering requires the argument's
-   *   STATIC IR type to be JSON-safe — the backend emits a per-type
-   *   serializer, never a dynamic walk, so dyn (and closures/class
-   *   instances) are rejected here with a specific message. The
-   *   `stringify(v, null, space)` pretty-print form compiles when the
-   *   replacer is the literal null (or undefined) and the space is a
-   *   LITERAL — Node's rules apply at compile time (numbers clamp to 0–10
-   *   spaces, strings truncate to 10 code units) and the resolved indent
-   *   rides the node to the backend's re-indenter. Function replacers and
-   *   non-literal spaces stay fenced.
-   * Null when this isn't a JSON member call. */
+/** JSON parse produces checked-dynamic data; a native reviver walks it
+ * bottom-up before any checked cast. Stringify without a callback keeps
+ * its type-directed fast path. A function replacer boxes the input and
+ * walks it before primitive normalization. Both paths share literal gap
+ * rules, and callback failures use ordinary native exception unwinding. */
   export function lowerJsonMethodCall(lowerer: Lowerer, call: ts.CallExpression,
     access: ts.PropertyAccessExpression,): IrExpr | null {
     if (call.questionDotToken) return null;
     const member = lowerer.stdlibGlobalMember(access, "JSON");
     if (member === null) return null;
     const loc = locOf(call);
-    if (member === "parse" && call.arguments.length !== 1) {
-      lowerer.noLowering(
-        "JSON.parse with a reviver",
-        call,
-        "parse to `unknown` and validate with a checked cast ('as T') instead",
-      );
+    if ((member === "parse" && (call.arguments.length < 1 || call.arguments.length > 2)) ||
+        (member === "stringify" && call.arguments.length > 3) ||
+        call.arguments.some(ts.isSpreadElement)) {
+      lowerer.noLowering(`JSON.${member} with extra or spread arguments`, call, "pass the JSON arguments explicitly");
     }
     if (member === "parse") {
       const text = lowerer.lowerExprExpecting(call.arguments[0]!, STRING);
-      return { kind: "libCall", fn: "json.parse", args: [text], type: DYN, loc };
+      const reviver = call.arguments[1];
+      if (!reviver || jsonNullishArgument(lowerer, reviver)) {
+        return { kind: "libCall", fn: "json.parse", args: [text], type: DYN, loc };
+      }
+      const callback = lowerJsonCallback(lowerer, reviver, "reviver");
+      return { kind: "libCall", fn: "json.parseReviver", args: [text, callback], type: DYN, loc };
     }
     if (member === "stringify") {
       const indent = stringifySpaceIndent(lowerer, call);
@@ -4800,7 +4791,36 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
         return lowerer.wrappedUndefined(lowerer.withUndefinedArm(STRING), loc)!;
       }
       const argNode = call.arguments[0]!;
-      const value = lowerer.lowerExpr(argNode);
+      let value = lowerer.lowerExpr(argNode);
+      const replacer = call.arguments[1];
+      if (replacer && !jsonNullishArgument(lowerer, replacer)) {
+        const callback = lowerJsonCallback(lowerer, replacer, "replacer");
+        if (value.type.kind === "undefinedT" || value.type.kind === "nullT") value = lowerer.coerceToExpected(value, DYN);
+        // Evaluate the original arguments before taking a typed snapshot.
+        // Creating the callback can itself mutate the input object.
+        const inputSlot = lowerer.declareHiddenLocal("%jsonInput", value.type);
+        const callbackSlot = lowerer.declareHiddenLocal("%jsonCallback", DYN);
+        const boxed = lowerer.coerceToExpected(varRef(inputSlot.id, value.type, loc), DYN);
+        if (boxed.type.kind !== "dyn") {
+          lowerer.unsupported("SC1090", argNode,
+            `JSON.stringify callback input of type '${lowerer.fmt(value.type)}' (the value must cross the checked-dynamic boundary)`);
+        }
+        const raw: IrExpr = {
+          kind: "libCall", fn: "json.stringifyReplacer",
+          args: [boxed, varRef(callbackSlot.id, DYN, loc), { kind: "strLit", value: indent, type: STRING, loc }],
+          type: DYN, loc,
+        };
+        // A replacer can omit even the root. Preserve actual undefined;
+        // an inferred binding adopts this union, while a required string
+        // consumer uses the ordinary checked optional-value boundary.
+        const result: IrExpr = { kind: "dynCheck", value: raw, type: lowerer.withUndefinedArm(STRING), loc };
+        return {
+          kind: "seqExpr", stmts: [
+            { kind: "varDecl", localId: inputSlot.id, init: value, loc },
+            { kind: "varDecl", localId: callbackSlot.id, init: callback, loc },
+          ], result, type: result.type, loc,
+        };
+      }
       const optionalString = lowerOptionalStringifyRoot(lowerer, value, indent, loc);
       if (optionalString) return optionalString;
       // An ISLAND value (`JSON.stringify(err)` on a package handle — the
@@ -4911,13 +4931,33 @@ function lowerOptionalStringifyRoot(lowerer: Lowerer, value: IrExpr, indent: str
   return { kind: "call", callee: helper, args: [value], type: resultT, loc };
 }
 
-/** The compile-time indent of a `JSON.stringify(v[, replacer[, space]])`
-   * call, with Node's space rules applied: a number clamps to 0–10 spaces
-   * (ToInteger truncation), a string truncates to its first 10 code units,
-   * and null/undefined/0/"" mean compact ("" here). Only literal
-   * replacer/space spellings compile — the replacer must be `null` (or
-   * `undefined`), the space a numeric/string literal or `null`/`undefined`;
-   * everything else keeps the existing fence. */
+/** Only explicit null/undefined select the no-callback path. */
+function jsonNullishArgument(lowerer: Lowerer, node: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(node)) return jsonNullishArgument(lowerer, node.expression);
+  if (node.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (!ts.isIdentifier(node) || node.text !== "undefined") return false;
+  const symbol = lowerer.checker.getSymbolAtLocation(node);
+  return symbol !== undefined && lowerer.checker.declarationsOf(symbol).every((decl) => lowerer.isStdlibFile(decl.getSourceFile()));
+}
+
+/** JSON callbacks cross the same checked native function boundary as other
+ * runtime callbacks. Reviver source contexts need parser source tracking;
+ * refuse signatures that request one until that protocol is implemented. */
+function lowerJsonCallback(lowerer: Lowerer, node: ts.Expression, role: "replacer" | "reviver"): IrExpr {
+  const callback = lowerer.lowerExpr(node);
+  if (callback.type.kind === "func" && callback.type.params.length <= 2 &&
+      (role !== "reviver" || (!callback.type.rest && !callback.type.argumentsAll)) &&
+      canBoxFuncIntoDyn(callback.type, (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))) {
+    return { kind: "dynFrom", value: callback, type: DYN, loc: locOf(node) };
+  }
+  lowerer.noLowering(
+    `JSON ${role} of type '${lowerer.fmt(callback.type)}'`, node,
+    "use a native function taking key and value; replacer arrays and reviver source contexts are not supported yet",
+  );
+}
+
+/** Compile-time Node gap rules: numbers clamp to 0–10 spaces and strings
+ * truncate to ten UTF-16 code units. Callback validation is independent. */
   function stringifySpaceIndent(lowerer: Lowerer, call: ts.CallExpression): string {
     const fence = (): never =>
       lowerer.noLowering(
@@ -4929,9 +4969,7 @@ function lowerOptionalStringifyRoot(lowerer: Lowerer, value: IrExpr, indent: str
     const unwrap = (e: ts.Expression): ts.Expression =>
       ts.isParenthesizedExpression(e) ? unwrap(e.expression) : e;
     const isUndefined = (e: ts.Expression): boolean =>
-      ts.isIdentifier(e) && e.text === "undefined";
-    const replacer = unwrap(call.arguments[1]!);
-    if (replacer.kind !== ts.SyntaxKind.NullKeyword && !isUndefined(replacer)) fence();
+      jsonNullishArgument(lowerer, e);
     if (call.arguments.length === 2) return "";
     const space = unwrap(call.arguments[2]!);
     if (space.kind === ts.SyntaxKind.NullKeyword || isUndefined(space)) return "";

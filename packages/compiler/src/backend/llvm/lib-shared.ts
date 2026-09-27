@@ -501,6 +501,8 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "fetch.streamFrom": "scr_fetch_stream_from",
   "fetch.readerRead": "scr_fetch_reader_read",
   "json.parse": "scr_json_parse",
+  "json.parseReviver": "scr_json_parse_reviver",
+  "json.stringifyReplacer": "scr_json_stringify_replacer",
   "dyn.keySet": "scr_dyn_key_set",
   "dyn.iterPack": "scr_dyn_iter_pack",
   "dyn.arrLen": "scr_dyn_arr_len",

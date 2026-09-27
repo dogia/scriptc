@@ -53,7 +53,7 @@ import type {
   IrUnionDef,
   SrcLoc,
 } from "../../ir/ir.js";
-import { arrayOf, BOOL, canAdaptDynFuncTo, canConvertToDyn, canCrossIslandBoundary, canExitIslandToType, canMarshalTypedFuncIntoIsland, DYN, DYN_HANDLE_KINDS, F64, isDynTypedRefType, isJsonSafeType, isJsonStringifySafeType, isUndefinedArmedUnion, isUnitType, JSVAL, NULL_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, UNDEFINED_T, VOID } from "../../ir/ir.js";
+import { arrayOf, BOOL, canAdaptDynFuncTo, canDynCheckTo, canConvertToDyn, canCrossIslandBoundary, canExitIslandToType, canMarshalTypedFuncIntoIsland, DYN, DYN_HANDLE_KINDS, F64, isDynTypedRefType, isJsonSafeType, isJsonStringifySafeType, isUndefinedArmedUnion, isUnitType, JSVAL, NULL_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, UNDEFINED_T, VOID } from "../../ir/ir.js";
 import { type DynamicImportResolution, type NpmBuiltinUse, type NpmLazyTrap } from "../npm.js";
 import { provenanceActive } from "../provenance-registry.js";
 import {
@@ -5290,7 +5290,7 @@ export class Lowerer {
         expected.kind === "func" &&
         canAdaptDynFuncTo(expected, (id) => this.shapes.get(id), (id) => this.unions.get(id));
       const handleOk = DYN_HANDLE_KINDS.has(expected.kind);
-      if (this.jsonSafe(expected) || undefArmedOk || bytesOk || errorOk || classOk || funcOk || handleOk) {
+      if (canDynCheckTo(expected, (id) => this.shapes.get(id), (id) => this.unions.get(id)) || undefArmedOk || bytesOk || errorOk || classOk || funcOk || handleOk) {
         return { kind: "dynCheck", value: expr, type: expected, loc: expr.loc };
       }
       return expr;

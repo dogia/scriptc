@@ -7427,6 +7427,60 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3094-json-replacer-traversal.ts": {
+   "order": [
+    "<repo>/tests/corpus/3094-json-replacer-traversal.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3095-json-reviver-traversal.ts": {
+   "order": [
+    "<repo>/tests/corpus/3095-json-reviver-traversal.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3096-json-callback-nonfinite.ts": {
+   "order": [
+    "<repo>/tests/corpus/3096-json-callback-nonfinite.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3097-json-callback-reentrancy.ts": {
+   "order": [
+    "<repo>/tests/corpus/3097-json-callback-reentrancy.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3098-json-callback-space.ts": {
+   "order": [
+    "<repo>/tests/corpus/3098-json-callback-space.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3099-json-callback-functions.ts": {
+   "order": [
+    "<repo>/tests/corpus/3099-json-callback-functions.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3100-json-callback-holder.js": {
+   "order": [
+    "<repo>/tests/corpus/3100-json-callback-holder.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3101-json-callback-bytes.ts": {
+   "order": [
+    "<repo>/tests/corpus/3101-json-callback-bytes.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3102-json-unknown-fields.ts": {
+   "order": [
+    "<repo>/tests/corpus/3102-json-unknown-fields.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"

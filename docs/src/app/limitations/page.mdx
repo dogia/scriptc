@@ -68,6 +68,8 @@ A static-tier program otherwise produces byte-identical stdout and the same exit
 
 **Runtime traps are not catchable.** User `throw` is fully catchable, and runtime failures Node models as exceptions (JSON parse errors, checked-cast failures, fs errors, regex errors) throw real error objects. Remaining hard traps, including typed-array bounds violations, abort the process.
 
+**JSON callbacks have a native subset.** Function replacers and two-argument revivers run statically, including nested replacements, object-property deletion, and thrown exceptions. A replacer that omits the root returns `undefined`. Replacer property lists, reviver source contexts, and computed indentation remain unsupported; a reviver that deletes an array element throws because checked-dynamic arrays cannot represent holes. Callback values use the checked-dynamic boundary: typed records and arrays become snapshots, so callback mutations do not update the original typed containers, record fields retain declaration order, and typed Buffer values lose their Buffer brand when converted to bytes. JavaScript callbacks receive the holder as `this`; TypeScript callbacks that access a dynamic `this` remain unsupported.
+
 **A lying cast on dynamic data throws instead of corrupting memory** — the headline divergence, and the point. `JSON.parse(s) as Config` with mismatched data throws a catchable error naming the offending path (`expected number at $.port, got string`) where JS would silently hand you garbage.
 
 **Structural width subtyping copies.** A record flowing into a strict field-subset shape is copied, not aliased: mutations through the narrower reference are invisible to the original. Same stance at the dynamic boundary: values cross by copy, never by reference.

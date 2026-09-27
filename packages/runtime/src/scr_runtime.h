@@ -3471,6 +3471,13 @@ void scr_dyn_release(ScrDyn *d); /* releases the tree recursively; NULL-tolerant
  * compiler-emitted pending checks — json.parse is in the may-throw seed). */
 ScrDyn *scr_json_parse(ScrStr *text);
 
+/* Native JSON callbacks. All inputs borrowed, result owned (+1), NULL on
+ * pending exception. Stringify returns a dyn string OR actual undefined
+ * when the replacer omits the root. gap has already applied space rules. */
+ScrDyn *scr_json_parse_reviver(ScrStr *text, const ScrDyn *reviver);
+ScrDyn *scr_json_stringify_replacer(const ScrDyn *value, const ScrDyn *replacer, const ScrStr *gap);
+
+
 /* BORROWED member lookup on a SCR_DYN_OBJ; NULL when the key is absent. */
 ScrDyn *scr_dyn_obj_get(const ScrDyn *d, const char *key, size_t key_len);
 /* Literal discriminator tests used before selecting a typed record layout.

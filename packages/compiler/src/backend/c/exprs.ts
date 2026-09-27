@@ -4366,6 +4366,10 @@ function emitWebLibCall(state: LibCallState): Temp {
             // and the typed dummy is a NULL promise the pending check
             // abandons (releases are NULL-tolerant).
             return finish(`(scr_jsval_cast_fail(${arg(0)}, ${arg(1)}), NULL)`);
+          case "json.parseReviver":
+            return finish(`scr_json_parse_reviver(${arg(0)}, ${arg(1)})`);
+          case "json.stringifyReplacer":
+            return finish(`scr_json_stringify_replacer(${arg(0)}, ${arg(1)}, ${arg(2)})`);
           case "json.parse":
             // Borrows the text; returns +1 on a fresh dyn, or throws a
             // catchable SyntaxError-shaped string (may-throw seed set).

@@ -1,0 +1,136 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { expect, test } from "vitest";
+import { analyze, compile, compileC, deserializeModule, emitCModule, serializeModule, validateModule } from "@scriptc/compiler";
+import { IR_VERSION } from "../../packages/compiler/src/ir/serialize.js";
+import { F64, VOID, type IrModule } from "../../packages/compiler/src/ir/ir.js";
+import { numLit } from "../../packages/compiler/src/ir/build.js";
+import { validatorCases } from "./self-hosting-validator-cases.js";
+
+const root = fileURLToPath(new URL("../..", import.meta.url));
+const entry = join(root, "tests/fixtures/self-hosting/serialize.ts");
+const runOptions = { cwd: root, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 };
+
+function numericModule(): IrModule {
+  const loc = { file: "native-numbers.ts", start: 0, end: 1 };
+  const numbers = [Infinity, -Infinity, -0, 0, 0.1 + 0.2, Number.MAX_VALUE, Number.MIN_VALUE];
+  return {
+    irVersion: IR_VERSION, sourceFile: loc.file, entry: "main",
+    functions: [{
+      name: "main", params: [], returnType: VOID, locals: [], loc,
+      body: [
+        // The fixture's failure mode changes this first literal to NaN.
+        { kind: "exprStmt", expr: numLit(0, loc), loc },
+        { kind: "exprStmt", expr: { kind: "intrinsic", name: "console.log", args: numbers.map((n) => numLit(n, loc)), type: VOID, loc }, loc },
+        { kind: "exprStmt", expr: { kind: "intrinsic", name: "console.log", args: [{
+          kind: "bin", op: "/", left: numLit(1, loc), right: numLit(-0, loc), type: F64, loc,
+        }], type: VOID, loc }, loc },
+        { kind: "return", value: null, loc },
+      ],
+    }],
+  };
+}
+
+test("the production IR serialization and validation pipeline lowers entirely statically", () => {
+  const { coverage } = analyze(entry, { dynamic: false });
+  expect(coverage.preflightFailed).toBe(false);
+  expect(coverage.stats.statementsTotal).toBeGreaterThan(3000);
+  expect(coverage.stats.statementsFailed).toBe(0);
+  expect(coverage.stats.statementsIsland).toBe(0);
+  expect(coverage.stats.functionsSkipped).toBe(0);
+});
+
+for (const backend of ["c", "llvm"] as const) {
+  test(`self-hosting serialization: ${backend} round-trips IR and produces a working program`, async () => {
+    const dir = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "scriptc-native-serialize-"));
+    const sanitize = process.env["SCRIPTC_SAN"] === "1";
+    const executable = (name: string): string => join(dir, name + (process.platform === "win32" ? ".exe" : ""));
+    try {
+      const built = await compile(entry, {
+        outDir: dir, outPath: executable("serializer"), backend, dynamic: false, optimization: "dev", sanitize,
+      });
+      if (!built.ok) throw new Error(built.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+      expect(built.backend).toBe(backend);
+      const run = (input: string, args: string[] = []) => {
+        const path = join(dir, "input.json");
+        writeFileSync(path, input);
+        const oracle = spawnSync(process.execPath, ["--import", "tsx", entry, path, ...args], runOptions);
+        const native = spawnSync(built.binaryPath, [path, ...args], runOptions);
+        for (const result of [oracle, native]) {
+          expect(result.error).toBeUndefined();
+          expect(result.signal, result.stderr.toString()).toBeNull();
+          expect(result.stderr.toString()).toBe("");
+        }
+        expect(native.status).toBe(oracle.status);
+        return { oracle, native };
+      };
+      const roundTrip = (module: IrModule): IrModule => {
+        const { oracle, native } = run(serializeModule(module));
+        expect(native.status, native.stdout.toString()).toBe(0);
+        // Native records use declaration order; JSON member order is not
+        // part of the IR format. Compare all payloads after decoding the
+        // production sentinel protocol, including the sign of zero.
+        const actual = deserializeModule(native.stdout.toString());
+        expect(actual).toEqual(deserializeModule(oracle.stdout.toString()));
+        expect(actual).toEqual(module);
+        expect(validateModule(actual)).toEqual([]);
+        const again = run(native.stdout.toString());
+        expect(again.native.stdout).toEqual(native.stdout);
+        return actual;
+      };
+
+      const numeric = roundTrip(numericModule());
+      const print = numeric.functions[0]!.body[1]!;
+      expect(print.kind).toBe("exprStmt");
+      if (print.kind !== "exprStmt" || print.expr.kind !== "intrinsic") throw new Error("numeric IR changed");
+      const third = print.expr.args[2]!;
+      expect(third.kind).toBe("numLit");
+      if (third.kind !== "numLit") throw new Error("literal changed");
+      expect(Object.is(third.value, -0)).toBe(true);
+      const cPath = join(dir, "numbers.c");
+      writeFileSync(cPath, emitCModule(numeric));
+      await compileC({ cPath, outPath: executable("numbers"), sanitize });
+      const program = spawnSync(executable("numbers"), [], runOptions);
+      expect(program.error).toBeUndefined();
+      expect(program.signal).toBeNull();
+      expect(program.status, program.stderr.toString()).toBe(0);
+      expect(program.stdout.toString()).toBe("Infinity -Infinity -0 0 0.30000000000000004 1.7976931348623157e+308 5e-324\n-Infinity\n");
+      expect(program.stderr.toString()).toBe("");
+
+      for (const item of validatorCases()) {
+        if (!item.diagnostic) roundTrip(item.module);
+        else {
+          const { oracle, native } = run(serializeModule(item.module));
+          expect(native.status).toBe(1);
+          expect(native.stdout).toEqual(oracle.stdout);
+          expect(native.stdout.toString()).toContain(item.diagnostic);
+        }
+      }
+      for (const source of [
+        "tests/corpus/3086-error-constructor-options.ts",
+        "tests/corpus/3089-array-find-narrowing.ts",
+        "tests/corpus/3091-json-recursive-discriminants.ts",
+        "tests/corpus/3094-json-replacer-traversal.ts",
+      ]) {
+        const path = join(dir, "emitted.json");
+        const emitted = await compile(join(root, source), { outDir: dir, outPath: path, outputKind: "ir", dynamic: false });
+        if (!emitted.ok) throw new Error(emitted.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+        roundTrip(deserializeModule(readFileSync(path, "utf8")));
+      }
+      const previous = { ...numericModule(), irVersion: IR_VERSION - 1 };
+      const mismatch = run(serializeModule(previous));
+      expect(mismatch.native.status).toBe(1);
+      expect(mismatch.native.stdout).toEqual(mismatch.oracle.stdout);
+      expect(mismatch.native.stdout.toString()).toContain("IR version mismatch");
+      const nan = run(serializeModule(numericModule()), ["nan"]);
+      expect(nan.native.status).toBe(1);
+      expect(nan.native.stdout).toEqual(nan.oracle.stdout);
+      expect(nan.native.stdout.toString()).toContain("IR contains NaN; refusing to serialize");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
