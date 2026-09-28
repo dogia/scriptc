@@ -6,7 +6,7 @@ import { InternalCompilerError } from "../../errors.js";
 import type { CEmitter, ScopeEntry } from "./c-emitter.js";
 import type { IrFunction } from "../../ir/ir.js";
 import { mangleField, mangleGlobal, mangleLocal, mangleRawParam } from "../mangle.js";
-import { BOOL, CAUGHT, IrExpr, IrStmt, RUNTIME_ERROR_CLASSES, isRefCounted } from "../../ir/ir.js";
+import { BOOL, CAUGHT, type IrExpr, type IrStmt, RUNTIME_ERROR_CLASSES, isRefCounted } from "../../ir/ir.js";
 import { boxAccess, cDecl, cStringLiteral, elemAccess, vAdapters } from "./types.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
 import { writeBox } from "./bindings.js";
@@ -1017,10 +1017,10 @@ function emitStmtBody(emitter: CEmitter, s: IrStmt): void {
     // Bodies in source order: entering one falls through the rest (JS-exact)
     // until a break jumps to the end label.
     const target = {
+      labels: s.labels,
       kind: "switch" as const,
       endLabel,
       usedEnd: defaultIdx < 0,
-      ...(s.labels !== undefined && { labels: s.labels }),
       scopeDepth: emitter.scopes.length,
       frameDepth: emitter.frames.length,
       finallyDepth: emitter.finallyStack.length,

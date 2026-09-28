@@ -4153,6 +4153,15 @@ class LlEmitter {
   }
 
   private emitOperatorExpr(e: ExprOf<"bin" | "unary" | "incDec" | "fieldIncDec" | "assignExpr" | "seqExpr">): LlValue {
+    if (e.kind === "seqExpr") {
+      // Sequence temporaries must die on the path that created them. In a
+      // lazy branch, the enclosing lexical scope can outlive (or skip) the
+      // sequence on later loop iterations.
+      this.scopes.push([]);
+      const result = emitOperatorExpr(this.expressionContext(), e);
+      this.releaseScope(this.scopes.pop()!);
+      return result;
+    }
     return emitOperatorExpr(this.expressionContext(), e);
   }
 

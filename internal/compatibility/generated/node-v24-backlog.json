@@ -108750,7 +108750,8 @@
           "source": "surface-manifest:node-builtin.zlib.crc32",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109303,7 +109304,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflate",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109341,7 +109343,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflateSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109379,7 +109382,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflateRaw",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109417,7 +109421,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflateRawSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109455,7 +109460,8 @@
           "source": "surface-manifest:node-builtin.zlib.gunzip",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109493,7 +109499,8 @@
           "source": "surface-manifest:node-builtin.zlib.gunzipSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109531,7 +109538,8 @@
           "source": "surface-manifest:node-builtin.zlib.gzip",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109569,7 +109577,8 @@
           "source": "surface-manifest:node-builtin.zlib.gzipSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109607,7 +109616,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflate",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109645,7 +109655,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflateSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109683,7 +109694,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflateRaw",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109721,7 +109733,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflateRawSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109759,7 +109772,8 @@
           "source": "surface-manifest:node-builtin.zlib.unzip",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -109797,7 +109811,8 @@
           "source": "surface-manifest:node-builtin.zlib.unzipSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110237,7 +110252,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflate",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110275,7 +110291,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflateSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110313,7 +110330,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflateRaw",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110351,7 +110369,8 @@
           "source": "surface-manifest:node-builtin.zlib.deflateRawSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110389,7 +110408,8 @@
           "source": "surface-manifest:node-builtin.zlib.gunzip",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110427,7 +110447,8 @@
           "source": "surface-manifest:node-builtin.zlib.gunzipSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110465,7 +110486,8 @@
           "source": "surface-manifest:node-builtin.zlib.gzip",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110503,7 +110525,8 @@
           "source": "surface-manifest:node-builtin.zlib.gzipSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110541,7 +110564,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflate",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110579,7 +110603,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflateSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110617,7 +110642,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflateRaw",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110655,7 +110681,8 @@
           "source": "surface-manifest:node-builtin.zlib.inflateRawSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110693,7 +110720,8 @@
           "source": "surface-manifest:node-builtin.zlib.unzip",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {
@@ -110731,7 +110759,8 @@
           "source": "surface-manifest:node-builtin.zlib.unzipSync",
           "tests": [
             "tests/corpus/1404-zlib-crypto-bytes.ts",
-            "tests/corpus/2921-zlib-callbacks.ts"
+            "tests/corpus/2921-zlib-callbacks.ts",
+            "tests/corpus/3115-zlib-static-compression-levels.ts"
           ]
         },
         "dynamic": {

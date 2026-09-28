@@ -47,6 +47,7 @@ const results = await Promise.all(jobs); // number[] — compiles
 - `fs.openSync` accepts inline bitwise OR expressions of `fs.constants.O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_EXCL`, `O_NOFOLLOW`, `O_NONBLOCK`, `O_TRUNC`, and `O_APPEND`, with an optional creation mode. Computed numeric flags remain fenced because their bit values differ by target. `fstatSync`, `fchmodSync`, `fsyncSync`, and `linkSync` compile at direct call sites. On Windows, a numeric open with `O_NOFOLLOW` and `fchmodSync` throw `ENOSYS` because the CRT cannot enforce those contracts; programs requiring them should use a POSIX target.
 - Numeric `process.exitCode = value` writes in statement position set the implicit exit status; `process.exit()` with no argument uses that status. Reading or resetting `process.exitCode`, and assignments used as values, remain fenced.
 - Map keys and Set elements support numbers and strings by value, and records, class instances, arrays, symbols, and server handles by identity. Unions consisting only of these identity types also compile. Other key types, mixed scalar/reference unions, nullable key unions, and key conversions that copy an existing reference remain fenced.
+- Static `zlib.deflateSync`, `deflateRawSync`, and `gzipSync` accept default options or an inline `{ level: n }` with an integer literal from `-1` through `9`. Other compression options and runtime-valued levels remain fenced.
 
 **The `any`/`unknown` boundary**
 

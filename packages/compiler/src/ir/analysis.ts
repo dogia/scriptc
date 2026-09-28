@@ -49,10 +49,10 @@ export function matchStringSelfConcat(targetLocalId: string, value: IrExpr): IrE
   return value.right;
 }
 
-/** The class-graph surface needed by backend-independent hierarchy queries. */
+/** Descendant tree needed by constructor queries. Parent links deliberately
+ * stay out of this structural view: projecting them would revisit cycles. */
 export interface IrClassGraphNode {
   readonly def: { readonly name: string };
-  readonly base: IrClassGraphNode | null;
   readonly children: readonly IrClassGraphNode[];
 }
 
@@ -158,10 +158,9 @@ export function endsWithJump(stmts: readonly IrStmt[]): boolean {
  * the static class's descendant subtree. */
 export function newValueMayThrow(
   className: string,
-  classes: ReadonlyMap<string, IrClassGraphNode>,
+  meta: IrClassGraphNode | undefined,
   mayThrow: ReadonlySet<string>,
 ): boolean {
-  const meta = classes.get(className);
   if (!meta) throw new InternalCompilerError(`IR analysis bug: newValue on unknown class ${className}`);
   const any = (node: IrClassGraphNode): boolean =>
     mayThrow.has(`%${node.def.name}.constructor`) || node.children.some(any);

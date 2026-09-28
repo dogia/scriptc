@@ -155,6 +155,13 @@ export function emitFilesystemLibCall(host: LlvmEmitterContext, e: LibCallExpr):
       B.line(`call void @scr_zlib_codec_async(ptr ${args[0]!.name}, double ${f64Lit(mode)}, i1 ${compressing}, ptr ${args[1]!.name}, ptr @${adapter})`);
       return { name: "", type: e.type };
     }
+    if (e.fn === "zlib.deflateLevelSync") {
+      const args = e.args.map((arg) => host.emitExpr(arg));
+      host.declare("declare ptr @scr_zlib_deflate_mode(ptr, double, double)");
+      const raw = B.tmp();
+      B.line(`${raw} = call ptr @scr_zlib_deflate_mode(ptr ${args[0]!.name}, double ${args[1]!.name}, double ${args[2]!.name})`);
+      return host.own({ name: raw, type: e.type });
+    }
     if (
       e.fn === "zlib.deflateRawSync" || e.fn === "zlib.inflateRawSync" ||
       e.fn === "zlib.gzipSync" || e.fn === "zlib.gunzipSync" ||

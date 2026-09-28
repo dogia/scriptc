@@ -7547,6 +7547,48 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3112-union-switch-control-flow.ts": {
+   "order": [
+    "<repo>/tests/corpus/3112-union-switch-control-flow.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3113-union-array-removal.ts": {
+   "order": [
+    "<repo>/tests/corpus/3113-union-array-removal.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3114-union-record-field-write.ts": {
+   "order": [
+    "<repo>/tests/corpus/3114-union-record-field-write.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3115-zlib-static-compression-levels.ts": {
+   "order": [
+    "<repo>/tests/corpus/3115-zlib-static-compression-levels.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3116-sequence-expression-lifetimes.ts": {
+   "order": [
+    "<repo>/tests/corpus/3116-sequence-expression-lifetimes.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3117-unknown-switch-control-flow.ts": {
+   "order": [
+    "<repo>/tests/corpus/3117-unknown-switch-control-flow.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3118-recursive-union-spread.ts": {
+   "order": [
+    "<repo>/tests/corpus/3118-recursive-union-spread.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"

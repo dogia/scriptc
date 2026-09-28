@@ -3,7 +3,7 @@ import { InternalCompilerError } from "../../errors.js";
  * expression lands in a fresh C temp, with RC ownership tracked on the
  * emitter's frames (see the discipline comment in emitter core). */
 import type { CEmitter, Temp } from "./c-emitter.js";
-import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM_T, CHILDWRITER_T, DYN, F64, IrExpr, IrLibFn, IrRecordShape, IrType, islandPromisePayloadTag, isClassOwnEnumerableFieldName, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, MAY_THROW_LIB_FNS, NETSOCKET_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, typeKey } from "../../ir/ir.js";
+import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM_T, CHILDWRITER_T, DYN, F64, type IrExpr, type IrLibFn, type IrRecordShape, type IrType, islandPromisePayloadTag, isClassOwnEnumerableFieldName, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, MAY_THROW_LIB_FNS, NETSOCKET_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, typeKey } from "../../ir/ir.js";
 import { BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleClassNew, mangleClassRetain, mangleClassStruct, mangleField, mangleFnClosure, mangleFunction, mangleGlobal, mangleLocal, mangleRecordClone, mangleRecordNew, mangleRecordStruct, mangleVtStruct } from "../mangle.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
@@ -177,7 +177,8 @@ function nestedTypedRefUnionAdapter(
   ctx: StreamTypedRefContext,
 ): string {
   const key = typeKey(t);
-  const unions = (ctx.unions ??= new Map());
+  if (ctx.unions === undefined) ctx.unions = new Map<string, string>();
+  const unions = ctx.unions;
   const existing = unions.get(key);
   if (existing) return existing;
   const def = emitter.unionsById.get(t.unionId);
@@ -993,13 +994,15 @@ function emitOperatorExpr(
         return v;
       }
       case "seqExpr": {
-        // Statements mid-expression: C emission is linear, so each
-        // statement emits in place (its own frame, exactly statement
-        // position) and the result is an ordinary temp of the current
-        // frame. The validator restricted stmts to straight-line writes —
-        // no jump can leave the region.
+        // Hidden locals belong to this evaluation, not the containing
+        // lexical block. A conditional sequence in a loop may not run on
+        // the next iteration; registering its locals on the outer scope
+        // would release stale pointers from the branch that was skipped.
+        emitter.scopes.push([]);
         for (const s of e.stmts) emitter.emitStmt(s);
-        return emitter.emitExpr(e.result);
+        const result = emitter.emitExpr(e.result);
+        emitter.releaseFrame(emitter.scopes.pop()!);
+        return result;
       }
     default: {
       const _exhaustive: never = e;
@@ -1169,7 +1172,7 @@ function emitControlExpr(
         if (e.receiver.type.kind !== "union") throw new InternalCompilerError("emitter bug: optChain receiver is not a union");
         const def = emitter.unionsById.get(e.receiver.type.unionId);
         if (!def) throw new InternalCompilerError(`emitter bug: optChain of unknown union ${e.receiver.type.unionId}`);
-        const unitTags = def.arms.flatMap((a, i) => (isUnitType(a) ? [i] : []));
+        const unitTags: number[] = def.arms.flatMap((a, i): number[] => (isUnitType(a) ? [i] : []));
         const narrowIdx = def.arms.findIndex((a) => !isUnitType(a));
         if (unitTags.length === 0 || narrowIdx < 0) throw new InternalCompilerError("emitter bug: optChain union arms");
         const multiple = def.arms.length - unitTags.length > 1;
@@ -1340,7 +1343,7 @@ function emitControlExpr(
         if (e.left.type.kind !== "union") throw new InternalCompilerError("emitter bug: nullish left is not a union");
         const def = emitter.unionsById.get(e.left.type.unionId);
         if (!def) throw new InternalCompilerError(`emitter bug: nullish of unknown union ${e.left.type.unionId}`);
-        const unitTags = def.arms.flatMap((a, i) => (isUnitType(a) ? [i] : []));
+        const unitTags: number[] = def.arms.flatMap((a, i): number[] => (isUnitType(a) ? [i] : []));
         if (unitTags.length === 0) throw new InternalCompilerError("emitter bug: nullish union lacks unit arms");
         const l = emitter.emitExpr(e.left);
         emitter.moveTemp(l);
@@ -2050,7 +2053,7 @@ function emitContainerExpr(
             // nargs = the PRESENT index args (omitted ones skip Node's
             // validation); the 0 placeholders are never read past nargs.
             const n = e.args.length - 1;
-            const idx = [1, 2, 3, 4].map((i) => args[i]?.name ?? "0");
+            const idx = [1, 2, 3, 4].map((i: number) => args[i]?.name ?? "0");
             const t = emitter.newTemp(
               e.type,
               `scr_bytes_compare(${r.name}, ${args[0]!.name}, ${n}, ${idx.join(", ")})`,
@@ -2629,7 +2632,7 @@ function emitCallExpr(
         const cast = `(void *(*)(${paramTypes.join(", ") || "void"}))`;
         const call = `(${cast}${callee.name}->ctor)(${args.map((a) => a.name).join(", ")})`;
         const t = emitter.newTemp(e.type, `(${cType(e.type).trim()})${call}`);
-        if (newValueMayThrow(cls, emitter.classMeta, emitter.mayThrow)) emitter.emitPendingCheck();
+        if (newValueMayThrow(cls, emitter.classMeta.get(cls), emitter.mayThrow)) emitter.emitPendingCheck();
         return t;
       }
       case "instanceOfValue": {
@@ -3814,7 +3817,7 @@ function emitAsyncExpr(
         emitter.line(`} else {`);
         emitter.indent++;
         emitter.line(`scr_await_hop();`);
-        const unitTags = def.arms.flatMap((a, i) => (isUnitType(a) ? [i] : []));
+        const unitTags: number[] = def.arms.flatMap((a, i): number[] => (isUnitType(a) ? [i] : []));
         if (unitTags.length === 1) {
           emitter.line(`${name} = ${emitter.unitInstanceRef(e.type.unionId, resTagOf(def.arms[unitTags[0]!]!))};`);
         } else {
@@ -4704,6 +4707,8 @@ function emitFilesystemLibCall(state: LibCallState): Temp {
             return finish(`scr_zlib_inflate(${arg(0)})`);
           case "zlib.deflateRawSync":
             return finish(`scr_zlib_deflate_mode(${arg(0)}, 1.0, -1.0)`);
+          case "zlib.deflateLevelSync":
+            return finish(`scr_zlib_deflate_mode(${arg(0)}, ${arg(1)}, ${arg(2)})`);
           case "zlib.inflateRawSync":
             return finish(`scr_zlib_inflate_mode(${arg(0)}, 1.0)`);
           case "zlib.gzipSync":

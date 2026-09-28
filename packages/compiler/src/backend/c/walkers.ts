@@ -7,7 +7,7 @@ import { InternalCompilerError } from "../../errors.js";
  * interning ORDER is part of the emitted C, so the registries stay on
  * CEmitter and these functions only consult them through it. */
 import type { CEmitter } from "./c-emitter.js";
-import { DYN_HANDLE_KINDS, IrType, type IrUnionDef, isDynTypedRefType, isRefCounted, typeEquals, typeKey } from "../../ir/ir.js";
+import { DYN_HANDLE_KINDS, type IrType, type IrUnionDef, isDynTypedRefType, isRefCounted, typeEquals, typeKey } from "../../ir/ir.js";
 import { dynDesc, undefinedArmTag, unionWideningTags } from "../../ir/analysis.js";
 import { cCommentText, cDecl, cStringLiteral, cType, elemAccess, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleField, mangleRecordNew, mangleRecordStruct } from "../mangle.js";
@@ -1962,7 +1962,7 @@ export function jsonWriteHelper(emitter: CEmitter, t: IrType): string {
     );
     d.push(`  scr_dyn_release(sc_fn);`);
     t.params.forEach((_, i) => d.push(`  scr_dyn_release(sc_args[${i}]);`));
-    d.push(`  if (scr_exc_pending()) return ${dummy};`.replace("return ;", "return;"));
+    d.push(`  if (scr_exc_pending()) return${dummy === "" ? "" : ` ${dummy}`};`);
     if (t.ret.kind === "void") {
       d.push(`  scr_dyn_release(sc_r);`);
       d.push(`  return;`);

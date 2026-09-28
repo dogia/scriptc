@@ -6,7 +6,7 @@ import { InternalCompilerError } from "../../errors.js";
  * VtSlot) the emitter builds up front; emission ORDER is part of the C. */
 import type { CEmitter } from "./c-emitter.js";
 import type { IrFunction } from "../../ir/ir.js";
-import { IrClassDef, IrType, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, isRefCounted, mapOf, STRING } from "../../ir/ir.js";
+import { type IrClassDef, type IrType, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, isRefCounted, mapOf, STRING } from "../../ir/ir.js";
 import { mangleClassGcFree, mangleClassNew, mangleClassRelease, mangleClassReleaseDirect, mangleClassRetain, mangleClassStruct, mangleClassTrace, mangleCtorThunk, mangleField, mangleFunction, mangleRecordClone, mangleRecordGcFree, mangleRecordNew, mangleRecordRelease, mangleRecordRetain, mangleRecordStruct, mangleRecordTrace, mangleVtAdapter, mangleVtInstance, mangleVtStruct } from "../mangle.js";
 import { boxKindC, cCommentText, cDecl, cType, elemKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { streamRooted } from "../../ir/analysis.js";
@@ -33,16 +33,43 @@ export interface VtSlot {
  * are the preorder interval over the whole-program class forest — a class's
  * descendants are exactly the classes whose `pre` lies inside it, which is
  * both the instanceof check and the slot-lookup subtree test. */
-export interface ClassMeta {
+export class ClassMeta {
   def: IrClassDef;
-  base: ClassMeta | null;
-  children: ClassMeta[];
+  base: ClassMeta | null = null;
+  children: ClassMeta[] = [];
   root: ClassMeta;
-  pre: number;
-  post: number;
-  hierarchy: boolean;
+  pre = 0;
+  post = 0;
+  hierarchy = false;
   /** Root classes: the hierarchy's slots in DFS-declaration order. */
-  slots: VtSlot[];
+  slots: VtSlot[] = [];
+
+  constructor(def: IrClassDef) {
+    this.def = def;
+    // Every node is a valid root until the forest is linked and numbered.
+    // No asserted undefined value crosses into native record storage.
+    this.root = this;
+  }
+}
+
+export interface StructShape {
+  struct: string;
+  newFn: string;
+  retain: string;
+  release: string;
+  trace: string;
+  gcFree: string;
+  traced: boolean;
+  fields: { name: string; type: IrType }[];
+  /** Records with a string index signature: the overflow map's VALUE
+   * type. The struct carries a trailing `ScrMap *` member the shape's
+   * new/release/trace treat as one more (map-typed) field. */
+  indexValue?: IrType;
+  comment: string;
+  /** Record shape id; absent for classes. */
+  recordId?: string;
+  /** Class shapes only; hierarchy members get the vtable machinery. */
+  meta: ClassMeta | null;
 }
 
 /** Per-shape C structs + RC helpers for classes AND record shapes (the
@@ -60,31 +87,12 @@ export interface ClassMeta {
    * contract in scr_runtime.h) — and their retain/release feed the
    * candidate-root buffer. Acyclic shapes keep the lean 1-word header. */
   export function emitStructDefs(emitter: CEmitter, out: string[]): void {
-    interface StructShape {
-      struct: string;
-      newFn: string;
-      retain: string;
-      release: string;
-      trace: string;
-      gcFree: string;
-      traced: boolean;
-      fields: { name: string; type: IrType }[];
-      /** Records with a string index signature: the overflow map's VALUE
-       * type. The struct carries a trailing `ScrMap *` member the shape's
-       * new/release/trace treat as one more (map-typed) field. */
-      indexValue?: IrType;
-      comment: string;
-      /** Record shape id; absent for classes. */
-      recordId?: string;
-      /** Class shapes only; hierarchy members get the vtable machinery. */
-      meta: ClassMeta | null;
-    }
     // Runtime-provided classes (the builtin Error hierarchy) emit NOTHING
     // here — struct, RC helpers, and vtables live in the runtime. They keep
     // their ClassMeta (preorder numbering, instanceof constants, vtable
     // struct type for user subclasses); main() stamps their intervals.
     const shapes: StructShape[] = [
-      ...(emitter.mod.classes ?? []).filter((cls) => !cls.runtime).map((cls) => ({
+      ...(emitter.mod.classes ?? []).filter((cls) => !cls.runtime).map((cls): StructShape => ({
         struct: mangleClassStruct(cls.name),
         newFn: mangleClassNew(cls.name),
         retain: mangleClassRetain(cls.name),
@@ -96,7 +104,7 @@ export interface ClassMeta {
         comment: `class ${cls.name}`,
         meta: emitter.classMeta.get(cls.name) ?? null,
       })),
-      ...(emitter.mod.records ?? []).map((rec) => ({
+      ...(emitter.mod.records ?? []).map((rec): StructShape => ({
         struct: mangleRecordStruct(rec.id),
         newFn: mangleRecordNew(rec.id),
         retain: mangleRecordRetain(rec.id),
@@ -365,7 +373,7 @@ function emitRecordCloneC(
    * slot also answers null — the class never instantiates (tsc), so its
    * own vtable entry can never dispatch. */
   export function vtEntriesFor(emitter: CEmitter, meta: ClassMeta): { slot: VtSlot; impl: ClassMeta | null }[] {
-    return meta.root.slots.map((slot) => {
+    return meta.root.slots.map((slot): { slot: VtSlot; impl: ClassMeta | null } => {
       if (!(slot.declarer.pre <= meta.pre && meta.pre <= slot.declarer.post)) {
         return { slot, impl: null };
       }
@@ -471,16 +479,7 @@ function emitRecordCloneC(
    * class's functions at allocation — the collector needs no vtable. */
   export function emitHierarchyClassHelpers(emitter: CEmitter, out: string[],
     meta: ClassMeta,
-    s: {
-      struct: string;
-      newFn: string;
-      retain: string;
-      release: string;
-      trace: string;
-      gcFree: string;
-      traced: boolean;
-      fields: { name: string; type: IrType }[];
-    },): void {
+    s: StructShape,): void {
     const reld = mangleClassReleaseDirect(meta.def.name);
     const emitterRooted = meta.root.def.name === RUNTIME_EMITTER_CLASS;
     const isStreamRooted = streamRooted(meta);

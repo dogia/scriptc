@@ -1447,6 +1447,32 @@ function lowerFsSyncBufferWindow(
     }
     const syncFn = ZLIB_SYNC_FNS[bi.member];
     if (syncFn !== undefined) {
+      if (expr.arguments.length === 2 &&
+        (bi.member === "deflateSync" || bi.member === "deflateRawSync" || bi.member === "gzipSync")) {
+        const options = expr.arguments[1]!;
+        // A literal level is enough for build-time compression in the native
+        // emitters. Other options retain the explicit refusal: silently
+        // dropping strategy/windowBits/dictionaries changes the wire bytes.
+        if (ts.isObjectLiteralExpression(options) && options.properties.length === 1) {
+          const prop = options.properties[0]!;
+          if (ts.isPropertyAssignment(prop) &&
+            (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name)) && prop.name.text === "level") {
+            const value = prop.initializer;
+            const level = ts.isNumericLiteral(value) ? Number(value.text)
+              : ts.isPrefixUnaryExpression(value) && value.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(value.operand)
+                ? -Number(value.operand.text) : NaN;
+            if (Number.isInteger(level) && level >= -1 && level <= 9) {
+              return {
+                kind: "libCall", fn: "zlib.deflateLevelSync",
+                args: [zlibInputBytes(lowerer, expr.arguments[0]!, loc), numLit(bi.member === "deflateSync" ? 0 : bi.member === "deflateRawSync" ? 1 : 2, loc), numLit(level, loc)],
+                type: BYTES_U8, loc,
+              };
+            }
+          }
+        }
+        lowerer.noLowering(`${bi.member} with these options`, options,
+          "the static compression options form is { level: <integer literal from -1 through 9> }");
+      }
       if (expr.arguments.length !== 1) {
         const site = expr.arguments[1] ?? expr;
         lowerer.noLowering(

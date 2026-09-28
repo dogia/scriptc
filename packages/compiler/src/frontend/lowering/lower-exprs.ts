@@ -2455,6 +2455,10 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       return expr;
     }
     if (expr.type.kind !== "union") return expr;
+    if (ts.isIdentifier(node)) {
+      const symbol = lowerer.resolveValueSymbol(node);
+      if (symbol && lowerer.unstableSwitchBindings.has(symbol)) return expr;
+    }
     const narrowedTs = lowerer.typeOf(node);
     const narrowed = lowerer.mapTypeOf(narrowedTs);
     // `Array.isArray(u)` on a union with one readonly array/tuple arm: the
@@ -4626,7 +4630,10 @@ export function lowerOptionalNumber(
         );
       }
     }
-    const index = lowerer.lowerExpr(expr.argumentExpression);
+    // Array reads can themselves supply an index. A missing numeric value
+    // is undefined, whose property lookup misses just like NaN; keep that
+    // value instead of rejecting a checker-number index with optional IR.
+    const index = lowerOptionalNumber(lowerer, lowerer.lowerExpr(expr.argumentExpression), locOf(expr.argumentExpression), expr.argumentExpression);
     if (index.type.kind !== "f64") {
       lowerer.unsupported("SC1090", expr.argumentExpression, "indexing with non-number keys");
     }

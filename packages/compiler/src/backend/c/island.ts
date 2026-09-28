@@ -7,7 +7,7 @@ import { InternalCompilerError } from "../../errors.js";
 import { deflateRawSync } from "node:zlib";
 import type { CEmitter } from "./c-emitter.js";
 import { cDecl, cFnPtrCast, cStringLiteral, releaseCallC } from "./types.js";
-import { IrType, islandCallbackRet, NPM_COMPRESS_MIN, typeKey } from "../../ir/ir.js";
+import { type IrType, islandCallbackRet, NPM_COMPRESS_MIN, typeKey } from "../../ir/ir.js";
 import { undefinedArmTag } from "../../ir/analysis.js";
 
 /** Embedded npm modules (--dynamic): every reached module's SOURCE as a

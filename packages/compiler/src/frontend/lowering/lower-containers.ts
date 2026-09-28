@@ -565,16 +565,11 @@ function fenceProducedArrayElem(lowerer: Lowerer, node: ts.Node, producer: strin
       };
     }
     if (name === "pop") {
-      // Like shift(), pop() returns undefined for an empty array. Union
-      // element arrays remain fenced here because their existing boxed
-      // element already carries the result union and a second undefined
-      // wrapper would lose the element identity contract.
+      // Widen a union payload through the normal array-read machinery
+      // before removing it. Reinterpreting the stored union's tag as the
+      // result union would confuse arms when undefined changes their order.
       if (elem.kind === "union" && lowerer.armTag(elem.unionId, UNDEFINED_T) < 0) {
-        lowerer.unsupported(
-          "SC1090",
-          call,
-          "'.pop()' on union-element arrays without an undefined arm (read the last element and splice it after narrowing instead)",
-        );
+        return lowerUnionArrayRemoval(lowerer, access.expression, elem, false, loc);
       }
       const receiver = lowerer.lowerExpr(access.expression);
       return {
@@ -682,18 +677,9 @@ function fenceProducedArrayElem(lowerer: Lowerer, node: ts.Node, producer: strin
       return { kind: "arrIntrinsic", method: "spliceInsert", receiver, args: [...args, items], type: receiverIr, loc };
     }
     if (name === "shift") {
-      // JS shift exactly: undefined on an empty array, else the first
-      // element with the tail sliding down — the result is the interned
-      // `elem | undefined` union, the env-read convention. Union-element
-      // arrays are fenced: their shift result would collapse arms
-      // (`(string | undefined)[]`'s shift is `string | undefined` too, and
-      // the box can't say which world the undefined came from).
+      // Like pop, a union without undefined needs an explicit tag widening.
       if (elem.kind === "union" && lowerer.armTag(elem.unionId, UNDEFINED_T) < 0) {
-        lowerer.unsupported(
-          "SC1090",
-          call,
-          "'.shift()' on union-element arrays without an undefined arm (read [0] and splice(0, 1) with the narrowed value instead)",
-        );
+        return lowerUnionArrayRemoval(lowerer, access.expression, elem, true, loc);
       }
       const receiver = lowerer.lowerExpr(access.expression);
       return { kind: "arrIntrinsic", method: "shift", receiver, args: [], type: arrayValueType(lowerer, elem), loc };
@@ -740,6 +726,45 @@ function fenceProducedArrayElem(lowerer: Lowerer, node: ts.Node, producer: strin
     // reduce / reduceRight
     return lowerArrayReduceCall(lowerer, call, access, name as "reduce" | "reduceRight", elem);
   }
+
+/** Read before splice so removal cannot destroy the result's owned payload.
+ * The source is evaluated once and empty/sparse arrays yield undefined using
+ * the same slot-state checks as an indexed read. */
+function lowerUnionArrayRemoval(
+  lowerer: Lowerer,
+  source: ts.Expression,
+  elem: IrType,
+  first: boolean,
+  loc: SrcLoc,
+): IrExpr {
+  const receiver = lowerer.lowerExpr(source);
+  const arr = lowerer.declareHiddenLocal("%removeArray", receiver.type);
+  const arrRef = varRef(arr.id, arr.type, loc);
+  const index = lowerer.declareHiddenLocal("%removeIndex", F64);
+  const indexRef = varRef(index.id, F64, loc);
+  const value = arrayValueRead(lowerer, arrRef, indexRef, elem, loc);
+  const result = lowerer.declareHiddenLocal("%removedValue", value.type);
+  return {
+    kind: "seqExpr",
+    stmts: [
+      { kind: "varDecl", localId: arr.id, init: receiver, loc },
+      {
+        kind: "varDecl", localId: index.id,
+        init: first ? numLit(0, loc) : {
+          kind: "bin", op: "-",
+          left: { kind: "arrIntrinsic", method: "length", receiver: arrRef, args: [], type: F64, loc },
+          right: numLit(1, loc), type: F64, loc,
+        }, loc,
+      },
+      { kind: "varDecl", localId: result.id, init: value, loc },
+      {
+        kind: "exprStmt",
+        expr: { kind: "arrIntrinsic", method: "splice", receiver: arrRef, args: [indexRef, numLit(1, loc)], type: arr.type, loc }, loc,
+      },
+    ],
+    result: varRef(result.id, result.type, loc), type: result.type, loc,
+  };
+}
 
 function literalFlatDepth(value: IrExpr): number | null {
   if (value.kind === "numLit") return value.value;

@@ -409,8 +409,9 @@ try {
  * probing their inferred IR layout too early can reject the right arm and
  * select a smaller unrelated record that drops fields. Exactly ONE fitting arm
  * answers it; zero or several answer null and the caller keeps its
- * fences. Plain property-assignment/shorthand literals only — spreads,
- * accessors, methods, and unfoldable computed keys keep their own paths. */
+ * fences. A spread uses the checker's resulting properties so overridden
+ * discriminants and narrowed recursive source arms keep their identity.
+ * Accessors, methods, and unfoldable computed keys keep their own paths. */
 function literalUnionArmOf(
 lowerer: Lowerer,
 expr: ts.ObjectLiteralExpression,
@@ -418,14 +419,26 @@ tsType: ts.Type,
 recordArms: (IrType & { kind: "record" })[],
 ): (IrType & { kind: "record" }) | null {
 if (!tsType.isUnionType()) return null;
-const props: { name: string; node: ts.Expression }[] = [];
+const props: { name: string; type: ts.Type }[] = [];
+let hasSpread = false;
 for (const p of expr.properties) {
   if (ts.isPropertyAssignment(p) && !ts.isComputedPropertyName(p.name)) {
-    props.push({ name: propNameText(lowerer, p.name), node: p.initializer });
+    props.push({ name: propNameText(lowerer, p.name), type: lowerer.typeOf(p.initializer) });
   } else if (ts.isShorthandPropertyAssignment(p) && ts.isIdentifier(p.name)) {
-    props.push({ name: p.name.text, node: p.name });
+    props.push({ name: p.name.text, type: lowerer.typeOf(p.name) });
+  } else if (ts.isSpreadAssignment(p)) {
+    hasSpread = true;
   } else {
     return null;
+  }
+}
+if (hasSpread) {
+  const own = lowerer.typeOf(expr);
+  // Conditional/union spreads need runtime selection, not one guessed arm.
+  if (own.isUnionType()) return null;
+  props.length = 0;
+  for (const property of lowerer.checker.getPropertiesOfType(own)) {
+    props.push({ name: property.name, type: lowerer.checker.getTypeOfSymbol(property) });
   }
 }
 /** Cheap literal discriminants avoid checker traffic for unrelated arms.
@@ -464,7 +477,7 @@ for (const member of ts.constituentTypes(tsType)) {
   const fieldsFit = props.every((p) => {
     const sym = lowerer.checker.getPropertyOfType(member, p.name);
     if (!sym) return false;
-    return fits(lowerer.typeOf(p.node), lowerer.checker.getTypeOfSymbol(sym));
+    return fits(p.type, lowerer.checker.getTypeOfSymbol(sym));
   });
   if (fieldsFit) candidates.add(mMapped.shapeId);
 }
@@ -730,7 +743,11 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
         // exactly ONE member fits, build AS that arm — its field types
         // drive every property's coercion, exactly the single-record-arm
         // rule above. Ambiguous literals keep the SC2003 fence.
-        if (ownShapeId === null || !recordArms.some((a) => a.shapeId === ownShapeId)) {
+        // Recursive arms can have identical stored field layouts while
+        // retaining distinct nominal knots. An inferred spread shape can
+        // match the wrong knot, so consult discriminants even if that shape
+        // already appears in the union.
+        if (ownShapeId === null || !recordArms.some((a) => a.shapeId === ownShapeId) || expr.properties.some(ts.isSpreadAssignment)) {
           const arm = literalUnionArmOf(lowerer, expr, tsType, recordArms);
           if (arm) mapped = arm;
         }

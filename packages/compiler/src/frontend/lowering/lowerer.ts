@@ -1275,6 +1275,10 @@ export class Lowerer {
    * read can be absent at runtime. Bare reads preserve that union until a
    * surrounding JavaScript guard/default consumes it. */
   readonly runtimeOptionalLocals = new Set<IrLocal>();
+  /** An effectful switch test can change the original binding after the
+   * discriminant was captured. A case match narrows the captured value,
+   * not that mutable binding; preserve its tagged representation on reads. */
+  readonly unstableSwitchBindings = new Set<ts.Symbol>();
   /** All storage slots widened for runtime absence, including slots whose
    * current control-flow branch has temporarily narrowed the value. */
   readonly runtimeOptionalStorageLocals = new Set<IrLocal>();

@@ -3413,11 +3413,14 @@ export type IrLibFn =
   /** node:zlib (scr_zlib.c — native-toolchain.ts compiles/links it ONLY when these
    * appear on the IR, the regex/libcurl gating precedent): one-shot zlib,
    * raw-DEFLATE, gzip, and auto-detect codecs over u8 bytes with Node's
-   * default options. Compression never throws (OOM aborts); decompression
+   * default options, or a validated literal compression level from -1 to 9.
+   * Compression never throws (OOM aborts); decompression
    * of corrupt input THROWS Node's error catchably. */
   | "zlib.deflateSync"
   | "zlib.inflateSync"
   | "zlib.deflateRawSync"
+  /** bytes, mode (0 zlib / 1 raw / 2 gzip), validated compression level. */
+  | "zlib.deflateLevelSync"
   | "zlib.inflateRawSync"
   | "zlib.gzipSync"
   | "zlib.gunzipSync"
@@ -5329,9 +5332,10 @@ export type IrExpr =
    * forms whose statement lowering needs temps and writes (destructuring
    * assignments in value position, keyed dyn writes yielding the RHS).
    * `type` IS result's type. Restricted on purpose: stmts must be
-   * straight-line (varDecl/assign/exprStmt/field-and-record writes — no
-   * control flow, no jumps; the validator enforces the subset), and any
-   * varDecl-introduced local is a function local like every hidden temp. */
+   * local statements (including state-selection blocks/ifs, but no jumps;
+   * the validator enforces the subset). Hidden locals retain function-wide
+   * ids, but their owned values live only for this evaluation: retain the
+   * result before releasing them, on the same path that initialized them. */
   | { kind: "seqExpr"; stmts: IrStmt[]; result: IrExpr; type: IrType; loc: SrcLoc }
   /** RequireObjectCoercible with V8's destructuring TypeError: throws
    * "Cannot destructure 'SPELLING' as it is undefined." (or "…null.") on

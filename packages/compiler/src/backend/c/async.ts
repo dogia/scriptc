@@ -5,7 +5,7 @@ import { InternalCompilerError } from "../../errors.js";
 import type { CEmitter } from "./c-emitter.js";
 import { mangleArgPack, mangleAsyncSpawn, mangleChildDataThunk, mangleChildExitThunk, mangleCloseBindThunk, mangleCloseOverrideWrap, mangleConnectResThunk, mangleConnectSockThunk, mangleDgramMsgThunk, mangleDnsLookupThunk, mangleField, mangleFsRenameThunk, mangleFunction, mangleGenDrop, mangleGenResThunk, mangleGenSpawn, mangleGlobal, mangleLocal, mangleRaceThunk, mangleRawParam, mangleNetLookupAnswerThunk, mangleEmitterInvokeThunk, mangleStreamCbThunk, mangleStreamDoneFn, mangleRecordNew, mangleRecordRelease, mangleRecordStruct, mangleResolveThunk, mangleSniAnswerThunk, mangleTrampoline } from "../mangle.js";
 import { cDecl, cType, releaseCallC, retainCallC, vAdapters } from "./types.js";
-import { IrFunction, IrType, isRefCounted, isUnitType, typeEquals, typeKey } from "../../ir/ir.js";
+import { type IrFunction, type IrType, isRefCounted, isUnitType, typeEquals, typeKey } from "../../ir/ir.js";
 
 interface ArgPackAndTrampolinePrologue {
   definitions: string[];

@@ -64,7 +64,7 @@ import { cCommentText, cFnPtrCast, cType, releaseCallC, cStringLiteral, cDecl, c
 import { computeTraced } from "../cycle-analysis.js";
 import { computeMayThrow } from "./may-throw.js";
 import { unionTruthyHelper, unionEqHelper, unionToStrHelper, unionJoinHelper, jsonWriteHelper, jsonIndentHelper, dynMatchHelper, dynCheckHelper, dynFuncBoxHelper, dynToStrHelper, caughtToDynHelper, toDynHelper, recordKeyGetHelper, recordKeySetHelper } from "./walkers.js";
-import { VtSlot, ClassMeta, emitStructDefs, vtEntriesFor, vtSlotParams, emitVtableDecls, emitVtableInstances, emitVtAdapterDefs, emitHierarchyClassHelpers, emitClassObjs, emitCtorThunkDefs, errorVtStampLines, emitterVtStampLines, streamVtStampLines, traceAdapterC, traceArgC, boxNewC, arrNewC } from "./shapes.js";
+import { type StructShape, type VtSlot, ClassMeta, emitStructDefs, vtEntriesFor, vtSlotParams, emitVtableDecls, emitVtableInstances, emitVtAdapterDefs, emitHierarchyClassHelpers, emitClassObjs, emitCtorThunkDefs, errorVtStampLines, emitterVtStampLines, streamVtStampLines, traceAdapterC, traceArgC, boxNewC, arrNewC } from "./shapes.js";
 import { emitAsyncScaffolding, childDataThunkFor, childExitThunkFor, childExitSignalThunkFor, execFileThunkFor, ipcMessageThunkFor, ipcSendThunkFor, closeBindThunkFor, connectResThunkFor, connectSockThunkFor, closeOverrideWrapFor, cryptoBytesThunkFor, dgramMsgThunkFor, dnsLookupThunkFor, fsRenameThunkFor, genResultThunkFor, netLookupAnswerThunkFor, emitterInvokeThunkFor, streamCbThunkFor, streamDataThunkFor, raceAdapterFor, resolveThunkFor, sniAnswerThunkFor, zlibBytesThunkFor } from "./async.js";
 import { emitNpmEmbedding, islandAdapter, islandTypedAdapter } from "./island.js";
 import { emitFunction, emitBlock, emitStmts, emitStmt, emitTryCatch, emitSwitch, mergeBrace, emitBranchInto, emitCondition } from "./stmts.js";
@@ -383,12 +383,12 @@ export class CEmitter {
         usedContinue: boolean;
         endLabel: string | null;
         usedEnd: boolean;
-        labels?: string[];
+        labels?: string[] | undefined;
         scopeDepth: number;
         frameDepth: number;
         finallyDepth: number;
       }
-    | { kind: "switch"; endLabel: string; usedEnd: boolean; labels?: string[]; scopeDepth: number; frameDepth: number; finallyDepth: number }
+    | { kind: "switch"; endLabel: string; usedEnd: boolean; labels?: string[] | undefined; scopeDepth: number; frameDepth: number; finallyDepth: number }
     | { kind: "block"; endLabel: string; usedEnd: boolean; labels: string[]; scopeDepth: number; frameDepth: number; finallyDepth: number }
   )[] = [];
   labelCounter = 0;
@@ -472,16 +472,7 @@ export class CEmitter {
     // redeclares it — never-overridden methods stay direct calls
     // everywhere (whole-program devirtualization).
     for (const cls of mod.classes ?? []) {
-      const meta: ClassMeta = {
-        def: cls,
-        base: null,
-        children: [],
-        root: undefined as unknown as ClassMeta,
-        pre: 0,
-        post: 0,
-        hierarchy: false,
-        slots: [],
-      };
+      const meta = new ClassMeta(cls);
       this.classMeta.set(cls.name, meta);
     }
     for (const meta of this.classMeta.values()) {
@@ -512,7 +503,7 @@ export class CEmitter {
     const collectSlots = (m: ClassMeta, root: ClassMeta, seen: Map<string, number>): void => {
       for (const method of m.def.methods ?? []) {
         let inherited = false;
-        for (let a = m.base; a; a = a.base) inherited ||= declares(a, method);
+        for (let a = m.base; a; a = a.base) inherited = inherited || declares(a, method);
         if (!inherited && declaredBelow(m, method)) {
           let fn = this.fnByName.get(`%${m.def.name}.${method}`);
           if (!fn && m.def.abstractMethods?.includes(method)) {
@@ -560,7 +551,7 @@ export class CEmitter {
     if (sourceText !== undefined) {
       this.lineStarts = [0];
       for (let i = 0; i < sourceText.length; i++) {
-        if (sourceText[i] === "\n") this.lineStarts.push(i + 1);
+        if (sourceText.charAt(i) === "\n") this.lineStarts.push(i + 1);
       }
     }
   }
@@ -1279,16 +1270,7 @@ export class CEmitter {
 
   emitHierarchyClassHelpers(out: string[],
     meta: ClassMeta,
-    s: {
-      struct: string;
-      newFn: string;
-      retain: string;
-      release: string;
-      trace: string;
-      gcFree: string;
-      traced: boolean;
-      fields: { name: string; type: IrType }[];
-    },): void {
+    s: StructShape,): void {
     return emitHierarchyClassHelpers(this, out, meta, s);
   }
 
@@ -1443,8 +1425,10 @@ export class CEmitter {
         `}`,
       );
     }
-    for (const elem of ["u8", "u32", "i32", "f32", "f64"] as const) {
-      for (const mode of ["f64", "u64"] as const) {
+    const elements: ("u8" | "u32" | "i32" | "f32" | "f64")[] = ["u8", "u32", "i32", "f32", "f64"];
+    const modes: ("f64" | "u64")[] = ["f64", "u64"];
+    for (const elem of elements) {
+      for (const mode of modes) {
         const suffix = mode === "u64" ? "_u64" : "";
         const indexType = mode === "u64" ? "uint64_t" : "double";
         const checked = mode === "u64" ? "sc_bytes_index_u64_checked" : "sc_bytes_index_checked";
@@ -1969,12 +1953,12 @@ export class CEmitter {
    * (a C break only exits the innermost loop). */
   loopTarget(continueLabel: string | null, labels: string[] | undefined): (typeof this.jumpTargets)[number] & { kind: "loop" } {
     return {
+      labels,
       kind: "loop",
       continueLabel: continueLabel === null && labels !== undefined ? `sc_cont_${this.labelCounter++}` : continueLabel,
       usedContinue: false,
       endLabel: labels !== undefined ? `sc_end_${this.labelCounter++}` : null,
       usedEnd: false,
-      ...(labels !== undefined && { labels }),
       scopeDepth: this.scopes.length,
       frameDepth: this.frames.length,
       finallyDepth: this.finallyStack.length,

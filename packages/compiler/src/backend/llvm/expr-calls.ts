@@ -480,7 +480,7 @@ export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCa
         const t = B.tmp();
         B.line(`${t} = call ptr ${thunk}(${argList})`);
         const out = host.own({ name: t, type: e.type });
-        if (newValueMayThrow(cls, host.classMeta, host.mayThrow)) host.emitPendingCheck();
+        if (newValueMayThrow(cls, host.classMeta.get(cls), host.mayThrow)) host.emitPendingCheck();
         return out;
       }
       case "instanceOfValue": {
