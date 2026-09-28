@@ -2726,8 +2726,13 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     const retT = checker.getReturnTypeOfSignature(sig);
     // `() => never` (a throw-only lambda's inferred type) is assignable to
     // `() => void` and its calls never produce a value — map the return
-    // like declaredReturnType does for declarations.
-    const ret = retT.flags & ts.TypeFlags.Never ? VOID : mapType(retT, ctx);
+    // like declaredReturnType does for declarations. JS null/undefined
+    // returns can read mutable fields, so callable values use the same
+    // checked-native return ABI as their implementations.
+    const sigDecl = checker.signatureDeclaration(sig);
+    const jsUnitReturn = sigDecl !== undefined && isJsSourceFile(sigDecl.getSourceFile()) &&
+      (retT.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0;
+    const ret = jsUnitReturn ? DYN : retT.flags & ts.TypeFlags.Never ? VOID : mapType(retT, ctx);
     if (!ret) return null;
     return typedRest
       ? { kind: "func", params, ret, rest: true, restAbi: "typed" }

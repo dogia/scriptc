@@ -76,3 +76,43 @@ const dormant = new DormantReturns();
 console.log("dormant", dormant.read(), new ShortDormantReturn().read());
 const repaired = new RepairedReturns();
 console.log("repaired", repaired.dispatch("item"), repaired.selected());
+
+// A null initializer does not restrict an inferred JS field to null forever.
+class MutableNull {
+  value = null;
+  set(value) { this.value = value; }
+  read() { return this.value; }
+  get current() { return this.value; }
+  set current(value) { this.value = value; }
+}
+class ResetNull extends MutableNull {
+  value;
+  constructor(value) {
+    super();
+    console.log('reset', this.value === undefined);
+    this.value = value;
+  }
+}
+class ConstructorNull {
+  constructor() { this.value = null; }
+  set(value) { this.value = value; }
+  read() { return this.value; }
+}
+const mutableNull = new MutableNull();
+console.log('null initial', mutableNull.read(), mutableNull.current);
+mutableNull.set('updated');
+console.log('null written', mutableNull.read(), mutableNull.current);
+mutableNull.current = 42;
+console.log('accessor', mutableNull.read());
+console.log('numeric field', Number(mutableNull.value));
+const resetNull = new ResetNull('derived');
+console.log('inherited', resetNull.read());
+const readMutableNull = () => mutableNull.value;
+function readNullField() { return mutableNull.value; }
+const savedNullReader = readNullField;
+console.log('readers', readMutableNull(), savedNullReader());
+const constructorNull = new ConstructorNull();
+constructorNull.set('constructor');
+console.log('constructor field', constructorNull.read());
+mutableNull.set(null);
+console.log('null reset', readMutableNull(), savedNullReader());

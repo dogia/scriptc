@@ -2207,6 +2207,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               // TS-annotated `unknown` fields keep their fence (KEEP NARROW
               // applies where an annotation could say better).
               let type = t ? (lowerer.mapTypeOf(t) ?? dynFallbackType(lowerer, assign, t)) : null;
+              if (t && (t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0 && isJsSourceFile(decl.getSourceFile())) type = DYN;
               if (type) type = jsOpenObjectType(assign, type, lowerer.shapes, lowerer.unions);
               if (type?.kind === "dyn") {
                 type = inferredEmptyCollectionFieldType(lowerer, decl, name, rhs) ?? type;

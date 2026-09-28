@@ -935,7 +935,10 @@ function jsFallbackFunctionType(lowerer: Lowerer, node: ts.Node, t: ts.Type): Ir
     return mapped;
   });
   const retT = lowerer.checker.getReturnTypeOfSignature(sig);
-  const ret: IrType = retT.flags & ts.TypeFlags.Void ? VOID : lowerer.mapTypeOf(retT) ?? DYN;
+  const sigDecl = lowerer.checker.signatureDeclaration(sig);
+  const jsUnitReturn = sigDecl !== undefined && isJsSourceFile(sigDecl.getSourceFile()) &&
+    (retT.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0;
+  const ret: IrType = jsUnitReturn ? DYN : retT.flags & ts.TypeFlags.Void ? VOID : lowerer.mapTypeOf(retT) ?? DYN;
   return { kind: "func", params, ret };
 }
 
@@ -4978,8 +4981,9 @@ export class Lowerer {
   irTypeOf(node: ts.Node): IrType {
     const t = this.typeOf(node);
     // JS inference can leave mutable fields, accessor parameters and
-    // locals at undefined. They still carry values; void has no storage.
-    if (isJsSourceFile(node.getSourceFile()) && (t.flags & ts.TypeFlags.Undefined) !== 0) return DYN;
+    // locals at null/undefined despite later writes. Keep mutable native
+    // storage instead of a slot restricted to the initializer's unit value.
+    if (isJsSourceFile(node.getSourceFile()) && (t.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0) return DYN;
     // A never-tainted JS type (neverTaintedJsType) maps — never rides as
     // f64 — but must not: pre-empt the mapping so the JS fallback below
     // answers instead.

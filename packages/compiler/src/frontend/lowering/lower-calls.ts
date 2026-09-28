@@ -1006,9 +1006,9 @@ function completeFuncValueArgs(
     const sig = lowerer.checker.getSignatureFromDeclaration(decl);
     if (!sig) lowerer.unsupported("SC1090", decl, "this function form");
     const retTsType = lowerer.checker.getReturnTypeOfSignature(sig);
-    // An inferred undefined return in JS can read a mutable checked-value
-    // field. Keep the returned value instead of erasing it to void.
-    if (isJsSourceFile(decl.getSourceFile()) && (retTsType.flags & ts.TypeFlags.Undefined) !== 0) return DYN;
+    // An inferred null/undefined return in JS can read a mutable checked-value
+    // field. Keep the actual value instead of restricting it to the initializer.
+    if (isJsSourceFile(decl.getSourceFile()) && (retTsType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0) return DYN;
     // A body that always throws infers `never` — as a RETURN type that is
     // void with a stronger guarantee (`() => never` is assignable to
     // `() => void`), and throw-only callbacks are ordinary code
@@ -5074,6 +5074,7 @@ function lowerNumberConstructorValue(lowerer: Lowerer, argNode: ts.Expression, l
     };
   }
   if (arg.type.kind === "string") return { kind: "libCall", fn: "num.fromString", args: [arg], type: F64, loc };
+  if (arg.type.kind === "dyn") return { kind: "libCall", fn: "dyn.toNumberCoerce", args: [arg], type: F64, loc };
   const optionalNumber = lowerOptionalStringNumber(lowerer, arg, loc);
   if (optionalNumber) return optionalNumber;
   const scalarUnionNumber = lowerScalarUnionNumber(lowerer, arg, argNode, loc);
