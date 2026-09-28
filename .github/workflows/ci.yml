@@ -61,12 +61,18 @@ jobs:
           --exclude=tests/harness/coverage.test.ts
           --exclude=tests/harness/vercel-e2e.test.ts
           --exclude=tests/harness/self-hosting-serialization.test.ts
+          --exclude=tests/harness/self-hosting.test.ts
           --exclude=packages/compiler/src/backend/native-toolchain.test.ts
       - name: Tests (self-hosting serialization)
         if: matrix.shard == 5
         env:
           SCRIPTC_TEST_WORKERS: "1"
         run: pnpm test tests/harness/self-hosting-serialization.test.ts
+      - name: Tests (self-hosting)
+        if: matrix.shard == 1
+        env:
+          SCRIPTC_TEST_WORKERS: "1"
+        run: pnpm test tests/harness/self-hosting.test.ts
       # Cache invalidation tests mutate compiler inputs process-wide and must
       # stay serial within a worker. They do not consume SCRIPTC_SAN, so divide
       # them across the ten plain jobs instead of running the 6+ minute file
