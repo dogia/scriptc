@@ -165,6 +165,88 @@ bool scr_process_stderr_write_bytes(const ScrBytes *b, const ScrStr *encoding) {
   return true;
 }
 
+/* Buffer.from over checked-native input. Strings use the existing codec;
+ * bytes, arrays and data-only array-like/Buffer-JSON objects always COPY.
+ * A dyn is not an arbitrary JS object: opaque references and custom input
+ * valueOf hooks keep a loud refusal rather than silently skipping hooks. */
+static ScrBytes *scr_buffer_from_refusal(const char *detail) {
+  char msg[192];
+  int n = snprintf(msg, sizeof msg, "Buffer.from %s is not supported yet", detail);
+  scr_throw_error_msg(SCR_ERR_ERROR, msg, (size_t)n);
+  return NULL;
+}
+
+static ScrBytes *scr_buffer_from_array_like(const ScrDyn *value, double length) {
+  if (!(length > 0)) return scr_bytes_new(SCR_BYTES_U8, 0);
+  if (!isfinite(length) || length >= 9007199254740991.0 || length >= (double)SIZE_MAX) {
+    static const char msg[] = "Array buffer allocation failed";
+    scr_throw_error_msg(SCR_ERR_RANGE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  ScrBytes *out = scr_bytes_new(SCR_BYTES_U8, floor(length));
+  if (!out) return NULL;
+  for (size_t i = 0; i < out->len; i++) {
+    ScrDyn *item;
+    if (value->kind == SCR_DYN_ARR) {
+      item = i < value->v.arr.len ? value->v.arr.items[i] : NULL;
+    } else {
+      char key[32];
+      int n = snprintf(key, sizeof key, "%zu", i);
+      item = scr_dyn_obj_get(value, key, (size_t)n);
+    }
+    /* Coercion may run user code that removes or replaces this element. */
+    item = scr_dyn_retain(item ? item : scr_dyn_undefined());
+    double number;
+    bool ok = scr_dyn_number_coerce_js(item, &number);
+    scr_dyn_release(item);
+    if (!ok) {
+      scr_bytes_release(out);
+      return NULL;
+    }
+    out->data[i] = (uint8_t)scr_to_uint32(number);
+  }
+  return out;
+}
+
+ScrBytes *scr_buffer_from_dyn(const ScrDyn *value, const ScrStr *encoding) {
+  if (value->kind == SCR_DYN_STR) return scr_bytes_from_str(value->v.str, encoding);
+  if (value->kind == SCR_DYN_BYTES) return scr_bytes_copy(value->v.bytes);
+  if (value->kind == SCR_DYN_ARR) {
+    return scr_buffer_from_array_like(value, (double)value->v.arr.len);
+  }
+  if (value->kind == SCR_DYN_OBJ) {
+    const ScrDyn *hook = scr_dyn_obj_get(value, "valueOf", 7);
+    if (hook && scr_dyn_truthy(hook)) {
+      return scr_buffer_from_refusal("with a custom valueOf");
+    }
+    const ScrDyn *length = scr_dyn_obj_get(value, "length", 6);
+    if (length && length->kind != SCR_DYN_UNDEF) {
+      return scr_buffer_from_array_like(value, length->kind == SCR_DYN_NUM ? length->v.num : 0);
+    }
+    const ScrDyn *type = scr_dyn_obj_get(value, "type", 4);
+    const ScrDyn *data = scr_dyn_obj_get(value, "data", 4);
+    if (type && type->kind == SCR_DYN_STR && type->v.str->len == 6 &&
+        memcmp(type->v.str->data, "Buffer", 6) == 0 && data && data->kind == SCR_DYN_ARR) {
+      /* Element coercion may mutate the parent and replace `data`. */
+      ScrDyn *held = scr_dyn_retain((ScrDyn *)data);
+      ScrBytes *out = scr_buffer_from_array_like(held, (double)held->v.arr.len);
+      scr_dyn_release(held);
+      return out;
+    }
+  }
+  if (value->kind == SCR_DYN_TYPED_REF || value->kind == SCR_DYN_HANDLE || value->kind == SCR_DYN_JSVAL) {
+    return scr_buffer_from_refusal("with an opaque reference");
+  }
+  char detail[64];
+  const char *received = scr_dyn_specific_type(value, detail, sizeof detail);
+  char msg[256];
+  int n = snprintf(msg, sizeof msg,
+      "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received %s",
+      received);
+  scr_throw_error_msg_code(SCR_ERR_TYPE, msg, (size_t)n, "ERR_INVALID_ARG_TYPE");
+  return NULL;
+}
+
 /* ── the checked-dynamic Buffer compare/equals validators ──────────────
  * Node's argument ladders for buf.equals / buf.compare / Buffer.compare
  * over dyn-boxed arguments (the invalid-input probes: string needles,

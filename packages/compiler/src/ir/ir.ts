@@ -3358,6 +3358,12 @@ export type IrLibFn =
    * bytes<u8>[] arg (the list) and returns a fresh copy. `Buffer.from(u8)`
    * and `Buffer.alloc(n)` need no libFn — they lower to bytesNew. */
   | "buffer.fromStr"
+  /** Buffer.from on checked-native strings, bytes, arrays and data-only
+   * array-like/Buffer-JSON objects. The encoding is a normalized literal;
+   * non-string inputs ignore it. Copies the input and may throw during
+   * element coercion or argument validation. Custom object valueOf and
+   * opaque reference inputs retain explicit runtime refusals. */
+  | "buffer.fromDyn"
   | "buffer.concat"
   /** Buffer.byteLength(string, enc) — enc a NORMALIZED literal like
    * fromStr's — and Buffer.isEncoding(name) over a runtime string
@@ -7811,6 +7817,7 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "crypto.pbkdf2Cb",
   "buffer.concat",
   "buffer.concatLen",
+  "buffer.fromDyn",
   // The checked-dynamic compare/equals validators: Node's argument
   // ladders throw ERR_INVALID_ARG_TYPE / ERR_OUT_OF_RANGE catchably.
   "buffer.compareChk",

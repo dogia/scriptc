@@ -5431,6 +5431,7 @@ bool scr_bytes_validate_off(const char *name, double value, double max);
  * "of type number", out-of-range numbers the validateOffset RangeError;
  * an undefined offset takes its Node default. All arguments BORROWED. */
 double scr_buffer_compare_chk(const ScrDyn *a, const ScrDyn *b);
+ScrBytes *scr_buffer_from_dyn(const ScrDyn *value, const ScrStr *encoding); /* +1 or NULL+pending; borrowed args */
 bool scr_bytes_equals_chk(const ScrBytes *recv, const ScrDyn *other);
 double scr_bytes_compare_chk(const ScrBytes *src, const ScrDyn *target,
                              const ScrDyn *ts, const ScrDyn *te,

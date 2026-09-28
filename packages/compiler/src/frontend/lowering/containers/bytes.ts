@@ -999,7 +999,7 @@ export function lowerBufferStaticCall(lowerer: Lowerer, call: ts.CallExpression,
         return { kind: "bytesIntrinsic", method: "dataViewNew", receiver, args: idxArgs, type: BYTES_U8, loc };
       }
     }
-    if (args.length >= 1 && args.length <= 2 && !ts.isSpreadElement(args[0]!)) {
+    if (args.length >= 1 && args.length <= 2 && !args.some(ts.isSpreadElement)) {
       const argNode = args[0]!;
       if (ts.isArrayLiteralExpression(argNode) && !argNode.elements.some(ts.isSpreadElement)) {
         // A number[] literal (contextually typed by the lib's readonly
@@ -1011,18 +1011,26 @@ export function lowerBufferStaticCall(lowerer: Lowerer, call: ts.CallExpression,
         }
       } else {
         const srcIr = lowerer.mapTypeOf(lowerer.typeOf(argNode));
+        const value = lowerer.lowerExpr(argNode);
+        // JS callback storage can be native DYN even when the checker
+        // reports any (or a narrowed Buffer). Dispatch on its actual ABI.
+        if (value.type.kind === "dyn") {
+          const encName = args[1] ? bufEncoding(lowerer, "Buffer.from", args[1]) : "utf8";
+          const enc: IrExpr = { kind: "strLit", value: encName, type: STRING, loc };
+          return { kind: "libCall", fn: "buffer.fromDyn", args: [value, enc], type: BYTES_U8, loc };
+        }
         if (srcIr?.kind === "string") {
           const encNode = args[1];
           const encName = encNode ? bufEncoding(lowerer, "Buffer.from", encNode) : "utf8";
-          const s = lowerer.lowerExprExpecting(argNode, STRING);
+          const s = lowerer.coerceInto(argNode, value, STRING);
           const enc: IrExpr = { kind: "strLit", value: encName, type: STRING, loc };
           return { kind: "libCall", fn: "buffer.fromStr", args: [s, enc], type: BYTES_U8, loc };
         }
         if (args.length === 1 && srcIr?.kind === "bytes" && srcIr.elem === "u8") {
-          return { kind: "bytesNew", source: lowerer.lowerExpr(argNode), type: BYTES_U8, loc };
+          return { kind: "bytesNew", source: value, type: BYTES_U8, loc };
         }
         if (args.length === 1 && srcIr?.kind === "array" && srcIr.elem.kind === "f64") {
-          return { kind: "bytesNew", source: lowerer.lowerExpr(argNode), type: BYTES_U8, loc };
+          return { kind: "bytesNew", source: value, type: BYTES_U8, loc };
         }
       }
     }

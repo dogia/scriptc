@@ -5643,6 +5643,8 @@ function emitCryptoBytesLibCall(state: LibCallState): Temp {
           // leniently (never throws), concat copies its borrowed list.
           case "buffer.fromStr":
             return finish(`scr_bytes_from_str(${arg(0)}, ${arg(1)})`);
+          case "buffer.fromDyn":
+            return finish(`scr_buffer_from_dyn(${arg(0)}, ${arg(1)})`);
           case "buffer.concat":
             return finish(`scr_bytes_concat(${arg(0)})`);
           case "buffer.concatLen":
