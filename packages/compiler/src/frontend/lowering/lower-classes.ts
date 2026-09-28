@@ -7,7 +7,7 @@ import { InternalCompilerError } from "../../errors.js";
 import * as ts from "../ts7/adapter.js";
 import type { Lowerer } from "./lowerer.js";
 import { BOOL, DATE_T, DYN, F64, bytesOf, IrClassDef, IrExpr, IrFunction, IrLocal, IrParam, IrStmt, IrType, JSVAL, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, STRING, SrcLoc, UNDEFINED_T, URL_T, VOID, arrayOf, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, typeEquals } from "../../ir/ir.js";
-import { MAX_GENERIC_INSTANCES, appendImplicitUndefinedReturn, generatorMeta, genericCallInstance, implicitAnyParamSymbolsOf, implicitCallInstance, implicitMonoFile, omittedArgFor, type GenericFnInfo, type ParamShape } from "./lower-calls.js";
+import { MAX_GENERIC_INSTANCES, appendImplicitUndefinedReturn, bodyReadsArguments, generatorMeta, genericCallInstance, implicitAnyParamSymbolsOf, implicitCallInstance, implicitMonoFile, omittedArgFor, type GenericFnInfo, type ParamShape } from "./lower-calls.js";
 import { isGenericCallableMemberType, typeKey } from "../type-mapper.js";
 import { cjsClassExprWholeExportOf, isCjsJsFile, isJsSourceFile, isModuleExportsAccess, isNodeTypesPath, locOf } from "../program.js";
 import { PoisonError, dynFallbackType, dynUndefinedExpr, newFnCtx, own } from "./lowerer.js";
@@ -1869,6 +1869,19 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               member.name,
               `overriding the builtin Error method '${mName}'`,
             );
+          }
+          // JS overrides may ignore trailing arguments. Retain the base's
+          // checked-value ABI slots as unused parameters, and let shorter
+          // calls fill them with undefined. Typed tails and rest/arguments
+          // readers keep the exact-signature fence.
+          if (
+            overridden && isJsSourceFile(member.getSourceFile()) &&
+            shapes.length < overridden.sig.params.length &&
+            !bodyReadsArguments(member) &&
+            shapes.every((p, i) => (p.mode === "required" || p.mode === "omittable") && typeEquals(p.type, overridden.sig.params[i]!.type)) &&
+            overridden.sig.params.slice(shapes.length).every((p) => p.type.kind === "dyn" && (p.mode === "required" || p.mode === "omittable"))
+          ) {
+            shapes.push(...overridden.sig.params.slice(shapes.length).map((p): ParamShape => ({ type: p.type, mode: "omittable" })));
           }
           if (
             overridden &&
@@ -4282,6 +4295,12 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
       // (JS allows this in method defaults; it is param 0 here).
       const declared = lowerer.declareParams(fnLike.parameters, sig.params);
       params.push(...declared.params);
+      // A shorter JS override still implements every inherited ABI slot.
+      // These tail parameters have no source binding or default prologue.
+      for (const shape of sig.params.slice(declared.params.length)) {
+        const ignored = lowerer.declareHiddenLocal("%ignored", shape.type);
+        params.push({ localId: ignored.id, name: "%ignored", type: shape.type });
+      }
       const body = [...declared.prologue, ...lowerer.lowerStmts(fnLike.body.statements)];
       appendImplicitUndefinedReturn(lowerer, body, bodyReturn, locOf(fnLike));
       const fn: IrFunction = {
