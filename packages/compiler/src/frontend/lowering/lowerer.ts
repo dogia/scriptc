@@ -959,7 +959,9 @@ function jsArgumentsFunctionType(lowerer: Lowerer, t: ts.Type): IrType | null {
   ) return null;
   const shapes = paramShapes(lowerer, decl.parameters);
   const retType = lowerer.checker.getReturnTypeOfSignature(sigs[0]!);
-  const ret = retType.flags & ts.TypeFlags.Void ? VOID : lowerer.mapTypeOf(retType) ?? DYN;
+  const ret = retType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)
+    ? DYN
+    : retType.flags & ts.TypeFlags.Void ? VOID : lowerer.mapTypeOf(retType) ?? DYN;
   return funcTypeFromParamShapes([...shapes, { type: DYN, mode: "arguments" }], ret);
 }
 

@@ -29,3 +29,12 @@ function withDefault(value = 41) {
 withDefault();
 withDefault(undefined);
 withDefault(5);
+
+function readMutableUnit(first) {
+  return arguments.length === 1 ? first.value : undefined;
+}
+const readThroughValue = readMutableUnit;
+const mutableUnit = { value: null };
+console.log('unit through value', readThroughValue(mutableUnit));
+mutableUnit.value = 'changed';
+console.log('updated through value', readThroughValue(mutableUnit));
