@@ -62,6 +62,9 @@ jobs:
           --exclude=tests/harness/vercel-e2e.test.ts
           --exclude=tests/harness/self-hosting-serialization.test.ts
           --exclude=tests/harness/self-hosting.test.ts
+          --exclude=tests/harness/fetch.test.ts
+          --exclude=tests/harness/npm-static.test.ts
+          --exclude=tests/harness/surface-manifest.test.ts
           --exclude=packages/compiler/src/backend/native-toolchain.test.ts
       - name: Tests (self-hosting serialization)
         if: matrix.shard == 5
@@ -73,6 +76,23 @@ jobs:
         env:
           SCRIPTC_TEST_WORKERS: "1"
         run: pnpm test tests/harness/self-hosting.test.ts
+      # These long files otherwise collide in one Vitest file shard and contend
+      # for the worker RPC. Spread them across jobs with one worker each.
+      - name: Tests (fetch)
+        if: matrix.shard == 3
+        env:
+          SCRIPTC_TEST_WORKERS: "1"
+        run: pnpm test tests/harness/fetch.test.ts
+      - name: Tests (npm static)
+        if: matrix.shard == 4
+        env:
+          SCRIPTC_TEST_WORKERS: "1"
+        run: pnpm test tests/harness/npm-static.test.ts
+      - name: Tests (surface manifest)
+        if: matrix.shard == 5
+        env:
+          SCRIPTC_TEST_WORKERS: "1"
+        run: pnpm test tests/harness/surface-manifest.test.ts
       # Cache invalidation tests mutate compiler inputs process-wide and must
       # stay serial within a worker. They do not consume SCRIPTC_SAN, so divide
       # them across the ten plain jobs instead of running the 6+ minute file
