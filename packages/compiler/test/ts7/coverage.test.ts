@@ -6,12 +6,13 @@
 
 import { expect, test } from "vitest";
 import { ad } from "./harness.js";
+import { createProgram } from "../../src/frontend/ts7/program-adapter.js";
 
 const VALUE_FUNCTIONS = [
   // pure-AST helpers and program surface
   "forEachChild", "getModifiers", "canHaveModifiers", "getCombinedNodeFlags",
   "getCombinedModifierFlags", "getLineAndCharacterOfPosition", "flattenDiagnosticMessageText",
-  "tokenToString", "isExternalModule", "createProgram", "getPreEmitDiagnostics",
+  "tokenToString", "isExternalModule", "getPreEmitDiagnostics",
   "findConfigFile",
   // the renamed guards under their census names
   "isParameter", "isPropertySignature", "isStringLiteralLike", "isFunctionLike",
@@ -51,6 +52,12 @@ test("every census value function is exported and callable", () => {
   expect(typeof ad.sys.fileExists).toBe("function");
   expect(typeof ad.sys.readFile).toBe("function");
   expect(typeof ad.sys.directoryExists).toBe("function");
+});
+
+test("Node program construction stays in its explicit host entry", () => {
+  expect(createProgram).toBeTypeOf("function");
+  expect("createProgram" in ad).toBe(false);
+  expect(ad.Ts7Host.prototype.createProgram).toBeTypeOf("function");
 });
 
 test("every census enum re-exports with its symbolic keys", () => {

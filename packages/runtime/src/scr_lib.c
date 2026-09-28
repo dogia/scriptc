@@ -6098,14 +6098,6 @@ ScrStr *scr_intl_num_format_en_us(double x) {
   return scr_str_new(out, (size_t)o);
 }
 
-/* Object.is over two numbers — the spec's SameValue on doubles: NaN
- * equals NaN, +0 differs from -0, everything else is ==. */
-bool scr_num_same_value(double a, double b) {
-  if (a != a) return b != b;
-  if (a == 0 && b == 0) return signbit(a) == signbit(b);
-  return a == b;
-}
-
 bool scr_num_is_nan(double x) { return isnan(x) != 0; }
 
 bool scr_num_is_integer(double x) { return isfinite(x) && trunc(x) == x; }

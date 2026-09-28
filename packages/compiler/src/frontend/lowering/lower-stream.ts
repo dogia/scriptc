@@ -410,14 +410,19 @@ function lowerStreamCallbackValue(
     cbDyn = v.type.kind === "dyn" ? v : { kind: "dynFrom", value: v, type: DYN, loc };
   } else if (t?.kind === "func") {
     const cb = lowerer.lowerExpr(node);
-    if (cb.type.kind !== "func" || !canBoxFuncIntoDyn(cb.type, getRecord, getUnion)) {
+    // JavaScript globals may keep callable values in checked storage even
+    // when the checker can describe their function signature.
+    if (cb.type.kind === "dyn") {
+      cbDyn = cb;
+    } else if (cb.type.kind === "func" && canBoxFuncIntoDyn(cb.type, getRecord, getUnion)) {
+      cbDyn = { kind: "dynFrom", value: cb, type: DYN, loc };
+    } else {
       lowerer.noLowering(
         `the ${ctorName} option '${which}' with a function value of this signature`,
         node,
         "a callback value's own parameters and return must cross the checked-dynamic boundary — write the callback inline to keep it fully static",
       );
     }
-    cbDyn = { kind: "dynFrom", value: cb, type: DYN, loc };
   } else {
     lowerer.noLowering(
       `the ${ctorName} option '${which}' with a non-function value`,

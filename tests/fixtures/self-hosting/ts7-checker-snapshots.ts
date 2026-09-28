@@ -93,6 +93,7 @@ export function checkCheckerSnapshots(session: Ts7Session, client: Ts7RpcClient,
   let refusals = 0;
   try { old.getTypeAtLocation(name); } catch { refusals++; }
   check(replacement.getTypeAtLocation(name) === oldType, "replacement survives facade disposal");
+  check(project.program.getSourceFile(main) === source, "source identity survives facade disposal");
   check(sibling.getTypeAtLocation(name) === siblingType, "sibling project survives facade disposal");
   first.dispose();
   try { replacement.getTypeAtLocation(name); } catch { refusals++; }
@@ -108,16 +109,20 @@ export function checkCheckerSnapshots(session: Ts7Session, client: Ts7RpcClient,
   try { constituentTypes(newType); } catch { refusals++; }
   check(refusals === 8, "second snapshot rejects warm reads");
 
-  // Keeping the most recent source cache for its successor must not keep
-  // semantic caches alive or reuse disposed answers.
+  // Releasing the latest server snapshot retires its change baseline.
+  // Its successor reloads source and constructs fresh semantic answers.
+  const fetchedBefore = session.getTimingInfo().totals.sourceFilesFetched;
   const third = session.updateSnapshot();
   const latestProject = third.getProject(config)!;
-  check(latestProject.program.getSourceFile(main) === source, "source cache survives semantic disposal");
+  const latestSource = latestProject.program.getSourceFile(main)!;
+  check(latestSource.text === source.text, "successor reloads unchanged source");
+  check(session.getTimingInfo().totals.sourceFilesFetched === fetchedBefore + 1, "successor source is revalidated");
+  const latestName = exportedName(latestSource);
   const latest = new CheckerFacade(latestProject.checker, { project: latestProject.checker.project });
-  const latestType = latest.getTypeAtLocation(name);
+  const latestType = latest.getTypeAtLocation(latestName);
   check(latestType !== newType && latest.typeToString(latestType) === "string | null", "successor rebuilds semantic answers");
   const before = client.timing().requests;
-  check(latest.getTypeAtLocation(name) === latestType, "successor memo is warm");
+  check(latest.getTypeAtLocation(latestName) === latestType, "successor memo is warm");
   check(client.timing().requests === before, "successor warm read avoids RPC");
   third.dispose();
 }

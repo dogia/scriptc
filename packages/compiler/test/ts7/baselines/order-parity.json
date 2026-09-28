@@ -8608,6 +8608,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/checked-addition.js": {
+   "order": [
+    "<repo>/tests/corpus/checked-addition.js"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/class-interface-refinements.ts": {
    "order": [
     "<repo>/tests/corpus/class-interface-refinements.ts"
@@ -8720,6 +8726,24 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/native-buffer-coercion.js": {
+   "order": [
+    "<repo>/tests/corpus/native-buffer-coercion.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/native-class-cache.js": {
+   "order": [
+    "<repo>/tests/corpus/native-class-cache.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/native-proxy-env.js": {
+   "order": [
+    "<repo>/tests/corpus/native-proxy-env.js"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/nested-map-cycles.ts": {
    "order": [
     "<repo>/tests/corpus/nested-map-cycles.ts"
@@ -8756,6 +8780,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/process-env-computed-keys.js": {
+   "order": [
+    "<repo>/tests/corpus/process-env-computed-keys.js"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/static-field-updates/main.ts": {
    "order": [
     "<repo>/tests/corpus/static-field-updates/counter.ts",
@@ -8787,6 +8817,12 @@
     "<repo>/tests/corpus/text-codec-values/shared.ts",
     "<repo>/tests/corpus/text-codec-values/user.ts",
     "<repo>/tests/corpus/text-codec-values/main.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/text-codec-var.ts": {
+   "order": [
+    "<repo>/tests/corpus/text-codec-var.ts"
    ],
    "diags": []
   },
@@ -10720,36 +10756,6 @@
   "<repo>/tests/fixtures/node-types/url-getters.ts": {
    "order": [
     "<repo>/tests/fixtures/node-types/url-getters.ts"
-   ],
-   "diags": []
-  },
-  "<repo>/tests/corpus/checked-addition.js": {
-   "order": [
-    "<repo>/tests/corpus/checked-addition.js"
-   ],
-   "diags": []
-  },
-  "<repo>/tests/corpus/native-class-cache.js": {
-   "order": [
-    "<repo>/tests/corpus/native-class-cache.js"
-   ],
-   "diags": []
-  },
-  "<repo>/tests/corpus/native-proxy-env.js": {
-   "order": [
-    "<repo>/tests/corpus/native-proxy-env.js"
-   ],
-   "diags": []
-  },
-  "<repo>/tests/corpus/process-env-computed-keys.js": {
-   "order": [
-    "<repo>/tests/corpus/process-env-computed-keys.js"
-   ],
-   "diags": []
-  },
-  "<repo>/tests/corpus/text-codec-var.ts": {
-   "order": [
-    "<repo>/tests/corpus/text-codec-var.ts"
    ],
    "diags": []
   }

@@ -287,11 +287,22 @@ export function runTs7Client(client: Ts7RpcClient, directory: string, report: st
     // The original immutable snapshot must remain available after the update.
     check(project.program.getSemanticDiagnostics(file).length === 0 && project.program.getSourceFile(file) === root, "old snapshot retained");
     const unchanged = updatedProject.program.getSourceFile(empty)!;
+    const successor = session.updateSnapshot();
+    check(successor.getProject(configPath)!.program.getSourceFile(empty) === unchanged, "live latest cache retained for successor");
     snapshot.dispose();
     updated.dispose();
+    successor.dispose();
+    const fetchedBefore = session.getTimingInfo().totals.sourceFilesFetched;
     const retained = session.updateSnapshot();
-    check(retained.getProject(configPath)!.program.getSourceFile(empty) === unchanged, "disposed latest cache retained for successor");
+    const refreshed = retained.getProject(configPath)!.program.getSourceFile(empty)!;
+    check(refreshed.text === unchanged.text, "disposed latest source reloaded");
+    check(session.getTimingInfo().totals.sourceFilesFetched === fetchedBefore + 1, "disposed latest cache revalidated against server");
     retained.dispose();
+    content = "export const replacement = true;\n";
+    const replaced = session.updateSnapshot({ fileChanges: { changed: [file] } });
+    check(replaced.getProject(configPath)!.program.getSourceFile(file)!.text === content, "disposed latest cannot lend a stale changed source");
+    check(root.text !== content, "original snapshot source remains immutable");
+    replaced.dispose();
     checkCheckerSnapshots(session, client, directory);
     check(session.getTimingInfo().totals.sourceFilesFetched > 0, "native session source timing");
     const timing = client.timing();

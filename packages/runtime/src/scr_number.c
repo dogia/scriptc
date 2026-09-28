@@ -33,6 +33,15 @@ uint32_t scr_to_uint32(double d) {
   return (uint32_t)t;
 }
 
+/* SameValue on doubles is shared by Object.is and checked-value property
+ * descriptors. Keep it in the numeric core so JSON values do not require
+ * the optional standard-library module just to compare two numbers. */
+bool scr_num_same_value(double a, double b) {
+  if (a != a) return b != b;
+  if (a == 0 && b == 0) return signbit(a) == signbit(b);
+  return a == b;
+}
+
 /* The Ryū digit core, shared by the ECMA placement below and the Intl
  * en-US number formatter (scr_lib.c): the shortest round-tripping digit
  * string for a positive finite double — value = 0.digits × 10^n with no

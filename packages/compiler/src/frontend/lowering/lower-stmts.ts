@@ -2462,7 +2462,7 @@ export function isParseArgsDynCheckerType(lowerer: Lowerer, type: ts.Type): bool
         if (symbol) lowerer.stdlibGlobalAliases.set(symbol, b.alias);
       }
       if (b.g !== undefined) {
-        out.push({ kind: "assign", localId: b.g.id, value: lowerer.coerceInto(b.name, token, b.g.type), loc });
+        out.push({ kind: "assign", localId: b.g.id, value: lowerer.coerceInto(b.name, token, b.g.type), ...(b.g.tdz ? { initializes: true as const } : {}), loc });
       } else {
         const local = lowerer.declareLocal(b.name, b.name.text, STRING, isLet);
         out.push({ kind: "varDecl", localId: local.id, init: token, loc });
@@ -3178,7 +3178,7 @@ export function isParseArgsDynCheckerType(lowerer: Lowerer, type: ts.Type): bool
       const symbol = lowerer.checker.getSymbolAtLocation(name);
       const g = symbol ? lowerer.globalsBySymbol.get(symbol) : undefined;
       if (g) {
-        out.push({ kind: "assign", localId: g.id, value: lowerer.coerceInto(name, value, g.type), loc: bindLoc });
+        out.push({ kind: "assign", localId: g.id, value: lowerer.coerceInto(name, value, g.type), ...(g.tdz ? { initializes: true as const } : {}), loc: bindLoc });
         return;
       }
       if (symbol && hostVariableDeclarationOf(name) !== null && isVarDeclared(name)) {
@@ -3214,7 +3214,7 @@ export function isParseArgsDynCheckerType(lowerer: Lowerer, type: ts.Type): bool
       const symbol = lowerer.checker.getSymbolAtLocation(name);
       const g = symbol ? lowerer.globalsBySymbol.get(symbol) : undefined;
       if (g) {
-        out.push({ kind: "assign", localId: g.id, value: lowerer.coerceInto(name, value, g.type), loc });
+        out.push({ kind: "assign", localId: g.id, value: lowerer.coerceInto(name, value, g.type), ...(g.tdz ? { initializes: true as const } : {}), loc });
         return;
       }
       // A `var`-declared pattern name assigns its function-scoped hoisted
@@ -4093,6 +4093,10 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
     if (!ts.isObjectLiteralExpression(initializer)) return false;
     if (hasJsTypeAnnotation(decl)) return false;
+    // A generic clone retains its declared T contract. Its instantiated
+    // record is also the factory's return/capture layout; it is not an
+    // anonymous JavaScript object whose fields came only from inference.
+    if (lowerer.typeParamResolver(lowerer.typeOf(decl.name)) !== null) return false;
     const symbol = lowerer.resolveValueSymbol(decl.name);
     const shape = lowerer.shapes.get(type.shapeId);
     if (!symbol || !shape) return false;

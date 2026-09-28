@@ -5413,7 +5413,8 @@ void scr_bytes_set_from_dyn(ScrBytes *dst, const ScrDyn *src, double offset);
  * "utf16le" decodes LE code units (surrogate pairs combine; a LONE
  * surrogate surfaces as U+FFFD — the documented divergence; an odd tail
  * byte drops). Aliases arrive NORMALIZED (the compiler folds "binary",
- * "ucs2", "utf-8", ...). Borrows both; +1 result. Never throws (the
+ * "ucs2", "utf-8", ...); NULL selects the default UTF-8 encoding for
+ * implicit native coercions. Borrows both; +1 result. Never throws (the
  * compiler fences other encodings). */
 ScrStr *scr_bytes_to_str(const ScrBytes *b, const ScrStr *enc);
 ScrStr *scr_bytes_to_str_range(const ScrBytes *b, const ScrStr *enc, double start, double end);

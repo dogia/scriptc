@@ -39,23 +39,14 @@ text-codec-value.ts:12:16 - error SC1090: a checked cast of 'unknown' to 'TextDe
      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   13 | console.log(forged.decode());
 
-text-codec-value.ts:17:5 - error SC2020: 'module-scope codec bindings that can hold undefined before initialization' is part of the standard library types but has no scriptc lowering yet
-
-  16 | // A module var's pre-initialization value is not a codec instance.
-  17 | var varEncoder = new TextEncoder();
-     |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  18 | let uninitializedDecoder: TextDecoder;
-
-  hint: use let or const with an initializer for TextEncoder/TextDecoder instances
-
-text-codec-value.ts:18:5 - error SC2020: 'module-scope codec bindings that can hold undefined before initialization' is part of the standard library types but has no scriptc lowering yet
+text-codec-value.ts:18:5 - error SC2020: 'uninitialized lexical codec bindings' is part of the standard library types but has no scriptc lowering yet
 
   17 | var varEncoder = new TextEncoder();
   18 | let uninitializedDecoder: TextDecoder;
      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   19 | function earlyVarCapture(): Uint8Array {
 
-  hint: use let or const with an initializer for TextEncoder/TextDecoder instances
+  hint: initialize let or const TextEncoder/TextDecoder bindings at their declaration
 
 text-codec-value.ts:20:21 - error SC1030: the reference to 'localEncoder' above its 'var' declaration (a read there would be 'undefined', which the binding's type cannot hold — annotate it '| undefined' or move the declaration up) is not supported yet
 

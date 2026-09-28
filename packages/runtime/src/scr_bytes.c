@@ -1550,6 +1550,8 @@ static ScrStr *scr_bytes_decode_utf16le(const uint8_t *in, size_t n) {
 ScrStr *scr_bytes_to_str(const ScrBytes *b, const ScrStr *enc) {
   const uint8_t *in = b->data;
   size_t n = b->len; /* u8: len == byte length */
+  /* Implicit native string/number coercions have no encoding argument. */
+  if (!enc) return scr_bytes_decode_utf8(in, n);
   if (scr_enc_is(enc, "hex")) {
     char *out = malloc(n * 2 + 1);
     if (!out) scr_bytes_oom();
