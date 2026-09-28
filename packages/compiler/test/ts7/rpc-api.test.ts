@@ -118,13 +118,24 @@ test("snapshots share unchanged source files and release independently", () => {
     first.dispose();
     expect(() => first.getProjects()).toThrow("disposed");
     expect(second.getProject(config)!.program.getSourceFile(path)).toBe(firstFile);
-    // Disposing the latest snapshot retains its cache until the next one
-    // takes ownership, matching the upstream API's reuse semantics.
+    // Releasing the server baseline removes the proof that cached syntax is
+    // unchanged. Re-fetch even an unchanged file after the latest disposal.
     second.dispose();
     const third = api.updateSnapshot({ openProjects: [] });
-    expect(third.getProject(config)!.program.getSourceFile(path)).toBe(firstFile);
+    const thirdFile = third.getProject(config)!.program.getSourceFile(path)!;
+    expect(thirdFile).not.toBe(firstFile);
+    expect(thirdFile.text).toBe(firstFile!.text);
+    third.dispose();
+    writeFileSync(path, 'export const answer = "updated";\n');
+    const fourth = api.updateSnapshot({ fileChanges: { changed: [path] } });
+    const project = fourth.getProject(config)!;
+    const updated = project.program.getSourceFile(path)!;
+    expect(updated.text).toBe('export const answer = "updated";\n');
+    expect(updated).not.toBe(thirdFile);
+    expect(project.checker.typeToString(project.checker.getTypeAtPosition(path, updated.text.indexOf("answer"))!)).toBe('"updated"');
+    expect(firstFile!.text).toBe("export const answer = 42;\n");
     api.close();
-    expect(third.isDisposed()).toBe(true);
+    expect(fourth.isDisposed()).toBe(true);
     expect(() => api.parseConfigFile(config)).toThrow("closed");
     expect(() => api.updateSnapshot({ openProjects: [] })).toThrow("closed");
     expect(() => api.getTimingInfo()).toThrow("closed");
