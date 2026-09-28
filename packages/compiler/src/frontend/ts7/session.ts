@@ -1,0 +1,240 @@
+import { AstFile, AstNode } from "./ast-node.js";
+import { Ts7RpcClient } from "./rpc-client.js";
+import { SemanticChecker } from "./semantic-checker.js";
+import { SemanticSnapshot, type SemanticDocument } from "./semantic-model.js";
+import { parseSemanticJson } from "./semantic-json.js";
+import { Ts7SourceCache } from "./session-cache.js";
+import { Ts7Paths, ts7DocumentFile } from "./session-path.js";
+import { Ts7Timing, type Ts7ServerTiming, type Ts7TimingInfo } from "./session-timing.js";
+import type { Ts7CompilerOptionsData, Ts7ConfigData, Ts7DiagnosticData, Ts7InitializeData, Ts7ProjectData, Ts7SnapshotData, Ts7SourceMetadata } from "./session-schema.generated.js";
+
+export interface Ts7FileChanges {
+  changed?: SemanticDocument[];
+  created?: SemanticDocument[];
+  deleted?: SemanticDocument[];
+  invalidateAll?: boolean;
+}
+
+export interface Ts7Update {
+  openProjects?: SemanticDocument[];
+  closeProjects?: SemanticDocument[];
+  openFiles?: SemanticDocument[];
+  closeFiles?: SemanticDocument[];
+  fileChanges?: Ts7FileChanges;
+}
+
+interface ProgramQuery {
+  snapshot?: number;
+  project?: string;
+  file?: SemanticDocument;
+}
+
+/** Platform-independent session over an already connected transport. The
+ * host chooses how to start tsgo; no JavaScript SDK constructs the snapshot,
+ * program, AST, or semantic objects exposed by this client. */
+export class Ts7Session {
+  readonly cache = new Ts7SourceCache();
+  readonly timing: Ts7Timing;
+  private readonly snapshots = new Set<Ts7SessionSnapshot>();
+  private latest: Ts7SessionSnapshot | undefined;
+  private paths: Ts7Paths | undefined;
+  private closed = false;
+
+  constructor(
+    private readonly rpc: Ts7RpcClient,
+    collectTiming = false,
+    readonly listMetadata?: (nodes: AstNode[], pos: number, end: number) => void,
+  ) { this.timing = new Ts7Timing(collectTiming); }
+
+  ensureOpen(): void { if (this.closed) throw new Error("TypeScript API is closed"); }
+
+  binary(method: string, json: string): Uint8Array {
+    this.ensureOpen();
+    const payload = Buffer.from(json, "utf8");
+    const start = this.timing.enabled ? performance.now() : 0;
+    const bytes = this.rpc.requestBytes(method, payload);
+    if (this.timing.enabled) this.timing.record(method, performance.now() - start, payload.length, bytes.length, Date.now());
+    return bytes;
+  }
+
+  text(method: string, json: string): string {
+    const bytes = this.binary(method, json);
+    return bytes.length === 0 ? "null" : Buffer.from(bytes).toString("utf8");
+  }
+
+  request<T>(method: string, query: ProgramQuery): T {
+    return parseSemanticJson<T>(this.text(method, JSON.stringify(query)));
+  }
+
+  initialize(): Ts7Paths {
+    this.ensureOpen();
+    if (this.paths === undefined) {
+      const data = parseSemanticJson<Ts7InitializeData>(this.text("initialize", "null"));
+      this.paths = new Ts7Paths(data.currentDirectory, data.useCaseSensitiveFileNames);
+    }
+    return this.paths;
+  }
+
+  parseConfigFile(file: SemanticDocument): Ts7ConfigData {
+    this.initialize();
+    return this.request<Ts7ConfigData>("parseConfigFile", { file });
+  }
+
+  updateSnapshot(params: Ts7Update = {}): Ts7SessionSnapshot {
+    const paths = this.initialize();
+    const data = parseSemanticJson<Ts7SnapshotData>(this.text("updateSnapshot", JSON.stringify(params)));
+    const snapshot = new Ts7SessionSnapshot(data, this, paths);
+    const previous = this.latest;
+    if (previous !== undefined) {
+      this.cache.retain(snapshot.id, previous.id, data.changes);
+      if (previous.isDisposed()) this.cache.release(previous.id);
+    }
+    this.latest = snapshot;
+    this.snapshots.add(snapshot);
+    return snapshot;
+  }
+
+  release(snapshot: Ts7SessionSnapshot): void {
+    this.snapshots.delete(snapshot);
+    if (snapshot !== this.latest) this.cache.release(snapshot.id);
+    this.binary("release", JSON.stringify({ snapshot: snapshot.id }));
+  }
+
+  getTimingInfo(): Ts7TimingInfo {
+    this.ensureOpen();
+    if (!this.timing.enabled) return this.timing.info();
+    // Meta requests are intentionally absent from the client timing ring.
+    const server = parseSemanticJson<Ts7ServerTiming>(this.rpc.requestText("getServerTiming", ""));
+    return this.timing.info(server);
+  }
+
+  close(): void {
+    if (this.closed) return;
+    try {
+      for (const snapshot of this.snapshots) snapshot.dispose();
+    } finally {
+      // Seal all object graphs even if releasing one snapshot fails because
+      // the process has exited. Nothing retained may consult recycled ids.
+      this.closed = true;
+      for (const snapshot of this.snapshots) snapshot.invalidate();
+      this.snapshots.clear();
+      this.latest = undefined;
+      this.cache.clear();
+      this.rpc.close();
+    }
+  }
+}
+
+export class Ts7SessionSnapshot {
+  readonly id: number;
+  readonly semantic: SemanticSnapshot;
+  private readonly projects = new Map<string, Ts7SessionProject>();
+  private disposed = false;
+
+  constructor(data: Ts7SnapshotData, private readonly session: Ts7Session, readonly paths: Ts7Paths) {
+    this.id = data.snapshot;
+    this.semantic = new SemanticSnapshot(this.id, {
+      text: (method, payload) => this.session.text(method, payload),
+      binary: (method, payload) => this.session.binary(method, payload),
+    });
+    for (const item of data.projects) {
+      const project = new Ts7SessionProject(item, this, session);
+      this.projects.set(paths.canonical(item.configFileName), project);
+    }
+  }
+
+  ensureActive(): void {
+    this.session.ensureOpen();
+    if (this.disposed) throw new Error("TypeScript snapshot is disposed");
+  }
+  getProjects(): Ts7SessionProject[] { this.ensureActive(); return [...this.projects.values()]; }
+  getProject(config: string): Ts7SessionProject | undefined { this.ensureActive(); return this.projects.get(this.paths.canonical(config)); }
+  getDefaultProjectForFile(file: SemanticDocument): Ts7SessionProject | undefined {
+    this.ensureActive();
+    const data = this.session.request<Ts7ProjectData | null>("getDefaultProjectForFile", { snapshot: this.id, file });
+    return data === null ? undefined : this.getProject(data.configFileName);
+  }
+  isDisposed(): boolean { return this.disposed; }
+  invalidate(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.semantic.dispose();
+    for (const project of this.projects.values()) project.dispose();
+    this.projects.clear();
+  }
+  dispose(): void {
+    if (this.disposed) return;
+    this.invalidate();
+    this.session.release(this);
+  }
+}
+
+export class Ts7SessionProject {
+  readonly id: string;
+  readonly configFileName: string;
+  readonly compilerOptions: Ts7CompilerOptionsData;
+  readonly rootFiles: string[];
+  readonly program: Ts7SessionProgram;
+  readonly checker: SemanticChecker;
+
+  constructor(data: Ts7ProjectData, snapshot: Ts7SessionSnapshot, session: Ts7Session) {
+    this.id = data.id;
+    this.configFileName = data.configFileName;
+    this.compilerOptions = data.compilerOptions;
+    this.rootFiles = data.rootFiles;
+    this.program = new Ts7SessionProgram(this, snapshot, session);
+    const context = snapshot.semantic.addProject(this.id, (path) => this.program.getSourceFile(path));
+    this.checker = new SemanticChecker(context);
+  }
+
+  dispose(): void { this.checker.dispose(); this.program.dispose(); }
+}
+
+export class Ts7SessionProgram {
+  private readonly metadata = new Map<string, Ts7SourceMetadata | undefined>();
+  private disposed = false;
+
+  constructor(private readonly project: Ts7SessionProject, private readonly snapshot: Ts7SessionSnapshot, private readonly session: Ts7Session) {}
+
+  private ensureActive(): void {
+    this.snapshot.ensureActive();
+    if (this.disposed) throw new Error("TypeScript program is disposed");
+  }
+  private query(file?: SemanticDocument): ProgramQuery {
+    this.ensureActive();
+    return { snapshot: this.snapshot.id, project: this.project.id, ...(file === undefined ? {} : { file }) };
+  }
+  getCompilerOptions(): Ts7CompilerOptionsData { this.ensureActive(); return this.project.compilerOptions; }
+  getSourceFile(file: SemanticDocument): AstNode | undefined {
+    this.ensureActive();
+    const path = this.snapshot.paths.canonical(ts7DocumentFile(file));
+    const retained = this.session.cache.get(path, this.snapshot.id, this.project.id);
+    if (retained !== undefined) return retained;
+    const bytes = this.session.binary("getSourceFile", JSON.stringify(this.query(file)));
+    if (bytes.length === 0) return undefined;
+    const ast = new AstFile(bytes, this.session.listMetadata, () => { this.session.timing.materialized(); });
+    this.session.timing.fetched(Math.max(0, ast.wire.nodeCount - 2));
+    return this.session.cache.set(path, ast.root, this.snapshot.id, this.project.id);
+  }
+  getSourceFileNames(): string[] { return this.session.request<string[] | null>("getSourceFileNames", this.query()) ?? []; }
+  getSourceFileMetadata(file: string): Ts7SourceMetadata | undefined { return this.getSourceFileMetadataByPath(this.snapshot.paths.canonical(file)); }
+  getSourceFileMetadataByPath(path: string): Ts7SourceMetadata | undefined {
+    this.ensureActive();
+    if (this.metadata.has(path)) return this.metadata.get(path);
+    const data = this.session.request<Ts7SourceMetadata | null>("getSourceFileMetadata", this.query(path)) ?? undefined;
+    this.metadata.set(path, data);
+    return data;
+  }
+  isSourceFileFromExternalLibrary(file: AstNode): boolean { return this.getSourceFileMetadataByPath(file.path)?.isFromExternalLibrary ?? false; }
+  isSourceFileDefaultLibrary(file: AstNode): boolean { return this.getSourceFileMetadataByPath(file.path)?.isDefaultLibrary ?? false; }
+  private diagnostics(method: string, file?: SemanticDocument): Ts7DiagnosticData[] { return this.session.request<Ts7DiagnosticData[] | null>(method, this.query(file)) ?? []; }
+  getSyntacticDiagnostics(file?: SemanticDocument): Ts7DiagnosticData[] { return this.diagnostics("getSyntacticDiagnostics", file); }
+  getBindDiagnostics(file?: SemanticDocument): Ts7DiagnosticData[] { return this.diagnostics("getBindDiagnostics", file); }
+  getSemanticDiagnostics(file?: SemanticDocument): Ts7DiagnosticData[] { return this.diagnostics("getSemanticDiagnostics", file); }
+  getSuggestionDiagnostics(file?: SemanticDocument): Ts7DiagnosticData[] { return this.diagnostics("getSuggestionDiagnostics", file); }
+  getDeclarationDiagnostics(file?: SemanticDocument): Ts7DiagnosticData[] { return this.diagnostics("getDeclarationDiagnostics", file); }
+  getProgramDiagnostics(): Ts7DiagnosticData[] { return this.diagnostics("getProgramDiagnostics"); }
+  getGlobalDiagnostics(): Ts7DiagnosticData[] { return this.diagnostics("getGlobalDiagnostics"); }
+  getConfigFileParsingDiagnostics(): Ts7DiagnosticData[] { return this.diagnostics("getConfigFileParsingDiagnostics"); }
+  dispose(): void { this.disposed = true; this.metadata.clear(); }
+}

@@ -6,8 +6,8 @@ import { Ts7Wire } from "../../../packages/compiler/src/frontend/ts7/rpc-wire.js
 import { AstFile, AstNode } from "../../../packages/compiler/src/frontend/ts7/ast-node.js";
 import { AstKind, KIND_NODE_LIST, astChildNames } from "../../../packages/compiler/src/frontend/ts7/ast-schema.generated.js";
 import { decodeAstString } from "../../../packages/compiler/src/frontend/ts7/ast-bytes.js";
-import { SemanticSnapshot } from "../../../packages/compiler/src/frontend/ts7/semantic-model.js";
-import { SemanticChecker } from "../../../packages/compiler/src/frontend/ts7/semantic-checker.js";
+import { Ts7Session } from "../../../packages/compiler/src/frontend/ts7/session.js";
+import { Ts7Paths, ts7DocumentFile } from "../../../packages/compiler/src/frontend/ts7/session-path.js";
 import { parseSemanticJson } from "../../../packages/compiler/src/frontend/ts7/semantic-json.js";
 import { checkSemanticModel, semanticSource } from "./ts7-semantic-cases.js";
 
@@ -18,30 +18,6 @@ const client = new Ts7RpcClient(new Ts7Wire({
   write: (buffer, offset, length) => writeSync(4, buffer, offset, length, null),
   close: () => {},
 }));
-
-interface Initialization {
-  currentDirectory: string;
-  useCaseSensitiveFileNames: boolean;
-}
-interface Config {
-  fileNames: string[];
-}
-interface Snapshot {
-  snapshot: number;
-  projects: { id: string; configFileName: string; rootFiles: string[] }[];
-}
-interface TypeInfo {
-  id: number;
-  flags: number;
-}
-interface SymbolInfo {
-  id: number;
-  name: string;
-  declarations?: string[];
-}
-interface Diagnostic {
-  code: number;
-}
 
 function check(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -184,6 +160,13 @@ function checkFailures(): void {
 
 checkFailures();
 
+// Canonical protocol paths do not depend on the executable's host OS.
+const windowsPaths = new Ts7Paths("C:/Work", false);
+check(windowsPaths.canonical("..\\Lib\\File.ts") === "c:/lib/file.ts", "Windows path identity");
+check(new Ts7Paths("/work", true).canonical("bundled:///lib.esnext.d.ts") === "bundled:///lib.esnext.d.ts", "bundled path identity");
+check(ts7DocumentFile({uri: "file:///C%3A/dir/a%20b.ts"}) === "c:/dir/a b.ts", "file URI decoding");
+check(ts7DocumentFile({uri: "untitled:Untitled-1"}) === "^/untitled/ts-nul-authority/Untitled-1", "virtual URI decoding");
+
 const directory = process.argv[2]!;
 const report = process.argv[3]!;
 function protocolPath(path: string): string {
@@ -219,10 +202,11 @@ registerTs7FileSystem(client, {
   getAccessibleEntries: () => undefined,
 });
 
+const session = new Ts7Session(client, true);
 try {
-  const initialization = JSON.parse(client.requestText("initialize", "null")) as Initialization;
+  const initialization = session.initialize();
   check(protocolPath(initialization.currentDirectory) === protocolPath(directory), "server working directory");
-  const config = JSON.parse(client.requestText("parseConfigFile", JSON.stringify({ file: configPath }))) as Config;
+  const config = session.parseConfigFile(configPath);
   check(config.fileNames.includes(file), "virtual config roots");
 
   // Exercise all binary length encodings, including reads larger than the
@@ -236,16 +220,22 @@ try {
   }
   check(client.requestText("echo", "\uFEFFhéllo\0🌍") === "\uFEFFhéllo\0🌍", "UTF8 echo");
 
-  const snapshot = JSON.parse(client.requestText("updateSnapshot", JSON.stringify({ openProjects: [configPath] }))) as Snapshot;
-  const project = snapshot.projects[0]!;
+  const snapshot = session.updateSnapshot({ openProjects: [configPath] });
+  const project = snapshot.getProject(configPath)!;
+  check(snapshot.getProjects()[0] === project, "project registry identity");
   check(project.configFileName === configPath, "project identity");
-  const request = { snapshot: snapshot.snapshot, project: project.id, file };
-  const names = JSON.parse(client.requestText("getSourceFileNames", JSON.stringify(request))) as string[];
+  const names = project.program.getSourceFileNames();
   check(names.includes(file) && names.includes(empty) && names.includes(disk), "virtual, empty, and disk files");
   check(!names.includes(hidden), "hidden file remains absent");
-  const ast = client.requestBytes("getSourceFile", Buffer.from(JSON.stringify(request)));
-  check(ast.length > content.length, "binary AST response");
-  const tree = new AstFile(ast);
+  const root = project.program.getSourceFile(file)!;
+  const tree = root.file;
+  check(project.program.getSourceFile(file) === root, "cached source identity");
+  check(project.program.getCompilerOptions().strict === true, "parsed compiler options");
+  check(session.parseConfigFile(configPath).options["strict"] === true, "raw config option decoding");
+  const uri = "file:///" + file.replace(/^\//, "");
+  check(project.program.getSourceFile({uri}) === root, "document URI cache identity");
+  check(project.program.getSourceFileMetadata(file)!.isDefaultLibrary === false, "source metadata");
+  check(!project.program.isSourceFileFromExternalLibrary(root) && !project.program.isSourceFileDefaultLibrary(root), "source library flags");
   checkAst(tree, content);
   const statements = tree.root.statements!;
   check(statements[1]!.declarationList!.declarations![0]!.initializer!.text === "\uFEFFhéllo 🌍", "string BOM retained");
@@ -255,34 +245,21 @@ try {
   check(statements[3]!.declarationList!.declarations![0]!.initializer!.elements!.length === 40, "long native node list");
   const template = statements[4]!.declarationList!.declarations![0]!.initializer!;
   check(template.head!.text === "head\n" && template.head!.rawText === "head\\n", "cooked and raw template text");
-  const semantic = JSON.parse(client.requestText("getSemanticDiagnostics", JSON.stringify(request))) as Diagnostic[];
-  check(semantic.length === 0, "valid program diagnostics");
-  const type = JSON.parse(client.requestText("getTypeAtPosition", JSON.stringify({ ...request, position: content.indexOf("answer") }))) as TypeInfo;
-  const symbol = JSON.parse(client.requestText("getSymbolAtPosition", JSON.stringify({ ...request, position: content.indexOf("answer") }))) as SymbolInfo;
-  check(symbol.name === "answer", "checker symbol");
-  const typeText = JSON.parse(client.requestText("typeToString", JSON.stringify({ snapshot: snapshot.snapshot, project: project.id, type: type.id }))) as string;
-  check(typeText === "42", "checker literal type");
-  const declaration = tree.root.statements![0]!.declarationList!.declarations![0]!;
+  check(project.program.getSemanticDiagnostics(file).length === 0, "valid program diagnostics");
+  check(project.program.getSyntacticDiagnostics(file).length === 0 && project.program.getBindDiagnostics(file).length === 0, "parse and bind diagnostics");
+  const declaration = root.statements![0]!.declarationList!.declarations![0]!;
   const identifier = declaration.name!;
-  const nodeType = JSON.parse(client.requestText("getTypeAtLocation", JSON.stringify({ snapshot: snapshot.snapshot, project: project.id, location: identifier.id }))) as TypeInfo;
-  const nodeSymbol = JSON.parse(client.requestText("getSymbolAtLocation", JSON.stringify({ snapshot: snapshot.snapshot, project: project.id, location: identifier.id }))) as SymbolInfo;
-  check(nodeType.id === type.id && nodeSymbol.id === symbol.id, "native AST checker query");
-  check(tree.resolve(nodeSymbol.declarations![0]!) === declaration, "checker declaration identity");
-
-  const semanticSnapshot = new SemanticSnapshot(snapshot.snapshot, {
-    text: (method, payload) => client.requestText(method, payload),
-    binary: (method, payload) => client.requestBytes(method, Buffer.from(payload)),
-  });
-  const context = semanticSnapshot.addProject(project.id, (path) => path === file || path === tree.root.path ? tree.root : undefined);
-  const checker = new SemanticChecker(context);
+  const checker = project.checker;
   const ownedType = checker.getTypeAtLocation(identifier)!;
   const ownedSymbol = checker.getSymbolAtLocation(identifier)!;
-  check(ownedType.id === type.id && ownedSymbol.id === symbol.id, "semantic model handles");
+  const typeText = checker.typeToString(ownedType);
   check(checker.getTypeAtPosition(file, content.indexOf("answer")) === ownedType, "semantic type identity");
   check(checker.getSymbolAtPosition(file, content.indexOf("answer")) === ownedSymbol, "semantic symbol identity");
   check(ownedSymbol.declarations[0]!.resolve() === declaration, "semantic declaration identity");
-  check(checker.typeToString(ownedType) === "42" && ownedType.isNumberLiteralType() && ownedType.value === 42, "semantic literal metadata");
-  checkSemanticModel(semanticSnapshot, checker, tree);
+  check(typeText === "42" && ownedType.isNumberLiteralType() && ownedType.value === 42, "semantic literal metadata");
+  // The semantic exercise disposes its graph; the session still owns the
+  // server snapshot and its program until explicit snapshot disposal.
+  checkSemanticModel(snapshot.semantic, checker, tree);
 
   // A server-side refusal completes its request. It must not poison the
   // channel: the frontend's checker panic fence relies on this recovery.
@@ -293,23 +270,28 @@ try {
   check(client.requestText("echo", "after error") === "after error", "server error recovery");
 
   content = 'export const answer: number = "incorrect";\n';
-  const updated = JSON.parse(client.requestText("updateSnapshot", JSON.stringify({ fileChanges: { changed: [file] } }))) as Snapshot;
-  const updatedProject = updated.projects[0]!;
-  const diagnostics = JSON.parse(client.requestText("getSemanticDiagnostics", JSON.stringify({ snapshot: updated.snapshot, project: updatedProject.id, file }))) as Diagnostic[];
+  const updated = session.updateSnapshot({ fileChanges: { changed: [file] } });
+  const updatedProject = updated.getProject(configPath)!;
+  const diagnostics = updatedProject.program.getSemanticDiagnostics(file);
   check(diagnostics.some((diagnostic) => diagnostic.code === 2322), "updated snapshot diagnostics");
+  check(updatedProject.program.getSourceFile(file) !== root, "changed source version");
   // The original immutable snapshot must remain available after the update.
-  const oldDiagnostics = JSON.parse(client.requestText("getSemanticDiagnostics", JSON.stringify(request))) as Diagnostic[];
-  check(oldDiagnostics.length === 0, "old snapshot retained");
-  client.requestText("release", JSON.stringify({ snapshot: snapshot.snapshot }));
-  client.requestText("release", JSON.stringify({ snapshot: updated.snapshot }));
+  check(project.program.getSemanticDiagnostics(file).length === 0 && project.program.getSourceFile(file) === root, "old snapshot retained");
+  const unchanged = updatedProject.program.getSourceFile(empty)!;
+  snapshot.dispose();
+  updated.dispose();
+  const retained = session.updateSnapshot();
+  check(retained.getProject(configPath)!.program.getSourceFile(empty) === unchanged, "disposed latest cache retained for successor");
+  retained.dispose();
+  check(session.getTimingInfo().totals.sourceFilesFetched > 0, "native session source timing");
   const timing = client.timing();
   check(timing.requests > 20 && timing.callbacks > 0 && reads > 0, "requests and filesystem callbacks executed");
   writeFileSync(report, JSON.stringify({
-    typeText, symbol: symbol.name, diagnostics: diagnostics.map((diagnostic) => diagnostic.code),
+    typeText, symbol: ownedSymbol.name, diagnostics: diagnostics.map((diagnostic) => diagnostic.code),
     surrogateBoundary: checkSurrogateBoundary(),
-    semanticSurrogateBoundary: checkSemanticSurrogateBoundary(), semanticModel: true,
+    semanticSurrogateBoundary: checkSemanticSurrogateBoundary(), semanticModel: true, sessionLifecycle: true,
     echo: true, binaryAst: true, astIdentity: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
   }));
 } finally {
-  client.close();
+  session.close();
 }

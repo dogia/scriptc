@@ -84,6 +84,42 @@ if (process.argv.includes("--check")) {
   writeFileSync(semanticTarget, semanticOutput);
 }
 
+// Session metadata travels as ordinary JSON records. Generate its complete
+// pinned shape too: parsing options or diagnostics must not pull SDK values
+// into a statically compiled client through their type declarations.
+const sessionTypes = new Map([
+  ["CompilerOptions", "Ts7CompilerOptionsData"],
+  ["InitializeResponse", "Ts7InitializeData"],
+  ["ConfigResponse", "Ts7ConfigData"],
+  ["UpdateSnapshotResponse", "Ts7SnapshotData"],
+  ["ProjectResponse", "Ts7ProjectData"],
+  ["SourceFileMetadata", "Ts7SourceMetadata"],
+  ["SnapshotChanges", "Ts7SnapshotChangeData"],
+  ["ProjectFileChanges", "Ts7ProjectChangeData"],
+  ["Diagnostic", "Ts7DiagnosticData"],
+]);
+const sessionDeclarations = protoDeclarations + "\n" +
+  readFileSync(join(packageRoot, "dist/api/compilerOptions.d.ts"), "utf8") + "\n" +
+  readFileSync(join(packageRoot, "dist/api/sync/types.d.ts"), "utf8");
+const sessionLines = semanticLines.slice(0, 3);
+for (const [name] of sessionTypes) {
+  const declaration = sessionDeclarations.match(new RegExp(`export interface ${name} \\{[\\s\\S]*?\\n\\}`));
+  if (!declaration) throw new Error(`Missing TypeScript session response: ${name}`);
+  const text = declaration[0].replace(/\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z0-9_]*/g, (word) => {
+    if (word === "Path") return "string";
+    if (["JsxEmit", "ModuleDetectionKind", "ModuleKind", "ModuleResolutionKind", "NewLineKind", "ScriptTarget", "DiagnosticCategory"].includes(word)) return "number";
+    return sessionTypes.get(word) ?? word;
+  });
+  sessionLines.push("", text);
+}
+const sessionOutput = sessionLines.join("\n") + "\n";
+const sessionTarget = join(root, "packages/compiler/src/frontend/ts7/session-schema.generated.ts");
+if (process.argv.includes("--check")) {
+  if (readFileSync(sessionTarget, "utf8") !== sessionOutput) throw new Error("TypeScript session schema is stale; run node scripts/generate-ts7-ast-schema.mjs");
+} else {
+  writeFileSync(sessionTarget, sessionOutput);
+}
+
 // Child names alone cannot distinguish arrays from nodes (attributes and
 // children can be either). Read that distinction from the pinned client's
 // declarations, and require every wire property to have a declared getter.

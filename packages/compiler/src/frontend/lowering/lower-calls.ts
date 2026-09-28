@@ -1086,7 +1086,7 @@ function completeFuncValueArgs(
    * other unmappable type (the caller's badType reports those). */
   function fenceGenericSignatureResult(lowerer: Lowerer, blame: ts.Node, t: ts.Type): void {
     const parts = t.isUnionType() ? ts.constituentTypes(t) : [t];
-    if (!parts.some((p) => lowerer.checker.getCallSignatures(p).some((s) => (s.typeParameters?.length ?? 0) > 0))) {
+    if (!parts.some((p) => lowerer.checker.getCallSignatures(p).some((s) => s.getTypeParameters().length > 0))) {
       return;
     }
     lowerer.unsupported(

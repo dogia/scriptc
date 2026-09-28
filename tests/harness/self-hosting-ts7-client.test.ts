@@ -31,7 +31,7 @@ function result(child: ChildProcess): Promise<{ status: number | null; signal: s
 }
 
 async function runClient(command: string, args: string[], directory: string, report: string): Promise<string> {
-  const server = spawn(ts7Executable(), ["--api", "--cwd", directory, `--callbacks=${TS7_FILE_SYSTEM_CALLBACKS}`], {
+  const server = spawn(ts7Executable(), ["--api", "--timing", "--cwd", directory, `--callbacks=${TS7_FILE_SYSTEM_CALLBACKS}`], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   let serverStderr = "";
@@ -102,7 +102,7 @@ for (const backend of ["c", "llvm"] as const) {
       expect(nativeSemanticSurrogates).toBe("refused");
       expect(nativeFacts).toEqual(oracleFacts);
       expect(nativeFacts).toEqual({
-        typeText: "42", symbol: "answer", diagnostics: [2322], echo: true, binaryAst: true, astIdentity: true, semanticModel: true,
+        typeText: "42", symbol: "answer", diagnostics: [2322], echo: true, binaryAst: true, astIdentity: true, semanticModel: true, sessionLifecycle: true,
         virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
       });
     } finally {

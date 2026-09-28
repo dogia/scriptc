@@ -4541,7 +4541,7 @@ export class Lowerer {
       const parts = widened.isUnionType() ? ts.constituentTypes(widened) : [widened];
       if (
         parts.some((p) =>
-          this.checker.getCallSignatures(p).some((s) => (s.typeParameters?.length ?? 0) > 0),
+          this.checker.getCallSignatures(p).some((s) => s.getTypeParameters().length > 0),
         )
       ) {
         this.pushDiag(genericSignatureTypeDiag(this.checker.typeToString(type), locOf(node)));
@@ -9138,7 +9138,7 @@ export class Lowerer {
       if (d && ts.isVariableDeclaration(d) && d.initializer === undefined) {
         const t = this.checker.getTypeOfSymbol(symbol);
         const parts = t.isUnionType() ? ts.constituentTypes(t) : [t];
-        if (parts.some((p) => this.checker.getCallSignatures(p).some((s) => (s.typeParameters?.length ?? 0) > 0))) {
+        if (parts.some((p) => this.checker.getCallSignatures(p).some((s) => s.getTypeParameters().length > 0))) {
           this.unsupported(
             "SC1030",
             node,
