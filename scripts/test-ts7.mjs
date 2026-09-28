@@ -10,6 +10,8 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ALLOWED_TYPESCRIPT5_IMPORTS = new Set([
   "packages/compiler/src/frontend/cjs-lexer.ts",
   "packages/compiler/src/frontend/lowering/lower-comptime.ts",
+  // Bundled factory normalization shares npm-static-rewrite's syntactic TS5 island.
+  "packages/compiler/src/frontend/npm-static-bundled-cjs.ts",
   "packages/compiler/src/frontend/npm-static-declarations.ts",
   "packages/compiler/src/frontend/npm-static-rewrite.ts",
   "packages/compiler/src/frontend/npm.ts",

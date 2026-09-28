@@ -8506,6 +8506,14 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/text-codec-values/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/text-codec-values/shared.ts",
+    "<repo>/tests/corpus/text-codec-values/user.ts",
+    "<repo>/tests/corpus/text-codec-values/main.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/diagnostics/accessors.ts": {
    "order": [
     "<repo>/tests/diagnostics/accessors.ts"
