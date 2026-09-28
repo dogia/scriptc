@@ -414,60 +414,11 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
         return out;
       }
       case "dynHasKey": {
-        // `"k" in pkg`: a kind-guarded presence answer, computed against
-        // the literal key at compile time — no allocation, borrowed box.
-        const d = host.emitExpr(e.value);
-        const kd = host.dynKind(d.name);
-        const slot = B.slot();
-        B.entryAllocas.push(`${slot} = alloca i1`);
-        B.line(`store i1 false, ptr ${slot}`);
-        const lObj = B.newLabel("dhk.o");
-        const lArr = B.newLabel("dhk.a");
-        const lNotObj = B.newLabel("dhk.no");
-        const lj = B.newLabel("dhk.j");
-        const isObj = B.tmp();
-        B.line(`${isObj} = icmp eq i32 ${kd}, ${DYN_KIND.OBJ}`);
-        B.condBr(isObj, lObj, lNotObj);
-        B.startBlock(lObj);
-        host.declare(`declare ptr @scr_dyn_obj_get(ptr, ptr, ${host.sizeType})`);
-        const keyBytes = Buffer.byteLength(e.key, "utf8");
-        const m = B.tmp();
-        const has = B.tmp();
-        B.line(`${m} = call ptr @scr_dyn_obj_get(ptr ${d.name}, ptr ${host.cstr(e.key)}, ${host.sizeType} ${keyBytes})`);
-        B.line(`${has} = icmp ne ptr ${m}, null`);
-        B.line(`store i1 ${has}, ptr ${slot}`);
-        B.br(lj);
-        B.startBlock(lNotObj);
-        const isArr = B.tmp();
-        B.line(`${isArr} = icmp eq i32 ${kd}, ${DYN_KIND.ARR}`);
-        const lNotArr = B.newLabel("dhk.na");
-        B.condBr(isArr, lArr, lNotArr);
-        B.startBlock(lArr);
-        if (e.key === "length") {
-          B.line(`store i1 true, ptr ${slot}`);
-        } else if (/^(0|[1-9][0-9]*)$/.test(e.key) && Number(e.key) <= Number.MAX_SAFE_INTEGER) {
-          const lenp = B.tmp();
-          const len = B.tmp();
-          const inR = B.tmp();
-          B.line(`${lenp} = getelementptr inbounds i8, ptr ${d.name}, i64 16 ; ->v.arr.len`);
-          B.line(`${len} = load ${host.sizeType}, ptr ${lenp}`);
-          B.line(`${inR} = icmp ugt ${host.sizeType} ${len}, ${e.key}`);
-          B.line(`store i1 ${inR}, ptr ${slot}`);
-        }
-        B.br(lj);
-        // An ISLAND-held receiver fences loudly (Node asks the real
-        // engine object — `false` would be a silent wrong answer); the
-        // helper answers false for every other kind, so this arm is a
-        // plain unconditional call.
-        B.startBlock(lNotArr);
-        host.declare(`declare zeroext i1 @scr_dyn_isl_fence(ptr, ptr)`);
-        const fenced = B.tmp();
-        B.line(`${fenced} = call zeroext i1 @scr_dyn_isl_fence(ptr ${d.name}, ptr ${host.cstr("'in'")})`);
-        B.line(`store i1 ${fenced}, ptr ${slot}`);
-        B.br(lj);
-        B.startBlock(lj);
+        const value = host.emitExpr(e.value);
+        const key = host.emitExpr({ kind: "strLit", value: e.key, type: { kind: "string" }, loc: e.loc });
+        host.declare(`declare zeroext i1 @scr_dyn_has_key(ptr, ptr)`);
         const raw = B.tmp();
-        B.line(`${raw} = load i1, ptr ${slot}`);
+        B.line(`${raw} = call zeroext i1 @scr_dyn_has_key(ptr ${value.name}, ptr ${key.name})`);
         host.emitPendingCheck();
         if (!e.negated) return { name: raw, type: e.type };
         const neg = B.tmp();
@@ -612,7 +563,7 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
             // `typeof v === "object"`: objects, arrays, bytes, native
             // handles, promises, AND null — engine-held objects by the
             // engine's own typeof.
-            test = orIsl(oneOf([DYN_KIND.OBJ, DYN_KIND.ARR, DYN_KIND.BYTES, DYN_KIND.HANDLE, DYN_KIND.PROMISE, DYN_KIND.NULL]), "scr_dyn_isl_typeof_is", host.cstr("object"));
+            test = orIsl(oneOf([DYN_KIND.OBJ, DYN_KIND.ARR, DYN_KIND.BYTES, DYN_KIND.HANDLE, DYN_KIND.PROMISE, DYN_KIND.PROXY, DYN_KIND.NULL]), "scr_dyn_isl_typeof_is", host.cstr("object"));
           } else if (e.test === "array") {
             // Array.isArray: the checked-dynamic tree's array kind, or the engine's own
             // answer for an engine-held value.

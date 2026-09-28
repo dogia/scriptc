@@ -480,6 +480,10 @@ static bool scr_assert_dyn_same_value(const ScrDyn *a, const ScrDyn *b) {
  * memo here where Node carries one (documented divergence). */
 static bool scr_assert_dyn_deep_eq(const ScrDyn *a, const ScrDyn *b) {
   if (a == b) return true;
+  if (a->kind == SCR_DYN_PROXY || b->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("deep equality");
+    return false;
+  }
   if (a->kind == SCR_DYN_TYPED_REF || b->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *ma = a->kind == SCR_DYN_TYPED_REF
                      ? scr_dyn_typed_ref_materialize(a)
@@ -725,6 +729,9 @@ static void scr_assert_cf_value(ScrAssertBuf *b, const ScrDyn *d, size_t indent,
       scr_dyn_release(materialized);
       return;
     }
+    case SCR_DYN_PROXY:
+      scr_assert_cf_value(b, d->v.proxy.target, indent, depth);
+      return;
     case SCR_DYN_OBJ: {
       /* The null-proto dictionary renders with Node's prefix in the
        * failure diff too (assertion_error.js inspects both sides). */
@@ -969,7 +976,7 @@ static bool scr_assert_print_myers(ScrAssertBuf *b, const ScrDiffOp *diff, size_
 static bool scr_assert_dyn_is_object(const ScrDyn *d) {
   return d->kind == SCR_DYN_ARR || d->kind == SCR_DYN_OBJ || d->kind == SCR_DYN_BYTES ||
          d->kind == SCR_DYN_HANDLE || d->kind == SCR_DYN_PROMISE ||
-         d->kind == SCR_DYN_TYPED_REF ||
+         d->kind == SCR_DYN_TYPED_REF || d->kind == SCR_DYN_PROXY ||
          scr_dyn_isl_typeof_is(d, "object"); /* engine-held: the engine's typeof */
 }
 

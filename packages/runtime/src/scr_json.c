@@ -356,6 +356,7 @@ static ScrDyn *scr_dyn_alloc(ScrDynKind kind) {
 }
 
 static void scr_dyn_handle_release(void *h, ScrDynHandleTag tag);
+static bool scr_dyn_to_primitive_result_is_object(const ScrDyn *d);
 
 void scr_dyn_release(ScrDyn *d) {
   if (!d || d->rc == SIZE_MAX) return; /* NULL: an uninitialized `let` local */
@@ -406,6 +407,10 @@ void scr_dyn_release(ScrDyn *d) {
     }
     d->v.typed_ref.release(d->v.typed_ref.ptr);
     break;
+  case SCR_DYN_PROXY:
+    scr_dyn_release(d->v.proxy.target);
+    scr_dyn_release(d->v.proxy.handler);
+    break;
   default:
     break; /* null/bool/num have no children */
   }
@@ -429,6 +434,11 @@ void scr_dyn_release(ScrDyn *d) {
 }
 
 ScrDyn *scr_dyn_obj_get(const ScrDyn *d, const char *key, size_t key_len) {
+  if (d->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("raw object inspection");
+    return NULL;
+  }
+  if (d->kind != SCR_DYN_OBJ) return NULL;
   for (size_t i = 0; i < d->v.obj.len; i++) {
     const ScrDynEntry *e = &d->v.obj.entries[i];
     if (e->key_len == key_len && memcmp(e->key, key, key_len) == 0) return e->value;
@@ -702,6 +712,239 @@ ScrDyn *scr_dyn_new_obj_null_proto(void) {
   return d;
 }
 
+void scr_dyn_proxy_unsupported(const char *operation) {
+  ScrJsonBuf msg;
+  scr_jb_init(&msg);
+  scr_jb_puts(&msg, operation);
+  scr_jb_puts(&msg, " on a native Proxy is not supported yet");
+  scr_throw_error(SCR_ERR_ERROR, scr_jb_finish(&msg));
+}
+
+static ScrDynEntry *scr_dyn_entry(ScrDyn *obj, const ScrStr *key);
+static bool scr_dyn_property_same_value(const ScrDyn *a, const ScrDyn *b);
+
+static void scr_dyn_proxy_invariant(void) {
+  static const char msg[] = "Proxy trap violated a target property invariant";
+  scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+}
+
+ScrDyn *scr_dyn_proxy_new(const ScrDyn *target, const ScrDyn *handler) {
+  if (!scr_dyn_to_primitive_result_is_object(target) || !scr_dyn_to_primitive_result_is_object(handler)) {
+    static const char msg[] = "Cannot create proxy with a non-object as target or handler";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  /* Plain dyn objects expose their live data-property descriptors. Other
+   * representations cannot promise the Proxy invariants or live identity. */
+  if (target->kind != SCR_DYN_OBJ || handler->kind != SCR_DYN_OBJ) {
+    scr_dyn_proxy_unsupported("non-plain targets or handlers");
+    return NULL;
+  }
+  ScrDyn *out = scr_dyn_alloc(SCR_DYN_PROXY);
+  out->v.proxy.target = scr_dyn_retain((ScrDyn *)target);
+  out->v.proxy.handler = scr_dyn_retain((ScrDyn *)handler);
+  return out;
+}
+
+/* GetMethod observes handler mutations on every operation. Retain the
+ * callable across invocation, since a trap may replace itself. */
+static ScrDyn *scr_dyn_proxy_trap(const ScrDyn *proxy, const char *name) {
+  ScrDyn *method = scr_dyn_obj_get(proxy->v.proxy.handler, name, strlen(name));
+  if (!method || method->kind == SCR_DYN_UNDEF || method->kind == SCR_DYN_NULL) return NULL;
+  if (method->kind != SCR_DYN_FUNC) {
+    ScrJsonBuf msg;
+    scr_jb_init(&msg);
+    scr_jb_puts(&msg, "Proxy handler '");
+    scr_jb_puts(&msg, name);
+    scr_jb_puts(&msg, "' is not callable");
+    scr_throw_error(SCR_ERR_TYPE, scr_jb_finish(&msg));
+    return NULL;
+  }
+  return scr_dyn_retain(method);
+}
+
+static ScrDyn *scr_dyn_proxy_call(const ScrDyn *proxy, ScrDyn *trap, ScrDyn *const *args, size_t argc) {
+  scr_dyn_this_push_dyn(proxy->v.proxy.handler);
+  ScrDyn *result = scr_dyn_call(trap, args, argc, "Proxy trap");
+  scr_dyn_this_pop();
+  scr_dyn_release(trap);
+  return result;
+}
+
+static bool scr_dyn_object_proto_key(const ScrDyn *target, const ScrStr *key) {
+  if (target->null_proto) return false;
+  static const char *const names[] = {
+    "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty",
+    "__lookupGetter__", "__lookupSetter__", "isPrototypeOf", "propertyIsEnumerable",
+    "toString", "valueOf", "__proto__", "toLocaleString"
+  };
+  for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+    if (key->len == strlen(names[i]) && memcmp(key->data, names[i], key->len) == 0) return true;
+  }
+  return false;
+}
+
+ScrDyn *scr_dyn_proxy_get(const ScrDyn *proxy, const ScrStr *key) {
+  ScrDyn *trap = scr_dyn_proxy_trap(proxy, "get");
+  if (scr_exc_pending()) return NULL;
+  if (!trap) {
+    ScrDyn *target = proxy->v.proxy.target;
+    if (!scr_dyn_obj_get(target, key->data, key->len) && scr_dyn_object_proto_key(target, key)) {
+      scr_dyn_proxy_unsupported("inherited Object.prototype member reads");
+      return NULL;
+    }
+    return scr_dyn_obj_read(target, key->data, key->len);
+  }
+  ScrDyn *property = scr_dyn_new_str((ScrStr *)key);
+  ScrDyn *args[] = { proxy->v.proxy.target, property, (ScrDyn *)proxy };
+  ScrDyn *result = scr_dyn_proxy_call(proxy, trap, args, 3);
+  scr_dyn_release(property);
+  ScrDynEntry *entry = scr_dyn_entry(proxy->v.proxy.target, key);
+  if (result && entry && !entry->configurable && !entry->writable && !scr_dyn_property_same_value(entry->value, result)) {
+    scr_dyn_release(result);
+    scr_dyn_proxy_invariant();
+    return NULL;
+  }
+  return result;
+}
+
+bool scr_dyn_proxy_has(const ScrDyn *proxy, const ScrStr *key) {
+  ScrDyn *trap = scr_dyn_proxy_trap(proxy, "has");
+  if (scr_exc_pending()) return false;
+  if (!trap) return scr_dyn_has_key(proxy->v.proxy.target, key) || scr_dyn_object_proto_key(proxy->v.proxy.target, key);
+  ScrDyn *property = scr_dyn_new_str((ScrStr *)key);
+  ScrDyn *args[] = { proxy->v.proxy.target, property };
+  ScrDyn *result = scr_dyn_proxy_call(proxy, trap, args, 2);
+  scr_dyn_release(property);
+  bool has = result && scr_dyn_truthy(result);
+  scr_dyn_release(result);
+  ScrDynEntry *entry = scr_dyn_entry(proxy->v.proxy.target, key);
+  if (!scr_exc_pending() && !has && entry && !entry->configurable) scr_dyn_proxy_invariant();
+  return has;
+}
+
+ScrDyn *scr_dyn_own_descriptor(const ScrDyn *value, const ScrStr *key) {
+  if (value->kind == SCR_DYN_OBJ) {
+    ScrDynEntry *entry = scr_dyn_entry((ScrDyn *)value, key);
+    if (!entry) return scr_dyn_retain(scr_dyn_undefined());
+    ScrDyn *out = scr_dyn_new_obj();
+    scr_dyn_obj_set(out, "value", 5, scr_dyn_retain(entry->value));
+    scr_dyn_obj_set(out, "writable", 8, scr_dyn_new_bool(entry->writable));
+    scr_dyn_obj_set(out, "enumerable", 10, scr_dyn_new_bool(entry->enumerable));
+    scr_dyn_obj_set(out, "configurable", 12, scr_dyn_new_bool(entry->configurable));
+    return out;
+  }
+  if (value->kind != SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("property descriptors for this receiver kind");
+    return NULL;
+  }
+  ScrDyn *trap = scr_dyn_proxy_trap(value, "getOwnPropertyDescriptor");
+  if (scr_exc_pending()) return NULL;
+  if (!trap) return scr_dyn_own_descriptor(value->v.proxy.target, key);
+  ScrDyn *property = scr_dyn_new_str((ScrStr *)key);
+  ScrDyn *args[] = { value->v.proxy.target, property };
+  ScrDyn *desc = scr_dyn_proxy_call(value, trap, args, 2);
+  scr_dyn_release(property);
+  if (!desc) return NULL;
+  ScrDynEntry *entry = scr_dyn_entry(value->v.proxy.target, key);
+  if (desc->kind == SCR_DYN_UNDEF) {
+    if (entry && !entry->configurable) { scr_dyn_release(desc); scr_dyn_proxy_invariant(); return NULL; }
+    return desc;
+  }
+  if (desc->kind != SCR_DYN_OBJ) {
+    if (scr_dyn_to_primitive_result_is_object(desc)) scr_dyn_proxy_unsupported("non-plain descriptors");
+    else {
+      static const char msg[] = "'getOwnPropertyDescriptor' on proxy: trap returned neither object nor undefined";
+      scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    }
+    scr_dyn_release(desc);
+    return NULL;
+  }
+  ScrDyn *getter = scr_dyn_obj_get(desc, "get", 3);
+  ScrDyn *setter = scr_dyn_obj_get(desc, "set", 3);
+  ScrDyn *data = scr_dyn_obj_get(desc, "value", 5);
+  ScrDyn *writable = scr_dyn_obj_get(desc, "writable", 8);
+  ScrDyn *enumerable = scr_dyn_obj_get(desc, "enumerable", 10);
+  ScrDyn *configurable = scr_dyn_obj_get(desc, "configurable", 12);
+  const char *error = NULL;
+  if (getter && getter->kind != SCR_DYN_FUNC && getter->kind != SCR_DYN_UNDEF) error = "Getter must be a function";
+  else if (setter && setter->kind != SCR_DYN_FUNC && setter->kind != SCR_DYN_UNDEF) error = "Setter must be a function";
+  else if ((getter || setter) && (data || writable)) error = "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute";
+  bool c = configurable && scr_dyn_truthy(configurable);
+  bool e = enumerable && scr_dyn_truthy(enumerable);
+  bool w = writable && scr_dyn_truthy(writable);
+  if (!error && ((!c && (!entry || entry->configurable)) ||
+      (entry && !entry->configurable &&
+       (c || e != entry->enumerable || getter || setter || w != entry->writable ||
+        (!w && !scr_dyn_property_same_value(entry->value, data ? data : scr_dyn_undefined())))))) {
+    scr_dyn_release(desc);
+    scr_dyn_proxy_invariant();
+    return NULL;
+  }
+  if (error) {
+    scr_throw_error_msg(SCR_ERR_TYPE, error, strlen(error));
+    scr_dyn_release(desc);
+    return NULL;
+  }
+  ScrDyn *out = scr_dyn_new_obj();
+  if (getter || setter) {
+    scr_dyn_obj_set(out, "get", 3, scr_dyn_retain(getter ? getter : scr_dyn_undefined()));
+    scr_dyn_obj_set(out, "set", 3, scr_dyn_retain(setter ? setter : scr_dyn_undefined()));
+  } else {
+    scr_dyn_obj_set(out, "value", 5, scr_dyn_retain(data ? data : scr_dyn_undefined()));
+    scr_dyn_obj_set(out, "writable", 8, scr_dyn_new_bool(writable && scr_dyn_truthy(writable)));
+  }
+  scr_dyn_obj_set(out, "enumerable", 10, scr_dyn_new_bool(enumerable && scr_dyn_truthy(enumerable)));
+  scr_dyn_obj_set(out, "configurable", 12, scr_dyn_new_bool(c));
+  scr_dyn_release(desc);
+  return out;
+}
+
+void scr_dyn_proxy_set(ScrDyn *proxy, ScrStr *key, ScrDyn *value) {
+  ScrDyn *trap = scr_dyn_proxy_trap(proxy, "set");
+  if (scr_exc_pending()) return;
+  if (!trap) {
+    /* OrdinarySet uses the Proxy receiver's [[GetOwnProperty]] and
+     * [[DefineOwnProperty]]. Keep that boundary explicit for now. */
+    scr_dyn_proxy_unsupported("assignment without a set trap");
+    return;
+  }
+  ScrDyn *property = scr_dyn_new_str(key);
+  ScrDyn *args[] = { proxy->v.proxy.target, property, value, proxy };
+  ScrDyn *result = scr_dyn_proxy_call(proxy, trap, args, 4);
+  scr_dyn_release(property);
+  if (result && !scr_dyn_truthy(result)) {
+    /* The keyed-write ABI does not carry lexical strictness yet. A
+     * falsish trap is a silent failure in sloppy code and a TypeError
+     * in strict code; retain an explicit boundary instead of guessing. */
+    scr_dyn_proxy_unsupported("falsish set traps");
+  }
+  ScrDynEntry *entry = scr_dyn_entry(proxy->v.proxy.target, key);
+  if (!scr_exc_pending() && entry && !entry->configurable && !entry->writable && !scr_dyn_property_same_value(entry->value, value)) scr_dyn_proxy_invariant();
+  scr_dyn_release(result);
+}
+
+void scr_dyn_proxy_delete(ScrDyn *proxy, const ScrStr *key) {
+  ScrDyn *trap = scr_dyn_proxy_trap(proxy, "deleteProperty");
+  if (scr_exc_pending()) return;
+  if (!trap) {
+    ScrDynEntry *entry = scr_dyn_entry(proxy->v.proxy.target, key);
+    if (entry && !entry->configurable) { scr_dyn_proxy_unsupported("deletion of non-configurable properties"); return; }
+    scr_dyn_key_delete(proxy->v.proxy.target, key);
+    return;
+  }
+  ScrDyn *property = scr_dyn_new_str((ScrStr *)key);
+  ScrDyn *args[] = { proxy->v.proxy.target, property };
+  ScrDyn *result = scr_dyn_proxy_call(proxy, trap, args, 2);
+  scr_dyn_release(property);
+  if (result && !scr_dyn_truthy(result)) {
+    scr_dyn_proxy_unsupported("falsish deleteProperty traps");
+  }
+  ScrDynEntry *entry = scr_dyn_entry(proxy->v.proxy.target, key);
+  if (!scr_exc_pending() && entry && !entry->configurable) scr_dyn_proxy_invariant();
+  scr_dyn_release(result);
+}
+
 ScrDyn *scr_dyn_new_bytes_copy(const ScrBytes *b) {
   ScrDyn *d = scr_dyn_alloc(SCR_DYN_BYTES);
   d->v.bytes = scr_bytes_copy(b); /* the static→dyn boundary copies */
@@ -737,6 +980,10 @@ bool scr_dyn_typed_ref_is(
   return d && d->kind == SCR_DYN_TYPED_REF &&
          d->v.typed_ref.type_key_len == type_key_len &&
          memcmp(d->v.typed_ref.type_key, type_key, type_key_len) == 0;
+}
+
+bool scr_dyn_typed_ref_is_key(const ScrDyn *d, const ScrStr *type_key) {
+  return scr_dyn_typed_ref_is(d, type_key->data, type_key->len);
 }
 
 void *scr_dyn_typed_ref_unbox(const ScrDyn *d) {
@@ -1397,6 +1644,10 @@ static bool scr_dyn_property_same_value(const ScrDyn *a, const ScrDyn *b) {
 }
 
 ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor) {
+  if (target->kind == SCR_DYN_PROXY || descriptor->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("Object.defineProperty");
+    return NULL;
+  }
   scr_dyn_isl_fence(target, "Object.defineProperty");
   if (!scr_exc_pending()) scr_dyn_isl_fence(key, "Object.defineProperty key");
   if (!scr_exc_pending()) scr_dyn_isl_fence(descriptor, "Object.defineProperty descriptor");
@@ -1464,21 +1715,15 @@ ScrDyn *scr_dyn_get_own_property_descriptor(ScrDyn *target, ScrDyn *key) {
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
     return NULL;
   }
-  if (target->kind != SCR_DYN_OBJ) {
+  if (target->kind != SCR_DYN_OBJ && target->kind != SCR_DYN_PROXY) {
     static const char msg[] = "Object.getOwnPropertyDescriptor on this value is not supported yet";
     scr_throw_error_msg(SCR_ERR_ERROR, msg, sizeof msg - 1);
     return NULL;
   }
   ScrStr *name = scr_dyn_property_key(key);
   if (!name) return NULL;
-  ScrDynEntry *entry = scr_dyn_entry(target, name);
+  ScrDyn *out = scr_dyn_own_descriptor(target, name);
   scr_str_release(name);
-  if (!entry) return scr_dyn_retain(scr_dyn_undefined());
-  ScrDyn *out = scr_dyn_new_obj();
-  scr_dyn_obj_set(out, "value", 5, scr_dyn_retain(entry->value));
-  scr_dyn_obj_set(out, "writable", 8, scr_dyn_new_bool(entry->writable));
-  scr_dyn_obj_set(out, "enumerable", 10, scr_dyn_new_bool(entry->enumerable));
-  scr_dyn_obj_set(out, "configurable", 12, scr_dyn_new_bool(entry->configurable));
   return out;
 }
 
@@ -1498,6 +1743,7 @@ bool scr_dyn_truthy(const ScrDyn *d) {
   case SCR_DYN_HANDLE:
   case SCR_DYN_PROMISE:
   case SCR_DYN_TYPED_REF: return true;
+  case SCR_DYN_PROXY: return true;
   case SCR_DYN_JSVAL:
     /* Route to the engine's ToBoolean: objects/arrays/functions are
      * true, but the symbol/bigint edge (0n is falsy) needs the engine. */
@@ -1528,6 +1774,7 @@ ScrStr *scr_dyn_typeof(const ScrDyn *d) {
   case SCR_DYN_BYTES:
   case SCR_DYN_HANDLE:
   case SCR_DYN_PROMISE:
+  case SCR_DYN_PROXY:
   case SCR_DYN_TYPED_REF: s = "object"; break; /* handled above */
   case SCR_DYN_BOOL: s = "boolean"; break;
   case SCR_DYN_NUM: s = "number"; break;
@@ -1546,6 +1793,10 @@ bool scr_dyn_is_object(const ScrDyn *d) {
 }
 
 ScrStr *scr_dyn_object_tag(const ScrDyn *d) {
+  if (d->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("Symbol.toStringTag lookup");
+    return NULL;
+  }
   if (d->kind == SCR_DYN_TYPED_REF) {
     if (scr_dyn_isl_is_error(d)) return scr_str_new("[object Error]", 14);
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(d);
@@ -1602,6 +1853,10 @@ ScrStr *scr_dyn_object_tag(const ScrDyn *d) {
  * absent under stringify (root undefined/function — %j prints
  * "undefined" there, Node's tryStringify tail). */
 static bool scr_dyn_json_write(ScrJsonBuf *b, const ScrDyn *d) {
+  if (d->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("JSON.stringify");
+    return false;
+  }
   switch (d->kind) {
   case SCR_DYN_UNDEF:
   case SCR_DYN_FUNC:
@@ -1857,6 +2112,12 @@ void scr_errdyn_put(ScrError *e, ScrDyn *d) {
  * "[object Object]", and undefined/null throw Node's TypeError. Borrows
  * both; +1 result. */
 ScrStr *scr_dyn_to_string(const ScrDyn *d, const ScrStr *enc) {
+  if (d->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("string conversion");
+    /* Match this helper's existing exception-plus-dummy contract; its
+     * recursive array walker and native callers still consume a string. */
+    return scr_str_new("", 0);
+  }
   switch (d->kind) {
   case SCR_DYN_BYTES:
     if (d->buffer) return scr_bytes_to_str(d->v.bytes, enc);
@@ -1985,6 +2246,7 @@ static bool scr_dyn_to_primitive_result_is_object(const ScrDyn *d) {
   case SCR_DYN_HANDLE:
   case SCR_DYN_PROMISE:
   case SCR_DYN_TYPED_REF:
+  case SCR_DYN_PROXY:
     return true;
   case SCR_DYN_JSVAL:
     /* Engine scalars normally normalize into their native dyn kinds on
@@ -2009,6 +2271,10 @@ static bool scr_dyn_to_primitive_result_is_object(const ScrDyn *d) {
  * kind matches scr_dyn_string_coerce (units RENDER — ToString(null) is
  * "null"). Borrows; +1, or NULL with the exception pending. */
 ScrStr *scr_dyn_string_coerce_js(const ScrDyn *d) {
+  if (d->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("Symbol.toPrimitive lookup");
+    return NULL;
+  }
   if (d->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(d);
     ScrStr *out = scr_dyn_string_coerce_js(materialized);
@@ -2051,6 +2317,10 @@ ScrStr *scr_dyn_string_coerce_js(const ScrDyn *d) {
  * and the inherited toString fallback supplies "[object Object]". Borrows d;
  * false means an object hook threw or no primitive value could be produced. */
 bool scr_dyn_number_coerce_js(const ScrDyn *d, double *out) {
+  if (d->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("Symbol.toPrimitive lookup");
+    return false;
+  }
   if (d->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(d);
     bool ok = scr_dyn_number_coerce_js(materialized, out);
@@ -2125,6 +2395,86 @@ double scr_dyn_number_coerce(const ScrDyn *d) {
   return out;
 }
 
+/* OrdinaryToPrimitive's default hint is numeric for the represented
+ * ordinary objects. Retain the primitive itself: addition must choose
+ * string concatenation before either side is converted to a number. */
+static ScrDyn *scr_dyn_add_primitive(const ScrDyn *d) {
+  if (d->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("Symbol.toPrimitive lookup");
+    return NULL;
+  }
+  if (d->kind == SCR_DYN_TYPED_REF) {
+    ScrDyn *view = scr_dyn_typed_ref_materialize(d);
+    ScrDyn *out = scr_exc_pending() ? NULL : scr_dyn_add_primitive(view);
+    scr_dyn_release(view);
+    return out;
+  }
+  if (d->kind == SCR_DYN_JSVAL) {
+    scr_dyn_isl_fence(d, "native addition");
+    return NULL;
+  }
+  if (d->kind == SCR_DYN_OBJ) {
+    static const char *const methods[] = { "valueOf", "toString" };
+    for (size_t i = 0; i < 2; i++) {
+      ScrDyn *method = scr_dyn_obj_get(d, methods[i], strlen(methods[i]));
+      if (!method) {
+        if (i == 1 && !d->null_proto) {
+          ScrStr *str = scr_str_new("[object Object]", 15);
+          ScrDyn *out = scr_dyn_new_str(str);
+          scr_str_release(str);
+          return out;
+        }
+        continue;
+      }
+      if (method->kind != SCR_DYN_FUNC) continue;
+      scr_dyn_retain(method);
+      scr_dyn_this_push_dyn(d);
+      ScrDyn *out = scr_dyn_call(method, NULL, 0, methods[i]);
+      scr_dyn_this_pop();
+      scr_dyn_release(method);
+      if (!out) return NULL;
+      if (!scr_dyn_to_primitive_result_is_object(out)) return out;
+      scr_dyn_release(out);
+    }
+    static const char msg[] = "Cannot convert object to primitive value";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  if (!scr_dyn_to_primitive_result_is_object(d)) return scr_dyn_retain((ScrDyn *)d);
+  ScrStr *str = scr_dyn_string_coerce(d);
+  if (!str) return NULL;
+  ScrDyn *out = scr_dyn_new_str(str);
+  scr_str_release(str);
+  return out;
+}
+
+ScrDyn *scr_dyn_add(const ScrDyn *left, const ScrDyn *right) {
+  ScrDyn *l = scr_dyn_add_primitive(left);
+  if (!l || scr_exc_pending()) { scr_dyn_release(l); return NULL; }
+  ScrDyn *r = scr_dyn_add_primitive(right);
+  if (!r || scr_exc_pending()) { scr_dyn_release(l); scr_dyn_release(r); return NULL; }
+  ScrDyn *out = NULL;
+  if (l->kind == SCR_DYN_STR || r->kind == SCR_DYN_STR) {
+    ScrStr *ls = scr_dyn_string_coerce(l);
+    ScrStr *rs = ls ? scr_dyn_string_coerce(r) : NULL;
+    if (ls && rs) {
+      ScrStr *joined = scr_str_concat(ls, rs);
+      out = scr_dyn_new_str(joined);
+      scr_str_release(joined);
+    }
+    scr_str_release(ls);
+    scr_str_release(rs);
+  } else {
+    double ln, rn;
+    if (scr_dyn_number_coerce_js(l, &ln) && scr_dyn_number_coerce_js(r, &rn)) {
+      out = scr_dyn_new_num(ln + rn);
+    }
+  }
+  scr_dyn_release(l);
+  scr_dyn_release(r);
+  return out;
+}
+
 /* The checked-dynamic keyed WRITE (`h.k = v` on a dyn receiver): OBJ sets
  * the member (later writes win, insertion order — JS); undefined/null
  * throws Node's "Cannot set properties of ..."; every other kind throws
@@ -2135,8 +2485,10 @@ static const char *scr_dyn_kind_name(const ScrDyn *d);
 /* `key in v` with a RUNTIME key (the compile-time dynHasKey fold, per
  * value): OBJ answers own-member presence, ARR answers 'length' or a
  * valid dense index, every other kind false (tsc admits `in` only on
- * object-typed operands). Borrows both; never throws. */
+ * object-typed operands). Proxy traps may throw. Borrows both. */
 bool scr_dyn_has_key(const ScrDyn *v, const ScrStr *key) {
+  if (v->kind == SCR_DYN_PROXY) return scr_dyn_proxy_has(v, key);
+  if (v->kind == SCR_DYN_JSVAL) return scr_dyn_isl_fence(v, "'in'");
   if (v->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(v);
     bool out = scr_dyn_has_key(materialized, key);
@@ -2160,6 +2512,7 @@ bool scr_dyn_has_key(const ScrDyn *v, const ScrStr *key) {
 }
 
 void scr_dyn_key_set(ScrDyn *recv, ScrStr *key, ScrDyn *value) {
+  if (recv->kind == SCR_DYN_PROXY) { scr_dyn_proxy_set(recv, key, value); return; }
   if (recv->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(recv);
     scr_dyn_key_set(materialized, key, value);
@@ -2247,6 +2600,7 @@ void scr_dyn_key_set(ScrDyn *recv, ScrStr *key, ScrDyn *value) {
  * array slots holding undefined print null. A bare undefined never arrives
  * (the record serializer drops the entry first); print null defensively. */
 void scr_jb_put_dyn(ScrJsonBuf *b, const ScrDyn *d) {
+  if (d->kind == SCR_DYN_PROXY) { scr_dyn_proxy_unsupported("JSON.stringify"); return; }
   switch (d->kind) {
   case SCR_DYN_NULL:
   case SCR_DYN_UNDEF:
@@ -2380,7 +2734,8 @@ static const char *scr_dyn_kind_name(const ScrDyn *d) {
   case SCR_DYN_JSVAL: return "an island value"; /* "got an island value" — validated
     * extraction of engine-held values has no armed route yet (lane
     * dom-jsval-long-tail); the failure names the world honestly. */
-  case SCR_DYN_TYPED_REF: return "object";
+  case SCR_DYN_TYPED_REF:
+  case SCR_DYN_PROXY: return "object";
   }
   return "unknown";
 }
@@ -2971,6 +3326,7 @@ static void scr_json_delete_member(ScrDyn *object, const ScrStr *key) {
  * arrays, typed references and handles keep their explicit boundary;
  * deleting from a materialized snapshot would lose the mutation. */
 void scr_dyn_key_delete(ScrDyn *recv, const ScrStr *key) {
+  if (recv->kind == SCR_DYN_PROXY) { scr_dyn_proxy_delete(recv, key); return; }
   if (recv->kind == SCR_DYN_OBJ) {
     scr_json_delete_member(recv, key);
     return;
@@ -3296,6 +3652,10 @@ typedef struct ScrScParent {
 } ScrScParent;
 
 static ScrDyn *scr_sc_clone(const ScrDyn *v, const ScrScParent *up) {
+  if (v->kind == SCR_DYN_PROXY) {
+    scr_throw_domex("DataCloneError", "#<Object> could not be cloned.");
+    return NULL;
+  }
   switch (v->kind) {
   case SCR_DYN_UNDEF:
     return scr_dyn_retain(scr_dyn_undefined());
@@ -3495,6 +3855,79 @@ static void scr_dyn_objwalk_push(ScrDyn *out, ScrObjWalk mode, const char *key,
 }
 
 static ScrDyn *scr_dyn_objwalk(const ScrDyn *v, ScrObjWalk mode) {
+  if (v->kind == SCR_DYN_PROXY) {
+    ScrDyn *trap = scr_dyn_proxy_trap(v, "ownKeys");
+    if (scr_exc_pending()) return NULL;
+    ScrDyn *raw;
+    if (trap) {
+      ScrDyn *args[] = { v->v.proxy.target };
+      raw = scr_dyn_proxy_call(v, trap, args, 1);
+    } else {
+      /* [[OwnPropertyKeys]] includes non-enumerable properties too. Use
+       * the shared numeric/insertion ordering over a names-only table. */
+      ScrDyn *names = scr_dyn_new_obj();
+      for (size_t i = 0; i < v->v.proxy.target->v.obj.len; i++) {
+        const ScrDynEntry *entry = &v->v.proxy.target->v.obj.entries[i];
+        scr_dyn_obj_set(names, entry->key, entry->key_len, scr_dyn_retain(scr_dyn_undefined()));
+      }
+      raw = scr_dyn_obj_keys(names);
+      scr_dyn_release(names);
+    }
+    if (!raw) return NULL;
+    if (raw->kind != SCR_DYN_ARR) {
+      if (scr_dyn_to_primitive_result_is_object(raw)) scr_dyn_proxy_unsupported("array-like ownKeys results");
+      else {
+        static const char msg[] = "CreateListFromArrayLike called on non-object";
+        scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+      }
+      scr_dyn_release(raw);
+      return NULL;
+    }
+    /* Snapshot and validate the key list before invoking any descriptor
+     * or get trap. Those callbacks may mutate the array returned above. */
+    ScrDyn *keys = scr_dyn_new_arr();
+    for (size_t i = 0; i < raw->v.arr.len; i++) {
+      ScrDyn *key = raw->v.arr.items[i];
+      const char *error = key->kind != SCR_DYN_STR ? "Proxy ownKeys result contains a non-string key" : NULL;
+      for (size_t j = 0; !error && j < keys->v.arr.len; j++) {
+        if (scr_str_eq(key->v.str, keys->v.arr.items[j]->v.str)) error = "'ownKeys' on proxy: trap returned duplicate entries";
+      }
+      if (error) {
+        scr_throw_error_msg(SCR_ERR_TYPE, error, strlen(error));
+        scr_dyn_release(keys);
+        scr_dyn_release(raw);
+        return NULL;
+      }
+      scr_dyn_arr_push(keys, scr_dyn_retain(key));
+    }
+    scr_dyn_release(raw);
+    for (size_t i = 0; i < v->v.proxy.target->v.obj.len; i++) {
+      const ScrDynEntry *entry = &v->v.proxy.target->v.obj.entries[i];
+      if (entry->configurable) continue;
+      bool found = false;
+      for (size_t j = 0; j < keys->v.arr.len; j++) {
+        const ScrStr *key = keys->v.arr.items[j]->v.str;
+        if (key->len == entry->key_len && memcmp(key->data, entry->key, key->len) == 0) { found = true; break; }
+      }
+      if (!found) { scr_dyn_release(keys); scr_dyn_proxy_invariant(); return NULL; }
+    }
+    ScrDyn *out = scr_dyn_new_arr();
+    for (size_t i = 0; i < keys->v.arr.len; i++) {
+      ScrStr *key = keys->v.arr.items[i]->v.str;
+      ScrDyn *desc = scr_dyn_own_descriptor(v, key);
+      if (!desc) { scr_dyn_release(keys); scr_dyn_release(out); return NULL; }
+      ScrDyn *enumerable = desc->kind == SCR_DYN_OBJ ? scr_dyn_obj_get(desc, "enumerable", 10) : NULL;
+      bool include = enumerable && scr_dyn_truthy(enumerable);
+      scr_dyn_release(desc);
+      if (!include) continue;
+      ScrDyn *value = mode == SCR_OBJWALK_KEYS ? scr_dyn_retain(scr_dyn_undefined()) : scr_dyn_proxy_get(v, key);
+      if (!value) { scr_dyn_release(keys); scr_dyn_release(out); return NULL; }
+      scr_dyn_objwalk_push(out, mode, key->data, key->len, value);
+      scr_dyn_release(value);
+    }
+    scr_dyn_release(keys);
+    return out;
+  }
   if (v->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(v);
     ScrDyn *out = scr_dyn_objwalk(materialized, mode);
@@ -3623,6 +4056,10 @@ ScrDyn *scr_dyn_obj_keys(const ScrDyn *v) { return scr_dyn_objwalk(v, SCR_OBJWAL
  * have no own enumerable string keys. Non-OBJ targets copy nothing (the
  * existing two-arg stance — a dyn array target has no property table). */
 static void scr_dyn_assign_from(ScrDyn *target, const ScrDyn *src) {
+  if (target->kind == SCR_DYN_PROXY || src->kind == SCR_DYN_PROXY) {
+    scr_dyn_proxy_unsupported("Object.assign");
+    return;
+  }
   if (target->kind != SCR_DYN_OBJ) return;
   if (src->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(src);
@@ -3803,6 +4240,12 @@ static bool scr_dyn_canonical_own_index(const ScrStr *key, size_t length) {
 }
 
 bool scr_dyn_has_own(const ScrDyn *v, const ScrStr *key) {
+  if (v->kind == SCR_DYN_PROXY) {
+    ScrDyn *desc = scr_dyn_own_descriptor(v, key);
+    bool has = desc && desc->kind != SCR_DYN_UNDEF;
+    scr_dyn_release(desc);
+    return has;
+  }
   if (v->kind == SCR_DYN_UNDEF || v->kind == SCR_DYN_NULL) {
     const char *m = "Cannot convert undefined or null to object";
     scr_throw_error_msg(SCR_ERR_TYPE, m, strlen(m));

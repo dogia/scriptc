@@ -257,6 +257,11 @@ export interface GenericInstance {
    * - `...xs: T[]`: the ABI type is the array; call sites pack the surplus.
    */
   export function paramShape(lowerer: Lowerer, param: ts.ParameterDeclaration): ParamShape {
+    if (lowerer.checkedCallbackParams.has(param)) {
+      return param.initializer
+        ? { type: DYN, mode: "omittable", bodyType: DYN }
+        : { type: DYN, mode: "required" };
+    }
     const moduleNs = lowerer.moduleNsParamOverrides.get(param);
     if (moduleNs !== undefined) {
       return { type: moduleNs, mode: param.questionToken ? "omittable" : "required" };
@@ -2275,7 +2280,7 @@ export function implicitMethodCallInfersReturn(lowerer: Lowerer, call: ts.CallEx
 /** The all-dyn DEFAULT instance — today's compiled body exactly: what a
    * VALUE reference of an implicit-any function names (indirect calls
    * carry no per-site types to bind). */
-  function implicitDefaultInstance(lowerer: Lowerer, blame: ts.Node, info: GenericFnInfo): GenericInstance {
+  export function implicitDefaultInstance(lowerer: Lowerer, blame: ts.Node, info: GenericFnInfo): GenericInstance {
     const shapes: ParamShape[] = info.decl.parameters.map((param, i) =>
       info.implicitParams![i] ? { type: DYN, mode: "required" as const } : lowerer.paramShape(param),
     );
@@ -5937,7 +5942,7 @@ export function lowerDynDispatchMethodCall(
   arrayReceiver: boolean,
 ): IrExpr | null {
   const method = access.name.text;
-  if (!DYN_DISPATCH_METHODS.has(method) || call.questionDotToken || access.questionDotToken) return null;
+  if ((!DYN_DISPATCH_METHODS.has(method) && !isJsSourceFile(call.getSourceFile())) || call.questionDotToken || access.questionDotToken) return null;
   if (call.arguments.some((arg) => ts.isSpreadElement(arg))) {
     lowerer.unsupported("SC1090", call, "spread arguments in calls through 'unknown' values");
   }
@@ -6943,11 +6948,13 @@ function loweredTemplateStrings(
     const hasRest = shapes.some((s) => s.mode === "rest" || s.mode === "dynRest" || s.mode === "islandRest");
     const usesArguments =
       !hasRest &&
-      (ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) &&
+      (ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
       isJsSourceFile(node.getSourceFile()) &&
       bodyReadsArguments(node);
-    if (usesArguments && node.parameters.length > 0) {
-      if (!isNodeEsmFile(node.getSourceFile())) {
+    if (usesArguments && (node.parameters.length > 0 || ts.isMethodDeclaration(node))) {
+      const classMethod = ts.isMethodDeclaration(node) &&
+        (ts.isClassDeclaration(node.parent) || ts.isClassExpression(node.parent));
+      if (!classMethod && !isNodeEsmFile(node.getSourceFile())) {
         lowerer.unsupported("SC1090", node, "parameterized 'arguments' outside an ES module (sloppy-mode parameter aliases)");
       }
       shapes.push({ type: DYN, mode: "arguments" });

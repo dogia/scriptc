@@ -125,6 +125,9 @@ static void scr_dyn_display_buf(ScrJsonBuf *b, const ScrDyn *d) {
     scr_dyn_release(materialized);
     return;
   }
+  case SCR_DYN_PROXY:
+    scr_dyn_proxy_unsupported("string conversion");
+    return;
   }
 }
 
@@ -371,6 +374,17 @@ static ScrDyn *scr_dyn_invoke_impl(
   if (recv->kind == SCR_DYN_JSVAL) {
     return scr_dyn_jsval_ops()->invoke(recv->v.jsval.cell, method, args, argc, what);
   }
+  if (recv->kind == SCR_DYN_PROXY) {
+    ScrStr *key = scr_str_new(method, strlen(method));
+    ScrDyn *callable = scr_dyn_proxy_get(recv, key);
+    scr_str_release(key);
+    if (!callable) return NULL;
+    scr_dyn_this_push_dyn(recv);
+    ScrDyn *result = scr_dyn_call(callable, args, argc, what);
+    scr_dyn_this_pop();
+    scr_dyn_release(callable);
+    return result;
+  }
 
   /* Live Web-boundary capsules expose the prototype of their materialized
    * value. Run the ordinary dispatch against the stable snapshot, then
@@ -379,6 +393,10 @@ static ScrDyn *scr_dyn_invoke_impl(
    * snapshot identity back to the externally visible capsule. */
   if (recv->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *materialized = scr_dyn_typed_ref_materialize(recv);
+    if (scr_exc_pending()) {
+      scr_dyn_release(materialized);
+      return NULL;
+    }
     bool mutates = materialized->kind == SCR_DYN_ARR &&
                    dyn_arr_proto_mutates(method);
     ScrDyn *result = scr_dyn_invoke_impl(

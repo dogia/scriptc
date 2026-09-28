@@ -865,6 +865,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
           if (
             !arithmeticUnion && g.type.kind === "union" && narrowed && narrowed.kind !== "union" &&
             !isUnitType(narrowed) &&
+            !(narrowed.kind === "record" && recordTextCodecClass(lowerer.shapes.get(narrowed.shapeId)!) !== null) &&
             narrowed.kind !== "f64" && narrowed.kind !== "string" && narrowed.kind !== "bool" &&
             lowerer.armTag(g.type.unionId, narrowed) >= 0
           ) {
@@ -1122,7 +1123,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
           // The families with a WHY: each hint states what makes the
           // surface genuinely non-static (or what to use instead).
           const globalHints: Record<string, string | undefined> = {
-            Proxy: "property-access metaprogramming has no static lowering (every property read must resolve at compile time)",
+            Proxy: "Proxy constructor values have no native lowering; use a direct new Proxy with checked-native plain objects",
             Reflect: "reflective property access has no static lowering — read and call members directly",
             Intl: "locale- and ICU-backed behavior lives outside the static runtime (the localeCompare stance: code-unit order, no collation/locale data) — what lowers: the composed new Intl.NumberFormat(\"en-US\").format(x) and x.toLocaleString(\"en-US\") with default options",
             SharedArrayBuffer: "no shared-memory threads exist in a compiled program — Uint8Array is the byte storage",
@@ -4331,7 +4332,7 @@ export function lowerOptionalNumber(
     // lower to the ONE process.envGet intrinsic. The read narrows like any
     // union-typed expression when the checker narrowed this occurrence.
     if (lowerer.isProcessEnv(expr.expression)) {
-      const key = lowerer.lowerExpr(expr.argumentExpression);
+      const key = lowerEnvironmentKey(lowerer, expr.argumentExpression);
       if (key.type.kind !== "string") {
         lowerer.unsupported(
           "SC1090",
@@ -5169,7 +5170,7 @@ export function lowerElementCompound(lowerer: Lowerer, expr: ts.BinaryExpression
     // setenv(3), string keys and string values only.
     if (lowerer.isProcessEnv(target.expression) && !target.questionDotToken) {
       const loc = locOf(expr);
-      const key = lowerer.lowerExpr(target.argumentExpression);
+      const key = lowerEnvironmentKey(lowerer, target.argumentExpression);
       if (key.type.kind !== "string") {
         lowerer.unsupported("SC1090", target.argumentExpression, "indexing process.env with non-string keys");
       }
@@ -5524,6 +5525,14 @@ export function lowerElementCompound(lowerer: Lowerer, expr: ts.BinaryExpression
     const value = lowerer.lowerExpr(expr.right);
     return arrayValueStore(lowerer, arr, index, value, receiverIr.elem, locOf(expr));
   }
+
+/** Environment property names use ToPrimitive with the string hint, so
+ * checked objects must execute their own conversion hooks. */
+export function lowerEnvironmentKey(lowerer: Lowerer, node: ts.Expression): IrExpr {
+  const key = lowerer.lowerExpr(node);
+  if (key.type.kind === "dyn") return { kind: "libCall", fn: "dyn.toStringCoerce", args: [key], type: STRING, loc: key.loc };
+  return lowerRecordPropertyKey(lowerer, key, node);
+}
 
 export function ensureString(lowerer: Lowerer, e: IrExpr, node: ts.Node): IrExpr {
     if (e.type.kind === "string") return e;
@@ -6757,20 +6766,15 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
           if (arith) return { kind: "bin", op: arith, left: l, right: r, type: F64, loc };
           return { kind: "bin", op: cmp!, left: l, right: r, type: BOOL, loc };
         }
-        // `+`: number when the OTHER side is a number, string concat when
-        // it is a string — the two static homes; dyn+dyn stays a number.
+        // Untyped addition chooses concatenation or numeric addition only
+        // after both operands have undergone ToPrimitive at runtime.
         if (op === ts.SyntaxKind.PlusToken) {
-          if (other.type.kind === "f64" || other.type.kind === "dyn") {
-            return { kind: "bin", op: "+", left: checkNum(left), right: checkNum(right), type: F64, loc };
-          }
-          if (other.type.kind === "string") {
-            // String-context `+`: JS's answer is String(unknown) — the
-            // JS-exact dyn walker (numbers format, arrays join, objects
-            // print [object Object], handles the same) — never a checked
-            // cast: `'status ' + res.statusCode` concatenates like Node.
-            const strOf = (e: IrExpr): IrExpr =>
-              e.type.kind === "dyn" ? { kind: "toString", operand: e, type: STRING, loc: e.loc } : e;
-            return { kind: "strConcat", left: strOf(left), right: strOf(right), type: STRING, loc };
+          const l = lowerer.coerceToExpected(left, DYN);
+          const r = lowerer.coerceToExpected(right, DYN);
+          if (l.type.kind === "dyn" && r.type.kind === "dyn") {
+            const value: IrExpr = { kind: "libCall", fn: "dyn.add", args: [l, r], type: DYN, loc };
+            // A statically known string operand guarantees a string result.
+            return other.type.kind === "string" ? { kind: "dynCheck", value, type: STRING, loc } : value;
           }
         }
       }

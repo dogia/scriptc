@@ -26,6 +26,7 @@ import { ambientNsRootOf, ambientUndefReadType, ambientUndefVarRootOf, ambientUn
 import { mixinResultBindingClassOf, type MixinInstanceInfo } from "./lower-mixins.js";
 import { rejectStaticThis } from "./static-this.js";
 import { staticForkString } from "../fork-target.js";
+import { isNativeProxyInitializer, lowerNativeProxy } from "./expressions/native-proxy.js";
 
 export interface ClassInfo {
   def: IrClassDef;
@@ -4342,8 +4343,10 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
       // A shorter JS override still implements every inherited ABI slot.
       // These tail parameters have no source binding or default prologue.
       for (const shape of sig.params.slice(declared.params.length)) {
-        const ignored = lowerer.declareHiddenLocal("%ignored", shape.type);
-        params.push({ localId: ignored.id, name: "%ignored", type: shape.type });
+        const name = shape.mode === "arguments" ? "%arguments" : "%ignored";
+        const local = lowerer.declareHiddenLocal(name, shape.type);
+        params.push({ localId: local.id, name, type: shape.type });
+        if (shape.mode === "arguments") fnCtx.argumentsLocal = local;
       }
       const body = [...declared.prologue, ...lowerer.lowerStmts(fnLike.body.statements)];
       appendImplicitUndefinedReturn(lowerer, body, bodyReturn, locOf(fnLike));
@@ -4397,6 +4400,11 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
         (keyword) => `'${keyword}' in static methods (it names the RECEIVER class — a dynamic value; reference the class by name instead)`,
       );
       const declared = lowerer.declareParams(entry.member.parameters, entry.params);
+      if (entry.params.at(-1)?.mode === "arguments") {
+        const local = lowerer.declareHiddenLocal("%arguments", DYN);
+        declared.params.push({ localId: local.id, name: "%arguments", type: DYN });
+        fnCtx.argumentsLocal = local;
+      }
       const body = [...declared.prologue, ...lowerer.lowerStmts(entry.member.body.statements)];
       appendImplicitUndefinedReturn(lowerer, body, bodyReturn, locOf(entry.member));
       const fn: IrFunction = {
@@ -5147,6 +5155,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
       // (a no-op for every non-import= binding).
       fenceEarlyAliasUse(lowerer, expr.expression, expr);
       const symbol = lowerer.resolveValueSymbol(expr.expression);
+      if (isNativeProxyInitializer(lowerer, expr)) return lowerNativeProxy(lowerer, expr);
       // `new Error(msg?)` and its standard subclasses: the
       // runtime-provided classes construct through one libCall — the result
       // TYPE names which builtin, and the message completes to "" exactly
@@ -5752,7 +5761,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
           FinalizationRegistry: "finalization callbacks expose GC timing — genuinely dynamic; release resources explicitly instead",
           SharedArrayBuffer: "no shared-memory threads exist in a compiled program — Uint8Array is the byte storage",
           ArrayBuffer: "no free-standing ArrayBuffer value exists — typed arrays own their storage: allocate the view directly (new Uint8Array(n)), or erase a fresh buffer into one (new Uint8Array(new ArrayBuffer(n)), new DataView(new ArrayBuffer(n), ...))",
-          Proxy: "property-access metaprogramming has no static lowering (every property read must resolve at compile time)",
+          Proxy: "native Proxy construction requires checked-native plain targets and handlers",
           Function: "runtime code generation cannot be compiled ahead of time (the eval stance) — write the function",
         };
         lowerer.noLowering(
