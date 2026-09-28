@@ -1,3 +1,5 @@
+import { checkerSource, checkCheckerFacade, checkDisposedChecker } from "./ts7-checker-cases.js";
+import { checkCheckerSnapshots } from "./ts7-checker-snapshots.js";
 import { readSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { Ts7RpcClient } from "../../../packages/compiler/src/frontend/ts7/rpc-client.js";
@@ -195,6 +197,7 @@ content += 'export const many = [';
 for (let index = 0; index < 40; index++) content += `${index},`;
 content += '];\nexport const template = `head\\n${answer}tail`;\n';
 content += semanticSource();
+content += checkerSource();
 let reads = 0;
 registerTs7FileSystem(client, {
   readFile: (path) => {
@@ -272,7 +275,9 @@ try {
   check(typeText === "42" && ownedType.isNumberLiteralType() && ownedType.value === 42, "semantic literal metadata");
   // The semantic exercise disposes its graph; the session still owns the
   // server snapshot and its program until explicit snapshot disposal.
+  const facade = checkCheckerFacade(checker, root, () => client.timing().requests);
   checkSemanticModel(snapshot.semantic, checker, tree);
+  checkDisposedChecker(facade, root);
 
   // A server-side refusal completes its request. It must not poison the
   // channel: the frontend's checker panic fence relies on this recovery.
@@ -296,6 +301,7 @@ try {
   const retained = session.updateSnapshot();
   check(retained.getProject(configPath)!.program.getSourceFile(empty) === unchanged, "disposed latest cache retained for successor");
   retained.dispose();
+  checkCheckerSnapshots(session, client, directory);
   check(session.getTimingInfo().totals.sourceFilesFetched > 0, "native session source timing");
   const timing = client.timing();
   check(timing.requests > 20 && timing.callbacks > 0 && reads > 0, "requests and filesystem callbacks executed");
@@ -303,7 +309,7 @@ try {
     typeText, symbol: ownedSymbol.name, diagnostics: diagnostics.map((diagnostic) => diagnostic.code),
     surrogateBoundary: checkSurrogateBoundary(),
     semanticSurrogateBoundary: checkSemanticSurrogateBoundary(), semanticModel: true, sessionLifecycle: true,
-    echo: true, binaryAst: true, astIdentity: true, astViews: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
+    echo: true, binaryAst: true, astIdentity: true, astViews: true, checkerFacade: true, checkerSnapshots: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
   }));
 } finally {
   session.close();

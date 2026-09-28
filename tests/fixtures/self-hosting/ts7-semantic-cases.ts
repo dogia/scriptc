@@ -199,7 +199,18 @@ export function checkSemanticModel(snapshot: SemanticSnapshot, checker: Semantic
   const mapped = typeAt(checker, declaration(root, "Mapped").type!);
   check(mapped.isStringMappingType() && mapped.getTarget()!.isTypeParameter(), "string mapping type");
   check(checker.typeToTypeNode(intrinsicNumber, answer)!.kind === AstKind.NumberKeyword, "binary type node");
-  check(checker.signatureToSignatureDeclaration(signature, AstKind.FunctionType, identity)!.kind === AstKind.FunctionType, "binary signature node");
+  const syntheticType = checker.typeToTypeNode(boxType, box)!;
+  check(syntheticType.kind === AstKind.TypeReference, "binary class type node");
+  check(syntheticType.typeName!.text === "Box", "synthetic type child");
+  check(syntheticType.typeName!.parent === syntheticType, "synthetic type parent identity");
+  check(syntheticType.file.node(1) === syntheticType, "synthetic root identity");
+  const syntheticSignature = checker.signatureToSignatureDeclaration(signature, AstKind.FunctionType, identity)!;
+  check(syntheticSignature.kind === AstKind.FunctionType, "binary signature node");
+  check(syntheticSignature.parameters!.length === 1 && syntheticSignature.parameters![0]!.name!.text === "value", "synthetic signature children");
+  let syntheticRefusals = 0;
+  try { syntheticType.getSourceFile(); } catch { syntheticRefusals++; }
+  try { syntheticSignature.file.sourceFile; } catch { syntheticRefusals++; }
+  check(syntheticRefusals === 2, "fragments cannot claim source-file views");
   const references = checker.getReferencesToSymbolInFile(root.fileName, answerSymbol);
   check(references.length > 0 && references.every((handle) => handle.resolve() !== undefined), "reference node handles");
   check(checker.getReferencedSymbolsForNode(root, answerName.getStart()).length === 0, "empty referenced-symbol query");

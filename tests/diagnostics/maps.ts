@@ -7,7 +7,7 @@ const byFlag = new Map<boolean, string>();
 // Values exclude functions (no closure story in the uniform value slot yet).
 const handlers = new Map<string, () => void>();
 
-// ... and nested Maps (no maps of maps this round).
+// Typed nested Maps retain their identity and are supported.
 const nested = new Map<string, Map<string, number>>();
 
 // Map-typed slots elsewhere report the ordinary unsupported-type diagnostic.

@@ -131,6 +131,93 @@ test("unknown constituent lists fetch while non-constituent types stay local", (
   expect(requests).toHaveLength(3);
 });
 
+test("constituent caches preserve order, duplicates, empty results and project-local identity", () => {
+  const { first, second, answers, requests } = harness();
+  const data = [{ id: 2, flags: TypeFlags.Number }, { id: 3, flags: TypeFlags.String }, { id: 2, flags: TypeFlags.Number }];
+  answers.set("getTypesOfType", data);
+  for (const flags of [TypeFlags.Union, TypeFlags.Intersection, TypeFlags.TemplateLiteral]) {
+    const a = first.type({ id: flags, flags });
+    const b = second.type({ id: flags, flags });
+    const items = a.getTypes()!;
+    const others = b.getTypes()!;
+    expect(a.getTypes()).toBe(items);
+    expect(b.getTypes()).toBe(others);
+    expect(items[0]).toBe(items[2]);
+    expect(others[0]).toBe(others[2]);
+    expect(items[0]).not.toBe(others[0]);
+    expect(items.map((type) => type.flags)).toEqual([TypeFlags.Number, TypeFlags.String, TypeFlags.Number]);
+  }
+  expect(requests).toHaveLength(6);
+  answers.set("getTypesOfType", []);
+  const empty = first.type({ id: 100, flags: TypeFlags.Union });
+  const list = empty.getTypes();
+  expect(list).toEqual([]);
+  expect(empty.getTypes()).toBe(list);
+  expect(requests).toHaveLength(7);
+});
+
+test("constituent fetch failures remain retryable and never install partial answers", () => {
+  const { first, answers, requests } = harness();
+  const type = first.type({ id: 1, flags: TypeFlags.Union });
+  expect(() => type.getTypes()).toThrow("Unexpected request");
+  answers.set("getTypesOfType", [{ id: 2, flags: TypeFlags.String }]);
+  const result = type.getTypes()!;
+  expect(result[0]).toBe(first.type({ id: 2, flags: TypeFlags.String }));
+  expect(type.getTypes()).toBe(result);
+  expect(requests).toHaveLength(2);
+});
+
+test("warm constituent reads check disposal before returning a cached list", () => {
+  const { first, second, snapshot, answers, requests } = harness();
+  answers.set("getTypesOfType", [{ id: 2, flags: TypeFlags.Number }]);
+  const firstType = first.type({ id: 1, flags: TypeFlags.Union });
+  const secondType = second.type({ id: 1, flags: TypeFlags.Union });
+  firstType.getTypes();
+  const secondList = secondType.getTypes();
+  first.dispose();
+  expect(() => firstType.getTypes()).toThrow("disposed");
+  expect(secondType.getTypes()).toBe(secondList);
+  snapshot.dispose();
+  expect(() => secondType.getTypes()).toThrow("disposed");
+  expect(requests).toHaveLength(2);
+});
+
+test("project cleanup runs once, after invalidation, including reentrant disposal", () => {
+  const { first, second, snapshot } = harness();
+  const calls: string[] = [];
+  first.onDispose(() => {
+    calls.push("first");
+    expect(() => first.ensureActive()).toThrow("disposed");
+    expect(() => first.onDispose(() => {})).toThrow("disposed");
+    first.dispose();
+  });
+  first.onDispose(() => calls.push("first again"));
+  second.onDispose(() => calls.push("second"));
+  first.dispose();
+  first.dispose();
+  expect(calls).toEqual(["first", "first again"]);
+  second.ensureActive();
+  snapshot.dispose();
+  snapshot.dispose();
+  expect(calls).toEqual(["first", "first again", "second"]);
+});
+
+test("snapshot disposal releases populated symbol tables even when callers retain the symbols", () => {
+  const { first, snapshot, symbol, answers } = harness();
+  const parent = first.symbol(symbol(1));
+  answers.set("getMembersOfSymbol", [symbol(2)]);
+  answers.set("getExportsOfSymbol", [symbol(3)]);
+  const members = parent.getMembers();
+  const exports = parent.getExports();
+  expect(members.size).toBe(1);
+  expect(exports.size).toBe(1);
+  snapshot.dispose();
+  expect(members.size).toBe(0);
+  expect(exports.size).toBe(0);
+  expect(() => parent.getMembers()).toThrow("disposed");
+  expect(() => parent.getExports()).toThrow("disposed");
+});
+
 test("conditional branches have independent lazy state, including a retry after refusal", () => {
   const { first, answers, requests } = harness();
   const type = first.type({ id: 3, flags: TypeFlags.Conditional });

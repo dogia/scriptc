@@ -224,18 +224,22 @@ export class Ts7Program {
    * 7.0.2 serves files one by one; the result is cached, so the full-program
    * sweeps (preflight's user-file scan) pay the transfer once. */
   getSourceFiles(): readonly SourceFile[] {
+    this.snapshot.ensureActive();
     if (this.sourceFilesCache === null) {
       const program = this.project.program;
-      this.sourceFilesCache = program
-        .getSourceFileNames()
-        .map((name) => program.getSourceFile(name))
-        .filter((sf): sf is SourceFile => sf !== undefined);
+      const files: SourceFile[] = [];
+      for (const name of program.getSourceFileNames()) {
+        const file = program.getSourceFile(name);
+        if (file !== undefined) files.push(file);
+      }
+      this.sourceFilesCache = files;
     }
     return this.sourceFilesCache;
   }
 
   getTypeChecker(): CheckerFacade {
-    this.checkerFacade ??= new CheckerFacade(this.project.checker, { project: this.project.checker.project });
+    this.snapshot.ensureActive();
+    if (this.checkerFacade === null) this.checkerFacade = new CheckerFacade(this.project.checker, { project: this.project.checker.project });
     return this.checkerFacade;
   }
 
@@ -268,6 +272,9 @@ export class Ts7Program {
   }
 
   dispose(): void {
+    this.checkerFacade?.dispose();
+    this.checkerFacade = null;
+    this.sourceFilesCache = null;
     this.snapshot.dispose();
     if (!this.sharedHost) this.host.close();
   }

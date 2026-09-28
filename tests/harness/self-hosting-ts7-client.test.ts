@@ -102,7 +102,7 @@ for (const backend of ["c", "llvm"] as const) {
       expect(nativeSemanticSurrogates).toBe("refused");
       expect(nativeFacts).toEqual(oracleFacts);
       expect(nativeFacts).toEqual({
-        typeText: "42", symbol: "answer", diagnostics: [2322], echo: true, binaryAst: true, astIdentity: true, astViews: true, semanticModel: true, sessionLifecycle: true,
+        typeText: "42", symbol: "answer", diagnostics: [2322], echo: true, binaryAst: true, astIdentity: true, astViews: true, checkerFacade: true, checkerSnapshots: true, semanticModel: true, sessionLifecycle: true,
         virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
       });
     } finally {

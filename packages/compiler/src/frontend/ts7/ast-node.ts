@@ -10,7 +10,7 @@ import { SyntaxKind, NodeFlags } from "./enums.js";
  * of a deep tree never recursively constructs its ancestors. */
 export class AstFile {
   readonly wire: AstWireFile;
-  readonly root: SourceFile;
+  readonly root: AstNode;
   private readonly nodes = new Map<number, AstNode>();
   private readonly lists = new Map<number, AstNode[]>();
   private readonly references = new Map<number, AstFileReference[]>();
@@ -24,9 +24,16 @@ export class AstFile {
     private readonly materialized?: () => void,
   ) {
     this.wire = new AstWireFile(bytes);
-    if (this.wire.kind(1) !== AstKind.SourceFile) throw new AstDecodeError("expected a source file root");
-    this.root = new AstNode(this, 1) as SourceFile;
+    this.root = new AstNode(this, 1);
     this.nodes.set(1, this.root);
+  }
+
+  /** Checker factories also return AST fragments. Only source-file
+   * consumers require this kind check; a type or signature root is valid
+   * for typeToTypeNode/signatureToSignatureDeclaration. */
+  get sourceFile(): SourceFile {
+    if (this.root.kind !== SyntaxKind.SourceFile) throw new AstDecodeError("expected a source file root");
+    return this.root as SourceFile;
   }
 
   node(index: number): AstNode {
@@ -155,7 +162,7 @@ export class AstNode {
     return docs.length === 0 ? undefined : docs;
   }
 
-  getSourceFile(): SourceFile { return this.file.root; }
+  getSourceFile(): SourceFile { return this.file.sourceFile; }
   getStart(sourceFile?: AstNode, includeJsDocComment?: boolean): number {
     if (this.pos === this.end && this.pos >= 0 && this.kind !== AstKind.EndOfFile) return this.pos;
     const source = sourceFile ?? this.file.root;

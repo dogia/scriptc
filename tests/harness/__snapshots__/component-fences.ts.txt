@@ -23,7 +23,7 @@ component-fences.ts:6:13 - error SC2004: uses of 'byFlag' inherit the blocker on
 
   hint: the declaration of 'byFlag' did not compile — fix the diagnostic reported there and these sites clear with it
 
-component-fences.ts:9:7 - error SC2009: values of type 'Map<string, () => void>' cannot be compiled: the Map shape is supported, but '() => void' values have no Map slot yet (functions, promises, and nested Maps stay out)
+component-fences.ts:9:7 - error SC2009: values of type 'Map<string, () => void>' cannot be compiled: the Map shape is supported, but '() => void' values have no Map slot yet
 
    8 | // Map values have no slot for functions.
    9 | const listeners = new Map<string, () => void>();

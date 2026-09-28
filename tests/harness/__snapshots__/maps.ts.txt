@@ -14,7 +14,7 @@ maps.ts:5:16 - error SC1090: Map keys of type 'boolean' (Map keys must be number
     |                ^~~~~~~~~~~~~~~~~~~~~~~~~~
   6 | 
 
-maps.ts:8:7 - error SC2009: values of type 'Map<string, () => void>' cannot be compiled: the Map shape is supported, but '() => void' values have no Map slot yet (functions, promises, and nested Maps stay out)
+maps.ts:8:7 - error SC2009: values of type 'Map<string, () => void>' cannot be compiled: the Map shape is supported, but '() => void' values have no Map slot yet
 
   7 | // Values exclude functions (no closure story in the uniform value slot yet).
   8 | const handlers = new Map<string, () => void>();
@@ -29,22 +29,6 @@ maps.ts:8:18 - error SC1090: Map values of type '() => void' (Map values must be
   8 | const handlers = new Map<string, () => void>();
     |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   9 | 
-
-maps.ts:11:7 - error SC2009: values of type 'Map<string, Map<string, number>>' cannot be compiled: the Map shape is supported, but 'Map<string, number>' values have no Map slot yet (functions, promises, and nested Maps stay out)
-
-  10 | // ... and nested Maps (no maps of maps this round).
-  11 | const nested = new Map<string, Map<string, number>>();
-     |       ^~~~~~
-  12 | 
-
-  hint: the outer shape is supported — the named component is the blocker; restate it inside the compilable set (number, string, boolean, arrays, Maps, Sets, RegExp, functions, classes, records, unions of those, and 'unknown')
-
-maps.ts:11:16 - error SC1090: Map values of type 'Map<string, number>' (Map values must be number, string, boolean, records, class instances, arrays, promises, or unions of those — not functions, Maps, 'unknown', or 'any') is not supported yet
-
-  10 | // ... and nested Maps (no maps of maps this round).
-  11 | const nested = new Map<string, Map<string, number>>();
-     |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  12 | 
 
 maps.ts:14:17 - error SC2009: values of type 'Map<boolean, number>' cannot be compiled: the Map shape is supported, but 'boolean' is outside its supported key domain (numbers, strings, identity references, or unions of identity references)
 

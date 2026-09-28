@@ -18,7 +18,7 @@ function checkStatements(nodes: NodeArray<Statement>, source: SourceFile): void 
 /** All narrowed values are consumed by native operations, so a structural
  * record copy or a wrong getter ABI cannot pass as a mere successful load. */
 export function checkAstViews(file: AstFile): void {
-  const source: SourceFile = file.root;
+  const source: SourceFile = file.sourceFile;
   checkStatements(source.statements, source);
   check(source.parent === undefined && !ts.isIdentifier(source.parent), "missing root parent");
   let identifiers = 0;

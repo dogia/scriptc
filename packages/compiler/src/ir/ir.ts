@@ -603,8 +603,7 @@ export function isSupportedSetElem(t: IrType, unionArms?: IrType[]): boolean {
 }
 
 /** The Map VALUE fence: scalars, supported native references and checked
- * values. Functions require checked-value boxing; nested maps and jsval
- * have no native Map slot.
+ * values. Functions require checked-value boxing; jsval has no native slot.
  * Record/object/union values can point back at the map holding them, which
  * is exactly why ref-valued maps are cycle-capable (see the backend's
  * cycle analysis and docs/memory.md). Shared frontend/validator. */
@@ -619,6 +618,10 @@ export function isSupportedMapValue(t: IrType): boolean {
     case "object":
     case "union":
     case "array":
+    // Nested collections use the existing ref slot and scr_map adapters.
+    // Their key/value tracing participates in the cycle-analysis fixpoint.
+    case "map":
+    case "set":
       return true;
     // A spawned child handle (Map<string, ChildProcess> — the mdns
     // publisher registry): an ordinary refcounted pointer value (the
@@ -661,22 +664,16 @@ export function isSupportedMapValue(t: IrType): boolean {
 /** The INDEX-SIGNATURE value fence (`{ [k: string]: V }` shapes): the map
  * VALUE kinds — the overflow portion IS a string-keyed map — plus dyn
  * (`unknown`, an unknown-valued pricing-table shape: overflow reads surface ordinary
- * dyn values validated by the usual checked casts) and three kinds the
- * overflow store carries that user Maps don't admit yet:
+ * dyn values validated by the usual checked casts) and callable values:
  *   func — `Record<string, () => void>`, the command-registry pattern
  *          (scr_closure adapters; closures are cycle-headered and traced,
  *          so a handler capturing its own registry collects)
- *   map/set — `Record<string, Map<K, V>>`/`Record<string, Set<T>>`
- *          nested-container tables (scr_map adapters; a map value's own
- *          cycle capability propagates through the trace fixpoint)
  * Nested index-signature RECORDS ride the record kind like any other.
  * Shared frontend (mapType) / validator. */
 export function isSupportedIndexValue(t: IrType): boolean {
   return (
     t.kind === "dyn" ||
     t.kind === "func" ||
-    t.kind === "map" ||
-    t.kind === "set" ||
     isSupportedMapValue(t)
   );
 }

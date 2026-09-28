@@ -175,6 +175,6 @@ test("a source view requires a source-file root", () => {
   const words = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const nodes = words.getUint32(HEADER_OFFSET_NODES, true);
   words.setUint32(nodes + NODE_LEN, AstKind.Identifier, true);
-  expect(() => new AstFile(bytes)).toThrow("expected a source file root");
+  expect(() => new AstFile(bytes).sourceFile).toThrow("expected a source file root");
   expect(decoded.get("empty.ts")!.file.root.statements).toEqual([]);
 });

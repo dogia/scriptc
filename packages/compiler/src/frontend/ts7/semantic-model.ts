@@ -96,6 +96,7 @@ export class SemanticSnapshot {
     this.disposed = true;
     for (const project of this.projects.values()) project.dispose();
     this.projects.clear();
+    for (const symbol of this.symbols.values()) symbol.dispose();
     this.symbols.clear();
   }
 }
@@ -103,6 +104,7 @@ export class SemanticSnapshot {
 export class SemanticProject {
   private readonly types = new Map<number, SemanticType>();
   private readonly signatures = new Map<number, SemanticSignature>();
+  private readonly cleanups: (() => void)[] = [];
   private disposed = false;
 
   constructor(readonly id: string, readonly snapshot: SemanticSnapshot, readonly program: SemanticProgram) {}
@@ -110,6 +112,13 @@ export class SemanticProject {
   ensureActive(): void {
     this.snapshot.ensureActive();
     if (this.disposed) throw new Error("TypeScript semantic project is disposed");
+  }
+
+  /** Project-local consumers register cleanup without adding a global root.
+   * Registration after disposal is rejected just like semantic queries. */
+  onDispose(cleanup: () => void): void {
+    this.ensureActive();
+    this.cleanups.push(cleanup);
   }
 
   request<T>(method: string, query: SemanticQuery = {}): T {
@@ -216,8 +225,13 @@ export class SemanticProject {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const type of this.types.values()) type.dispose();
     this.types.clear();
     this.signatures.clear();
+    // Detach before invoking callbacks so reentrant disposal is harmless.
+    const cleanups = this.cleanups.slice();
+    this.cleanups.length = 0;
+    for (const cleanup of cleanups) cleanup();
   }
 }
 
@@ -292,6 +306,12 @@ export class SemanticSymbol {
     if (this.exportsCache === undefined) this.exportsCache = this.table("getExportsOfSymbol");
     return this.exportsCache;
   }
+  dispose(): void {
+    this.membersCache?.clear();
+    this.exportsCache?.clear();
+    this.membersCache = undefined;
+    this.exportsCache = undefined;
+  }
   getJsDocTags(checker: SemanticChecker): SemanticJsDocTag[] { return checker.getJsDocTagsOfSymbol(this); }
   getDocumentationComment(checker: SemanticChecker): string { return checker.getDocumentationCommentOfSymbol(this); }
 }
@@ -325,6 +345,7 @@ export class SemanticType {
   readonly texts: string[] | undefined;
   private trueType: number | false = false;
   private falseType: number | false = false;
+  private constituents: SemanticType[] | undefined;
 
   constructor(private readonly data: TypeResponse, readonly project: SemanticProject) {
     this.id = data.id;
@@ -363,8 +384,10 @@ export class SemanticType {
   getTypes(): SemanticType[] | undefined {
     this.project.ensureActive();
     if ((this.flags & (TypeFlags.UnionOrIntersection | TypeFlags.TemplateLiteral)) === 0) return undefined;
-    return this.project.fetchTypes(this.id, "getTypesOfType");
+    if (this.constituents === undefined) this.constituents = this.project.fetchTypes(this.id, "getTypesOfType");
+    return this.constituents;
   }
+  dispose(): void { this.constituents = undefined; }
   getBaseTypes(): SemanticType[] | undefined {
     this.project.ensureActive();
     if (!this.isClassOrInterface()) return undefined;

@@ -3,7 +3,7 @@
  * inferred from timings — and the client-side fast paths must agree with
  * the raw checker's answers on the same objects. */
 
-import { afterAll, expect, test } from "vitest";
+import { afterAll, expect, test, vi } from "vitest";
 import { lowerToIr } from "../../src/frontend/lowering/lowerer.js";
 import { clearWorkspacePackages, registerWorkspacePackage } from "../../src/frontend/workspace-registry.js";
 import { CheckerFacade } from "../../src/frontend/ts7/checker.js";
@@ -280,8 +280,6 @@ test("isArrayType agrees with the raw checker and skips visibly non-object types
 test("union and intersection constituents are fetched once per immutable type", () => {
   const { w } = build();
   const raw = w.p7.project.checker;
-  const calls = new Map<Type, number>();
-  const originals = new Map<Type, () => readonly Type[] | undefined>();
   const compound = new Set<Type>();
   for (const node of collectNodes(w)) {
     const type = raw.getTypeAtLocation(node);
@@ -289,25 +287,16 @@ test("union and intersection constituents are fetched once per immutable type", 
     compound.add(type);
   }
   expect(compound.size).toBeGreaterThan(0);
+  const fetch = vi.spyOn(raw.project, "fetchTypes");
   try {
-    for (const type of compound) {
-      const withConstituents = type as Type & { getTypes(): readonly Type[] | undefined };
-      const original = withConstituents.getTypes.bind(withConstituents);
-      originals.set(type, original);
-      withConstituents.getTypes = () => {
-        calls.set(type, (calls.get(type) ?? 0) + 1);
-        return original();
-      };
-    }
     for (const type of compound) {
       const first = ad.constituentTypes(type);
       expect(ad.constituentTypes(type)).toBe(first);
-      expect(calls.get(type)).toBe(1);
+      expect(type.getTypes()).toBe(first);
+      expect(fetch.mock.calls.filter(([id, method]) => id === type.id && method === "getTypesOfType")).toHaveLength(1);
     }
   } finally {
-    for (const [type, original] of originals) {
-      (type as Type & { getTypes(): readonly Type[] | undefined }).getTypes = original;
-    }
+    fetch.mockRestore();
   }
 });
 

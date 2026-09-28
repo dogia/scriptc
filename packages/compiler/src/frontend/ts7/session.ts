@@ -215,7 +215,7 @@ export class Ts7SessionProgram {
     if (bytes.length === 0) return undefined;
     const ast = new AstFile(bytes, this.session.listMetadata, () => { this.session.timing.materialized(); });
     this.session.timing.fetched(Math.max(0, ast.wire.nodeCount - 2));
-    return this.session.cache.set(path, ast.root, this.snapshot.id, this.project.id);
+    return this.session.cache.set(path, ast.sourceFile, this.snapshot.id, this.project.id);
   }
   getSourceFileNames(): string[] { return this.session.request<string[] | null>("getSourceFileNames", this.query()) ?? []; }
   getSourceFileMetadata(file: string): Ts7SourceMetadata | undefined { return this.getSourceFileMetadataByPath(this.snapshot.paths.canonical(file)); }
