@@ -1405,7 +1405,13 @@ static ScrDynEntry *scr_dyn_entry(ScrDyn *obj, const ScrStr *key) {
 }
 
 static bool scr_dyn_property_same_value(const ScrDyn *a, const ScrDyn *b) {
-  if (a->kind == SCR_DYN_NUM && b->kind == SCR_DYN_NUM) return scr_num_same_value(a->v.num, b->v.num);
+  if (a->kind == SCR_DYN_NUM && b->kind == SCR_DYN_NUM) {
+    double left = a->v.num;
+    double right = b->v.num;
+    if (isnan(left)) return isnan(right);
+    if (left == 0 && right == 0) return signbit(left) == signbit(right);
+    return left == right;
+  }
   return scr_dyn_strict_eq(a, b);
 }
 
