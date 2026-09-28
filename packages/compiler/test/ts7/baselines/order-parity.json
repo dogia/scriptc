@@ -8744,6 +8744,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/optional-string-index/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/optional-string-index/main.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/static-field-updates/main.ts": {
    "order": [
     "<repo>/tests/corpus/static-field-updates/counter.ts",

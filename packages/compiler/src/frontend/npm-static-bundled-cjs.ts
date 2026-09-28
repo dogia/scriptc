@@ -1,17 +1,18 @@
-import ts from "typescript5";
+import * as ts from "./ts7/syntax.js";
+import { helperTokens } from "./helper-tokens.js";
 
 // Bun's cached node-mode interop helper. Match the complete token stream,
 // including its dependencies: helper names alone are not a semantic contract.
-const HELPERS = `
-var __create = Object.create;
-var __getProtoOf = Object.getPrototypeOf;
-var __defProp = Object.defineProperty;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-function __accessProp(key) { return this[key]; }
-var __toESMCache_node;
-var __toESMCache_esm;
-var __toESM = (mod, isNodeMode, target) => {
+const helperSources = new Map<string, string>([
+  ["__create", `var __create = Object.create;`],
+  ["__getProtoOf", `var __getProtoOf = Object.getPrototypeOf;`],
+  ["__defProp", `var __defProp = Object.defineProperty;`],
+  ["__getOwnPropNames", `var __getOwnPropNames = Object.getOwnPropertyNames;`],
+  ["__hasOwnProp", `var __hasOwnProp = Object.prototype.hasOwnProperty;`],
+  ["__accessProp", `function __accessProp(key) { return this[key]; }`],
+  ["__toESMCache_node", `var __toESMCache_node;`],
+  ["__toESMCache_esm", `var __toESMCache_esm;`],
+  ["__toESM", `var __toESM = (mod, isNodeMode, target) => {
   var canCache = mod != null && typeof mod === "object";
   if (canCache) {
     var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
@@ -27,9 +28,15 @@ var __toESM = (mod, isNodeMode, target) => {
   }
   if (canCache) cache.set(mod, to);
   return to;
-};
-var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
-`;
+};`],
+  ["__commonJS", `var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);`],
+]);
+const helperShapes = new Map<string, string>();
+for (const [name, source] of helperSources) {
+  const shape = helperTokens(source);
+  if (shape === null) throw new Error(`invalid canonical helper ${name}`);
+  helperShapes.set(name, shape);
+}
 
 function declaration(stmt: ts.Statement): ts.VariableDeclaration | ts.FunctionDeclaration | null {
   if (ts.isFunctionDeclaration(stmt)) return stmt;
@@ -39,27 +46,10 @@ function declaration(stmt: ts.Statement): ts.VariableDeclaration | ts.FunctionDe
   return null;
 }
 
-function tokens(text: string): string {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
-  const result: string[] = [];
-  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
-    // Formatting and quote style are immaterial. Operators and identifiers
-    // must still match exactly; arbitrary block-bodied helpers stay refused.
-    result.push(`${kind}:${kind === ts.SyntaxKind.StringLiteral ? scanner.getTokenValue() : scanner.getTokenText()}`);
-  }
-  return result.join("|");
-}
-
-const helperShapes = new Map(ts.createSourceFile("helpers.js", HELPERS, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS).statements.map((stmt) => {
-  const decl = declaration(stmt)!;
-  return [(decl.name as ts.Identifier).text, tokens(stmt.getText())];
-}));
-
 interface Edit { start: number; end: number; text: string }
 
 function walk(node: ts.Node, visit: (node: ts.Node) => void): void {
-  visit(node);
-  ts.forEachChild(node, (child) => walk(child, visit));
+  ts.walkPreorder(node, visit);
 }
 
 /** Is a reference part of an assignment, including destructuring or a loop
@@ -98,7 +88,7 @@ export function rewriteBundledFunctionImports(source: string, sf: ts.SourceFile)
   }
   for (const [name, shape] of helperShapes) {
     const actual = declarations.get(name);
-    if (!actual || tokens(actual.stmt.getText(sf)) !== shape) return null;
+    if (!actual || helperTokens(actual.stmt.getText(sf)) !== shape) return null;
   }
   // These initializers must execute before any factory or namespace. The
   // original bundle would throw if a var helper were still undefined.

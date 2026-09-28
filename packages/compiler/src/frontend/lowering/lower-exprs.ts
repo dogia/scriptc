@@ -17,6 +17,7 @@ import { UNSUPPORTED, blockedBindingUseDiag, requiresDynamicPackageDiag, unsuppo
 import { PoisonError, dynUndefinedExpr, jsFuncNameOf, neverTaintedJsType, nodeThrowExpr, own } from "./lowerer.js";
 import { lowerNpmStaticSafeIndexRead, lowerSafeIndexRead, strCharsCall, tryLowerNumericIndexRead } from "./lower-containers.js";
 import { arrayValueRead, arrayValueStore } from "./array-values.js";
+import { lowerOptionalStringIndex } from "./string-index.js";
 import { tryLowerIndexedComparison } from "./indexed-comparison.js";
 import { npmStaticPackageOfPath } from "../npm-static.js";
 import { unsupportedModuleFeatureOf } from "../builtin-modules.js";
@@ -4580,19 +4581,26 @@ export function lowerOptionalNumber(
         // and charAt's "" is the only string-typed answer for an
         // out-of-range or fractional index where JS reads `undefined` —
         // SEMANTICS.md documents the divergence; in-range integer reads
-        // (the loop pattern) are JS-exact. Under noUncheckedIndexedAccess
-        // the read types `string | undefined`, which charAt cannot honor —
-        // fenced.
+        // (the loop pattern) are JS-exact. Optional results instead retain
+        // undefined for missing string properties.
+        const recv = lowerer.lowerExpr(expr.expression);
         const index = lowerer.lowerExpr(expr.argumentExpression);
-        if (index.type.kind === "f64" && lowerer.mapTypeOf(lowerer.typeOf(expr))?.kind === "string") {
-          const recv = lowerer.lowerExpr(expr.expression);
-          return { kind: "strIntrinsic", method: "charAt", receiver: recv, args: [index], type: STRING, loc: locOf(expr) };
+        const resultType = lowerer.mapTypeOf(lowerer.typeOf(expr));
+        if (index.type.kind === "f64" && recv.type.kind === "string") {
+          if (resultType?.kind === "string") {
+            return { kind: "strIntrinsic", method: "charAt", receiver: recv, args: [index], type: STRING, loc: locOf(expr) };
+          }
+          if (resultType?.kind === "union") {
+            const arms = lowerer.unions.get(resultType.unionId)?.arms;
+            if (arms?.length === 2 && lowerer.armTag(resultType.unionId, STRING) >= 0 && lowerer.armTag(resultType.unionId, UNDEFINED_T) >= 0) {
+              return lowerOptionalStringIndex(lowerer, recv, index, resultType, locOf(expr));
+            }
+          }
         }
         lowerer.unsupported(
           "SC1090",
           expr,
-          "string indexing with this index/result shape (a number index typed 'string' lowers to charAt; " +
-            "use .charAt(i) under noUncheckedIndexedAccess)",
+          "string indexing with this index/result shape (expected a number index and a string or string | undefined result)",
         );
       }
       lowerer.unsupported("SC1090", expr, "element access on non-array values");
