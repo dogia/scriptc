@@ -11,6 +11,7 @@ import { Ts7Session } from "../../../packages/compiler/src/frontend/ts7/session.
 import { Ts7Paths, ts7DocumentFile } from "../../../packages/compiler/src/frontend/ts7/session-path.js";
 import { parseSemanticJson } from "../../../packages/compiler/src/frontend/ts7/semantic-json.js";
 import { checkSemanticModel, semanticSource } from "./ts7-semantic-cases.js";
+import { checkAstViews } from "./ts7-ast-views.js";
 
 // The harness connects these inherited descriptors straight to native tsgo.
 // No JavaScript helper reads, interprets, or relays protocol messages.
@@ -240,6 +241,7 @@ try {
   check(!names.includes(hidden), "hidden file remains absent");
   const root = project.program.getSourceFile(file)!;
   const tree = root.file;
+  checkAstViews(tree);
   check(project.program.getSourceFile(file) === root, "cached source identity");
   check(project.program.getCompilerOptions().strict === true, "parsed compiler options");
   check(session.parseConfigFile(configPath).options["strict"] === true, "raw config option decoding");
@@ -301,7 +303,7 @@ try {
     typeText, symbol: ownedSymbol.name, diagnostics: diagnostics.map((diagnostic) => diagnostic.code),
     surrogateBoundary: checkSurrogateBoundary(),
     semanticSurrogateBoundary: checkSemanticSurrogateBoundary(), semanticModel: true, sessionLifecycle: true,
-    echo: true, binaryAst: true, astIdentity: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
+    echo: true, binaryAst: true, astIdentity: true, astViews: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
   }));
 } finally {
   session.close();

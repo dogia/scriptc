@@ -2289,7 +2289,7 @@ export class Lowerer {
       ? this.checker.declarationsOf(symbol).find(ts.isNamespaceImport)
       : undefined;
     if (namespaceDecl === undefined) return null;
-    const importDecl = namespaceDecl.parent.parent;
+    const importDecl = namespaceDecl.parent?.parent;
     if (!ts.isImportDeclaration(importDecl) || !ts.isStringLiteral(importDecl.moduleSpecifier)) return null;
     if (this.externalTypes.has(importDecl.moduleSpecifier.text)) return importDecl.moduleSpecifier.text;
     const dep = this.moduleSourceFileOf(importDecl.getSourceFile(), importDecl.moduleSpecifier);
@@ -2314,22 +2314,22 @@ export class Lowerer {
       let specNode: ts.Expression | undefined;
       let importedName: string | null = null;
       if (ts.isImportSpecifier(decl)) {
-        const importDecl: ts.Node = decl.parent.parent.parent;
+        const importDecl: ts.Node | undefined = decl.parent?.parent?.parent;
         if (ts.isImportDeclaration(importDecl)) specNode = importDecl.moduleSpecifier;
         importedName = (decl.propertyName ?? decl.name).text;
       } else if (ts.isImportClause(decl)) {
         if (ts.isImportDeclaration(decl.parent)) specNode = decl.parent.moduleSpecifier;
         importedName = "default";
       } else if (ts.isNamespaceImport(decl)) {
-        const importDecl: ts.Node = decl.parent.parent;
+        const importDecl: ts.Node | undefined = decl.parent?.parent;
         if (ts.isImportDeclaration(importDecl)) specNode = importDecl.moduleSpecifier;
         importedName = null;
       } else if (ts.isExportSpecifier(decl)) {
-        const exportDecl: ts.Node = decl.parent.parent;
+        const exportDecl: ts.Node | undefined = decl.parent?.parent;
         if (ts.isExportDeclaration(exportDecl)) specNode = exportDecl.moduleSpecifier;
         importedName = (decl.propertyName ?? decl.name).text;
       } else if (ts.isNamespaceExport(decl)) {
-        const exportDecl: ts.Node = decl.parent;
+        const exportDecl: ts.Node | undefined = decl.parent;
         if (ts.isExportDeclaration(exportDecl)) specNode = exportDecl.moduleSpecifier;
         importedName = "*";
       } else {
@@ -2383,11 +2383,11 @@ export class Lowerer {
         spec = d.parent.moduleSpecifier;
         name = "default";
       } else if (d && ts.isImportSpecifier(d)) {
-        const idecl: ts.Node = d.parent.parent.parent;
+        const idecl: ts.Node | undefined = d.parent?.parent?.parent;
         if (ts.isImportDeclaration(idecl)) spec = idecl.moduleSpecifier;
         name = (d.propertyName ?? d.name).text;
       } else if (d && ts.isExportSpecifier(d)) {
-        const edecl: ts.Node = d.parent.parent;
+        const edecl: ts.Node | undefined = d.parent?.parent;
         if (ts.isExportDeclaration(edecl)) spec = edecl.moduleSpecifier;
         name = (d.propertyName ?? d.name).text;
       }
@@ -10118,7 +10118,7 @@ export class Lowerer {
         }
       }
       if (!ts.isNamespaceImport(decl)) return null;
-      const importDecl = decl.parent.parent;
+      const importDecl = decl.parent?.parent;
       if (!ts.isImportDeclaration(importDecl) || !ts.isStringLiteral(importDecl.moduleSpecifier)) return null;
       return canonicalBuiltinModule(importDecl.moduleSpecifier.text);
     }

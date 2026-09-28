@@ -165,8 +165,8 @@ function localTypeBindings(file: ts.SourceFile): Set<string> {
 function isUnshadowedGlobalType(file: ts.SourceFile, node: ts.TypeNode, name: string): boolean {
   if (localTypeBindings(file).has(name)) return false;
   for (let scope = node.parent; scope !== undefined && scope !== file; scope = scope.parent) {
-    const params = (scope as ts.Node & { typeParameters?: readonly ts.TypeParameterDeclaration[] }).typeParameters;
-    if (params?.some((p) => p.name.text === name) === true) return false;
+    const params = scope.typeParameters;
+    if (params?.some((p) => ts.isTypeParameterDeclaration(p) && p.name.text === name) === true) return false;
   }
   return true;
 }

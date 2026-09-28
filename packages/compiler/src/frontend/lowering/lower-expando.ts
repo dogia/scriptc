@@ -87,7 +87,7 @@ function expandoFnSymbolOf(lowerer: Lowerer, recv: ts.Expression): ts.Symbol | n
     return ts.isSourceFile(decl.parent) ? sym : null;
   }
   if (ts.isVariableDeclaration(decl)) {
-    if (!ts.isVariableStatement(decl.parent.parent) || !ts.isSourceFile(decl.parent.parent.parent)) return null;
+    if (!ts.isVariableStatement(decl.parent?.parent) || !ts.isSourceFile(decl.parent?.parent?.parent)) return null;
     if ((ts.getCombinedNodeFlags(decl) & ts.NodeFlags.Const) === 0) return null;
     // The const's VALUE must be a function created here (arrow/function
     // initializer) — a callable TYPE alone can be satisfied by island

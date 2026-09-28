@@ -305,6 +305,11 @@ export interface SemanticStringLiteralType extends SemanticLiteralType { readonl
 export interface SemanticNumberLiteralType extends SemanticLiteralType { readonly value: number; }
 export interface SemanticBigIntLiteralType extends SemanticLiteralType { readonly value: bigint; }
 export interface SemanticBooleanLiteralType extends SemanticLiteralType { readonly value: boolean; }
+export interface SemanticTupleType extends SemanticObjectType {
+  readonly elementFlags: number[];
+  readonly fixedLength: number;
+  readonly readonly: boolean;
+}
 
 /** Kind-specific accessors share one nominal layout. */
 export class SemanticType {

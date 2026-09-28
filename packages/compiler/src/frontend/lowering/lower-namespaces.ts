@@ -493,7 +493,7 @@ function bindingEverWritten(lowerer: Lowerer, sym: ts.Symbol, sf: ts.SourceFile)
         while (ts.isParenthesizedExpression(lhs)) lhs = lhs.expression;
         const throwsBeforeTheWrite = (): boolean => {
           if (k !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(lhs)) return false;
-          let p: ts.Node = n.parent;
+          let p: ts.Node | undefined = n.parent;
           while (ts.isParenthesizedExpression(p)) p = p.parent;
           if (!ts.isExpressionStatement(p)) return false;
           return ambientUndefVarRootOf(lowerer, n.right) !== null;

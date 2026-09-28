@@ -1677,7 +1677,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
         const whole = cjsClassExprWholeExportOf(expr.getSourceFile());
         if (whole) {
           let inBody = false;
-          for (let p: ts.Node = expr.parent; !ts.isSourceFile(p); p = p.parent) {
+          for (let p: ts.Node | undefined = expr.parent; p !== undefined && !ts.isSourceFile(p); p = p.parent) {
             if (ts.isFunctionLike(p) || ts.isClassDeclaration(p) || ts.isClassExpression(p)) {
               inBody = true;
               break;
@@ -7416,7 +7416,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
       if (!ts.isParameter(valDecl) || !ts.isIdentifier(valDecl.name)) continue;
       if (!bindingNeverReassigned(lowerer, valSym, valDecl)) continue;
       const fn = valDecl.parent;
-      if (!(e.pos >= fn.pos && e.end <= fn.end)) continue;
+      if (fn === undefined || !(e.pos >= fn.pos && e.end <= fn.end)) continue;
       const valT = lowerer.typeOf(opnd); // override-aware: implicit bindings compose
       const mapped = lowerer.mapTypeOf(valT);
       if (mapped?.kind !== "union") continue;
@@ -7707,7 +7707,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     if (!isJsSourceFile(expr.getSourceFile())) return null;
     // The enclosing accessor, crossing only arrow boundaries (arrows
     // inherit `this`; any other function form rebinds it).
-    let n: ts.Node = expr.parent;
+    let n: ts.Node | undefined = expr.parent;
     while (n !== undefined && !ts.isGetAccessorDeclaration(n) && !ts.isSetAccessorDeclaration(n)) {
       if (ts.isFunctionLike(n) && !ts.isArrowFunction(n)) return null;
       if (ts.isSourceFile(n)) return null;
@@ -9538,7 +9538,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     // Module level only: a unique-symbol const inside a FUNCTION is a
     // fresh runtime identity per call — one static slot would conflate
     // what JS keeps distinct.
-    if (!ts.isVariableStatement(decl.parent.parent) || !ts.isSourceFile(decl.parent.parent.parent)) return null;
+    if (!ts.isVariableStatement(decl.parent?.parent) || !ts.isSourceFile(decl.parent?.parent?.parent)) return null;
     const init = decl.initializer;
     if (!init || !ts.isCallExpression(init) || init.questionDotToken) return null;
     if (!ts.isIdentifier(init.expression) || init.expression.text !== "Symbol") return null;

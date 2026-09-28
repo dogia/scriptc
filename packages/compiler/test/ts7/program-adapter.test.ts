@@ -6,7 +6,8 @@ import { checkPreflight, loadProgram } from "../../src/frontend/program.js";
 import { tsgoPath } from "../../src/frontend/dts-paths.js";
 import * as ts from "../../src/frontend/ts7/adapter.js";
 import { CheckerFacade } from "../../src/frontend/ts7/checker.js";
-import type { Checker, Project } from "typescript/unstable/sync";
+import type { SemanticChecker as Checker } from "../../src/frontend/ts7/semantic-checker.js";
+import type { Ts7SessionProject as Project } from "../../src/frontend/ts7/session.js";
 
 describe("tsgo virtual filesystem paths", () => {
   test("matches slash-normalized Windows callback paths", () => {
@@ -124,7 +125,7 @@ console.log(required.value);
         };
       },
     }) as Checker;
-    program.checkerFacade = new CheckerFacade(proxy, { project: program.project });
+    program.checkerFacade = new CheckerFacade(proxy, { project: program.project.checker.project });
 
     expect(checkPreflight(load).map((diag) => diag.code)).toContain("SC1013");
     expect(calls.some(([arg]) => Array.isArray(arg) && arg.length > 24)).toBe(true);

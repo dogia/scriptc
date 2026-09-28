@@ -1117,7 +1117,7 @@ function isCreateRequireImport7(program: ts.Program, ident: ts.Identifier): bool
   const symbol = checker.getSymbolAtLocation(ident);
   const decl = symbol ? checker.declarationsOf(symbol)[0] : undefined;
   if (decl === undefined || !ts.isImportSpecifier(decl)) return false;
-  const importDecl = decl.parent.parent.parent;
+  const importDecl = decl.parent?.parent?.parent;
   if (ts.isImportDeclaration(importDecl) && ts.isStringLiteral(importDecl.moduleSpecifier)) {
     const module = canonicalBuiltinModule(importDecl.moduleSpecifier.text);
     const member = decl.propertyName?.text ?? decl.name.text;
@@ -1181,7 +1181,7 @@ function stableCreateRequireBindingReason7(program: ts.Program, decl: ts.Variabl
   if (!cache) stableCreateRequireReasons7.set(program, cache = new Map());
   if (cache.has(decl)) return cache.get(decl)!;
   const check = (): string | null => {
-    const stmt = decl.parent.parent;
+    const stmt = decl.parent?.parent;
     if (!ts.isIdentifier(decl.name) || !ts.isVariableStatement(stmt) || !ts.isSourceFile(stmt.parent)) {
       return "its mutable createRequire binding is outside the module's top level";
     }

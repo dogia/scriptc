@@ -17,8 +17,8 @@
 
 import { afterAll, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
-import type { Node } from "typescript/unstable/ast";
-import type { Signature, Symbol as Ts7Symbol, Type, TypeReference } from "typescript/unstable/sync";
+import type { Node } from "../../src/frontend/ts7/ast-types.js";
+import type { Signature, Symbol as Ts7Symbol, Type, TypeReference } from "../../src/frontend/ts7/semantic-types.js";
 import { CheckerFacade } from "../../src/frontend/ts7/checker.js";
 import { ambientDtsPath, fallbackDtsPath, overridesDtsPath } from "../../src/frontend/program.js";
 import { ad, options7 } from "./harness.js";

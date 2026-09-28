@@ -35,18 +35,18 @@ import { InternalCompilerError } from "../../errors.js";
  *    repeats an IPC request. All paths are verified against the raw checker
  *    and against 5.9.3 by the adapter's suites. */
 
-import type { Node, SourceFile } from "typescript/unstable/ast";
+import type { Node, SourceFile } from "./ast-types.js";
 import type {
-  Checker,
   IndexInfo,
   InterfaceType,
-  Project,
   Signature,
   Symbol as Ts7Symbol,
   Type,
   TypePredicate,
   TypeReference,
-} from "typescript/unstable/sync";
+} from "./semantic-types.js";
+import type { SemanticChecker as Checker } from "./semantic-checker.js";
+import type { SemanticProject as Project } from "./semantic-model.js";
 import { walkPreorder } from "./ast.js";
 import { SignatureKind, SyntaxKind, TypeFlags } from "./enums.js";
 
@@ -832,7 +832,7 @@ export class CheckerFacade {
    * programs see the es2025 lib's Promise (the ambient world forces it). */
   private promiseArgumentOf(type: Type): Type | null {
     if (!type.isTypeReference()) return null;
-    const name = type.getTarget().getSymbol()?.name;
+    const name = type.getTarget()?.getSymbol()?.name;
     if (name !== "Promise" && name !== "PromiseLike") return null;
     const args = this.getTypeArguments(type);
     return args[0] ?? null;

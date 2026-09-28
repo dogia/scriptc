@@ -244,7 +244,7 @@ function lowerBuiltinOptionalDefault(
     // binding (`const { readFileSync } = require("fs")`, renames via
     // `{ readFileSync: rf }`) keys the same tables.
     if (ts.isBindingElement(decl) && decl.name !== undefined && ts.isIdentifier(decl.name)) {
-      const varDecl = decl.parent.parent;
+      const varDecl = decl.parent?.parent;
       if (
         ts.isObjectBindingPattern(decl.parent) &&
         ts.isVariableDeclaration(varDecl) &&
@@ -285,7 +285,7 @@ function lowerBuiltinOptionalDefault(
     }
     if (!ts.isImportSpecifier(decl) && !ts.isExportSpecifier(decl)) return null;
     if (ts.isImportSpecifier(decl)) {
-      const importDecl = decl.parent.parent.parent;
+      const importDecl = decl.parent?.parent?.parent;
       if (!ts.isImportDeclaration(importDecl) || !ts.isStringLiteral(importDecl.moduleSpecifier)) {
         return null;
       }
@@ -5048,9 +5048,9 @@ function lowerJsonCallback(lowerer: Lowerer, node: ts.Expression, role: "replace
         }
       }
     }
-    let importDecl: ts.Node;
-    if (ts.isImportSpecifier(decl)) importDecl = decl.parent.parent.parent;
-    else if (ts.isNamespaceImport(decl)) importDecl = decl.parent.parent;
+    let importDecl: ts.Node | undefined;
+    if (ts.isImportSpecifier(decl)) importDecl = decl.parent?.parent?.parent;
+    else if (ts.isNamespaceImport(decl)) importDecl = decl.parent?.parent;
     else if (ts.isImportClause(decl)) importDecl = decl.parent;
     else return null;
     if (!ts.isImportDeclaration(importDecl) || !ts.isStringLiteral(importDecl.moduleSpecifier)) {

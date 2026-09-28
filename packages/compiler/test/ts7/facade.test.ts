@@ -7,8 +7,9 @@ import { afterAll, expect, test } from "vitest";
 import { lowerToIr } from "../../src/frontend/lowering/lowerer.js";
 import { clearWorkspacePackages, registerWorkspacePackage } from "../../src/frontend/workspace-registry.js";
 import { CheckerFacade } from "../../src/frontend/ts7/checker.js";
-import type { Node } from "typescript/unstable/ast";
-import type { Checker, Type } from "typescript/unstable/sync";
+import type { SemanticChecker as Checker } from "../../src/frontend/ts7/semantic-checker.js";
+import type { Node } from "../../src/frontend/ts7/ast-types.js";
+import type { Type } from "../../src/frontend/ts7/semantic-types.js";
 import { ad, buildTwoWorlds } from "./harness.js";
 import type { TwoWorlds } from "./harness.js";
 import { RICH_TS } from "./fixtures.js";
@@ -489,7 +490,7 @@ console.log("ok");
   }, host);
   worlds.push(w);
   const { proxy, calls } = countingChecker(w.p7.project.checker);
-  const facade = new CheckerFacade(proxy, { project: w.p7.project });
+  const facade = new CheckerFacade(proxy, { project: w.p7.project.checker.project });
   (w.p7 as unknown as { checkerFacade: CheckerFacade | null }).checkerFacade = facade;
   const sf = w.p7.getSourceFile(w.files[0]!)!;
   const cls = sf.statements.find(ad.isClassDeclaration)!;
@@ -519,7 +520,7 @@ test("signature collection batches exact types of deferred function defaults", (
   const w = buildTwoWorlds({ "defaults.ts": `${defaults}\nconsole.log("ok");\n` }, host);
   worlds.push(w);
   const { proxy, calls } = countingChecker(w.p7.project.checker);
-  const facade = new CheckerFacade(proxy, { project: w.p7.project });
+  const facade = new CheckerFacade(proxy, { project: w.p7.project.checker.project });
   (w.p7 as unknown as { checkerFacade: CheckerFacade | null }).checkerFacade = facade;
   const sf = w.p7.getSourceFile(w.files[0]!)!;
   const initializers = sf.statements
@@ -548,7 +549,7 @@ test("class-shape collection batches deferred method default types", () => {
   }, host);
   worlds.push(w);
   const { proxy, calls } = countingChecker(w.p7.project.checker);
-  const facade = new CheckerFacade(proxy, { project: w.p7.project });
+  const facade = new CheckerFacade(proxy, { project: w.p7.project.checker.project });
   (w.p7 as unknown as { checkerFacade: CheckerFacade | null }).checkerFacade = facade;
   const sf = w.p7.getSourceFile(w.files[0]!)!;
   const cls = sf.statements.find(ad.isClassDeclaration)!;
@@ -579,7 +580,7 @@ console.log(pick(42));
   }, host);
   worlds.push(w);
   const { proxy, calls } = countingChecker(w.p7.project.checker);
-  const facade = new CheckerFacade(proxy, { project: w.p7.project });
+  const facade = new CheckerFacade(proxy, { project: w.p7.project.checker.project });
   (w.p7 as unknown as { checkerFacade: CheckerFacade | null }).checkerFacade = facade;
   const sf = w.p7.getSourceFile(w.files[0]!)!;
   const fn = sf.statements.find(ad.isFunctionDeclaration)!;
@@ -620,7 +621,7 @@ console.log(reached(1));
   }, host);
   worlds.push(w);
   const { proxy, calls } = countingChecker(w.p7.project.checker);
-  const facade = new CheckerFacade(proxy, { project: w.p7.project });
+  const facade = new CheckerFacade(proxy, { project: w.p7.project.checker.project });
   // Ts7Program owns one shared facade; install the counting instance so
   // lowering and this assertion observe the same memo/batch traffic.
   (w.p7 as unknown as { checkerFacade: CheckerFacade | null }).checkerFacade = facade;

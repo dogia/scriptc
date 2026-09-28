@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { generateAstViews } from "./generate-ts7-ast-views.mjs";
 
 // The binary AST is an unstable TypeScript protocol. Generate its constants
 // from the installed, pinned package; never translate TypeScript 5 numbers.
@@ -22,7 +23,7 @@ const { ModifierFlags } = require(join(packageRoot, "dist/enums/modifierFlags.js
 const enumNames = [
   "InternalSymbolName", "ModifierFlags", "NodeFlags", "ScriptKind", "ScriptTarget", "SyntaxKind", "TokenFlags",
   "DiagnosticCategory", "ElementFlags", "ModuleKind", "NodeBuilderFlags", "ObjectFlags", "SignatureFlags",
-  "SignatureKind", "SymbolFlags", "TypeFlags", "TypePredicateKind", "ModuleResolutionKind", "ModuleDetectionKind",
+  "SignatureKind", "SymbolFlags", "TypeFlags", "TypePredicateKind", "ModuleResolutionKind", "ModuleDetectionKind", "OuterExpressionKinds", "LanguageVariant",
 ];
 const enumLines = [
   "/* eslint-disable @typescript-eslint/no-duplicate-enum-values -- TypeScript aliases are part of the protocol. */",
@@ -166,7 +167,7 @@ const names = [...new Set(Object.values(protocol.childProperties).flat())].sort(
 const getters = names.map((name) => {
   const match = declarations.match(new RegExp(`get ${name}\\(\\): ([^;]+);`));
   if (!match) throw new Error(`Missing AST child declaration: ${name}`);
-  const type = match[1].replaceAll("RemoteNodeList", "AstNode[]").replaceAll("RemoteNode", "AstNode");
+  const type = match[1].replaceAll("RemoteNodeList", "readonly AstNode[]").replaceAll("RemoteNode", "AstNode");
   const method = type.includes("AstNode |") && type.includes("AstNode[]") ? "child" : type.includes("AstNode[]") ? "childList" : "childNode";
   return `  get ${name}(): ${type} { return this.${method}(${JSON.stringify(name)}); }`;
 });
@@ -184,3 +185,4 @@ if (process.argv.includes("--check")) {
 } else {
   writeFileSync(nodeTarget, after);
 }
+generateAstViews(root, packageRoot, version, process.argv.includes("--check"));

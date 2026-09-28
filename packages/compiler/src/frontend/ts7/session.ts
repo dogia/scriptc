@@ -1,3 +1,4 @@
+import type { SourceFile } from "./ast-types.js";
 import { AstFile, AstNode } from "./ast-node.js";
 import { Ts7RpcClient } from "./rpc-client.js";
 import { SemanticChecker } from "./semantic-checker.js";
@@ -205,7 +206,7 @@ export class Ts7SessionProgram {
     return { snapshot: this.snapshot.id, project: this.project.id, ...(file === undefined ? {} : { file }) };
   }
   getCompilerOptions(): Ts7CompilerOptionsData { this.ensureActive(); return this.project.compilerOptions; }
-  getSourceFile(file: SemanticDocument): AstNode | undefined {
+  getSourceFile(file: SemanticDocument): SourceFile | undefined {
     this.ensureActive();
     const path = this.snapshot.paths.canonical(ts7DocumentFile(file));
     const retained = this.session.cache.get(path, this.snapshot.id, this.project.id);

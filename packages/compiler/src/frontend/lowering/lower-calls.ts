@@ -2425,11 +2425,11 @@ export function implicitMethodCallInfersReturn(lowerer: Lowerer, call: ts.CallEx
     if (!sym) lowerer.unsupported("SC1090", decl.name, "this binding form");
     const implicit = implicitAnyParamSymbolsOf(lowerer, fnNode);
     if (!implicit) lowerer.unsupported("SC1090", fnNode, "this function form"); // defensive: the probe proved it
-    const stmt = decl.parent.parent;
+    const stmt = decl.parent?.parent;
     const info: GenericFnInfo = {
       decl: fnNode,
       baseName: name,
-      qualifiedName: lowerer.qualify(decl.getSourceFile(), nsPathPrefix(stmt, decl) + `${name}%l${decl.getStart()}`),
+      qualifiedName: lowerer.qualify(decl.getSourceFile(), nsPathPrefix(stmt ?? decl, decl) + `${name}%l${decl.getStart()}`),
       typeParams: [],
       instances: new Map(),
       implicitParams: implicit,
@@ -6783,7 +6783,7 @@ function loweredTemplateStrings(
     return (
       !!decl &&
       ts.isFunctionDeclaration(decl) &&
-      (ts.isSourceFile(decl.parent) || lowerer.nsBlocks.get(decl.parent) === "flattened")
+      (ts.isSourceFile(decl.parent) || (decl.parent !== undefined && lowerer.nsBlocks.get(decl.parent) === "flattened"))
     );
   }
 
@@ -9556,7 +9556,7 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
     // arrow/function-expression properties skip that walk and the compiled
     // instances are plain module functions).
     if (fnNode.body) lowerer.rejectThisInObjectMethod(fnNode.body);
-    for (let n: ts.Node = literal.parent; n && !ts.isSourceFile(n); n = n.parent) {
+    for (let n: ts.Node | undefined = literal.parent; n && !ts.isSourceFile(n); n = n.parent) {
       if (ts.isFunctionLike(n)) {
         lowerer.unsupported(
           "SC1090",
@@ -9695,7 +9695,7 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
     if (
       !decl || !ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name) ||
       decl.getSourceFile().isDeclarationFile || decl.initializer === undefined ||
-      !ts.isVariableStatement(decl.parent.parent)
+      !ts.isVariableStatement(decl.parent?.parent)
     ) {
       return null;
     }
@@ -9866,7 +9866,7 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
     // lowerVarDeclList's contract requires a lowered statement for it, so
     // the no-storage family never claims it (catch bindings sit outside a
     // variable statement too and stay out the same way).
-    if (!ts.isVariableStatement(decl.parent.parent)) return false;
+    if (!ts.isVariableStatement(decl.parent?.parent)) return false;
     const sf = decl.getSourceFile();
     if (sf.isDeclarationFile || isJsSourceFile(sf)) return false;
     if (decl.initializer !== undefined && !sideEffectFreeValueExpr(lowerer, decl.initializer)) return false;
@@ -9987,7 +9987,7 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
     if (existing) return existing;
     const name = (decl.name as ts.Identifier).text;
     if (fnNode.asteriskToken) lowerer.unsupported("SC1071", fnNode);
-    for (let n: ts.Node = decl.parent; n !== undefined && !ts.isSourceFile(n); n = n.parent) {
+    for (let n: ts.Node | undefined = decl.parent; n !== undefined && !ts.isSourceFile(n); n = n.parent) {
       if (ts.isFunctionLike(n)) {
         lowerer.unsupported(
           "SC1090",
@@ -10041,11 +10041,11 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
         lowerer.unsupported("SC1031", param);
       }
     }
-    const stmt = decl.parent.parent; // declarator → list → statement (nsPathPrefix wants the statement)
+    const stmt = decl.parent?.parent; // declarator → list → statement (nsPathPrefix wants the statement)
     const info: GenericFnInfo = {
       decl: fnNode,
       baseName: name,
-      qualifiedName: lowerer.qualify(decl.getSourceFile(), nsPathPrefix(stmt, decl) + name),
+      qualifiedName: lowerer.qualify(decl.getSourceFile(), nsPathPrefix(stmt ?? decl, decl) + name),
       typeParams,
       instances: new Map(),
     };
@@ -10347,7 +10347,6 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
         thisT.kind !== "dyn" &&
         thisT.kind !== "jsval" &&
         (!thisArg || ts.isIdentifier(thisArg) || ts.isLiteralExpression(thisArg) ||
-          thisArg.kind === ts.SyntaxKind.UndefinedKeyword ||
           thisArg.kind === ts.SyntaxKind.NullKeyword ||
           isUnitType(thisT));
       if (provablyNot) {

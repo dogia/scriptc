@@ -1340,7 +1340,7 @@ function isEmitForwardSpread(lowerer: Lowerer, method: ts.MethodDeclaration, id:
 function isWriteTarget(id: ts.Identifier): boolean {
   let n: ts.Node = id;
   for (;;) {
-    const p: ts.Node = n.parent;
+    const p: ts.Node | undefined = n.parent;
     if (ts.isBinaryExpression(p)) {
       const k = p.operatorToken.kind;
       return p.left === n && k >= ts.SyntaxKind.FirstAssignment && k <= ts.SyntaxKind.LastAssignment;

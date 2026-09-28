@@ -633,7 +633,7 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
   // keeps the contextual fallback (a bare-null field whose satisfies
   // target names the wider slot type).
   {
-    let p: ts.Node = expr.parent;
+    let p: ts.Node | undefined = expr.parent;
     while (ts.isParenthesizedExpression(p)) p = p.parent;
     if (ts.isSatisfiesExpression(p)) {
       const own = lowerer.typeOf(expr);
@@ -861,8 +861,8 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
   // omitted property from a present property whose value is undefined.
   const topLevelJsDecl = ts.isVariableDeclaration(expr.parent) &&
     expr.parent.initializer === expr &&
-    ts.isVariableStatement(expr.parent.parent.parent) &&
-    ts.isSourceFile(expr.parent.parent.parent.parent);
+    ts.isVariableStatement(expr.parent?.parent?.parent) &&
+    ts.isSourceFile(expr.parent?.parent?.parent?.parent);
   const assignedProperties = expr.properties.filter(
     (prop): prop is ts.PropertyAssignment | ts.ShorthandPropertyAssignment =>
       ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop),
@@ -1995,7 +1995,7 @@ export function lowerShorthandValue(lowerer: Lowerer, prop: ts.ShorthandProperty
     const decl = lowerer.checker.declarationsOf(resolved)[0];
     if (
       sig && decl && ts.isFunctionDeclaration(decl) &&
-      (ts.isSourceFile(decl.parent) || lowerer.nsBlocks.get(decl.parent) === "flattened")
+      (ts.isSourceFile(decl.parent) || (decl.parent !== undefined && lowerer.nsBlocks.get(decl.parent) === "flattened"))
     ) {
       lowerer.noteEdge(sig.name);
       const funcType: IrType = {

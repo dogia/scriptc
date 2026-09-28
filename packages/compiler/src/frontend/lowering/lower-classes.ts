@@ -3141,7 +3141,7 @@ export function staticFieldWriteTarget(lowerer: Lowerer, access: ts.PropertyAcce
    * Node for each shape. */
   function namedEvaluationName(expr: ts.ClassExpression): string {
     if (expr.name) return expr.name.text;
-    let p: ts.Node = expr.parent;
+    let p: ts.Node | undefined = expr.parent;
     while (ts.isParenthesizedExpression(p)) p = p.parent;
     if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name) && p.initializer !== undefined) return p.name.text;
     if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(p.left)) return p.left.text;
@@ -3185,7 +3185,7 @@ export function staticFieldWriteTarget(lowerer: Lowerer, access: ts.PropertyAcce
         "class expressions inside generic functions (each instantiation would need its own class)",
       );
     }
-    for (let p: ts.Node = expr.parent; !ts.isSourceFile(p); p = p.parent) {
+    for (let p: ts.Node | undefined = expr.parent; p !== undefined && !ts.isSourceFile(p); p = p.parent) {
       if (ts.isFunctionLike(p) || ts.isClassStaticBlockDeclaration(p)) {
         lowerer.unsupported(
           "SC1090",
@@ -3213,7 +3213,7 @@ export function staticFieldWriteTarget(lowerer: Lowerer, access: ts.PropertyAcce
     // Anything subtler (multi-declarator statements, arguments evaluated
     // after other side effects) is a named fence, never a reordering.
     if (info.staticFields.length > 0 || (info.staticBlocks?.length ?? 0) > 0) {
-      let holder: ts.Node = expr.parent;
+      let holder: ts.Node | undefined = expr.parent;
       while (
         ts.isParenthesizedExpression(holder) || ts.isClassExpression(holder) ||
         ts.isHeritageClause(holder) || ts.isExpressionWithTypeArguments(holder)
@@ -3720,7 +3720,7 @@ export function collectVirtualJsMethods(lowerer: Lowerer, files: readonly ts.Sou
         const seen = new Set<ts.Type>();
         const markBases = (type: ts.Type): void => {
           const target = type.isTypeReference() ? type.getTarget() : type;
-          if (!target.isClassOrInterface() || seen.has(target)) return;
+          if (target === undefined || !target.isClassOrInterface() || seen.has(target)) return;
           seen.add(target);
           for (const base of lowerer.checker.getBaseTypes(target)) {
             for (const name of names) {

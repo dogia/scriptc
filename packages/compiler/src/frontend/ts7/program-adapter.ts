@@ -22,10 +22,9 @@ import { Ts7Api } from "./rpc-api.js";
 import type {
   CompilerOptions,
   Diagnostic,
-  Project,
-  Snapshot,
-} from "typescript/unstable/sync";
-import type { SourceFile } from "typescript/unstable/ast";
+} from "./semantic-types.js";
+import type { SourceFile } from "./ast-types.js";
+import type { Ts7SessionProject as Project, Ts7SessionSnapshot as Snapshot } from "./session.js";
 import { CheckerFacade } from "./checker.js";
 import { moduleDetectionKindName, moduleKindName, moduleResolutionKindName, scriptTargetName, ScriptTarget } from "./enums.js";
 import { tsgoPath } from "../dts-paths.js";
@@ -236,7 +235,7 @@ export class Ts7Program {
   }
 
   getTypeChecker(): CheckerFacade {
-    this.checkerFacade ??= new CheckerFacade(this.project.checker, { project: this.project });
+    this.checkerFacade ??= new CheckerFacade(this.project.checker, { project: this.project.checker.project });
     return this.checkerFacade;
   }
 

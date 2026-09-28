@@ -6156,7 +6156,7 @@ const ITER_TERMINALS = new Set(["toArray", "forEach", "reduce", "some", "every",
     // when nothing observes the intersection: the result is DISCARDED
     // (expression-statement position — the mutate-in-place spelling), or
     // the intersection collapses back to the target's own mapped record.
-    let parent: ts.Node = call.parent;
+    let parent: ts.Node | undefined = call.parent;
     while (ts.isParenthesizedExpression(parent) || ts.isVoidExpression(parent)) parent = parent.parent;
     const discarded = ts.isExpressionStatement(parent);
     if (!discarded) {

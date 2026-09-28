@@ -1,9 +1,9 @@
-import { AstNode } from "./ast-node.js";
+import type { SourceFile } from "./ast-types.js";
 import type { Ts7SnapshotChangeData as Ts7SnapshotChanges } from "./session-schema.generated.js";
 export type { Ts7SnapshotChangeData as Ts7SnapshotChanges } from "./session-schema.generated.js";
 
 interface CachedSource {
-  file: AstNode;
+  file: SourceFile;
   parseOptions: string;
   hash: string;
   references: Set<string>;
@@ -21,12 +21,12 @@ export class Ts7SourceCache {
   private readonly files = new Map<string, CachedSource[]>();
   private readonly paths = new Map<number, SnapshotPaths>();
 
-  get(path: string, snapshot: number, project: string): AstNode | undefined {
+  get(path: string, snapshot: number, project: string): SourceFile | undefined {
     const ref = reference(snapshot, project);
     return this.files.get(path)?.find((entry) => entry.references.has(ref))?.file;
   }
 
-  set(path: string, file: AstNode, snapshot: number, project: string): AstNode {
+  set(path: string, file: SourceFile, snapshot: number, project: string): SourceFile {
     let entries = this.files.get(path);
     if (entries === undefined) {
       entries = [];

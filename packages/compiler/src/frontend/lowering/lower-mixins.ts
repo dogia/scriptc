@@ -399,7 +399,7 @@ function instantiateMixinCall(lowerer: Lowerer, call: ts.CallExpression, shape: 
   // enters through its heritage clause (the extends expression of a
   // once-evaluated declaration).
   let prev: ts.Node = call;
-  for (let p: ts.Node = call.parent; !ts.isSourceFile(p); prev = p, p = p.parent) {
+  for (let p: ts.Node | undefined = call.parent; p !== undefined && !ts.isSourceFile(p); prev = p, p = p.parent) {
     if (ts.isFunctionLike(p) || ts.isClassStaticBlockDeclaration(p)) {
       lowerer.unsupported(
         "SC1090",
@@ -571,7 +571,7 @@ export function mixinIntersectionInstanceType(lowerer: Lowerer, widened: ts.Type
  * discovery/emit drift. */
 function pinnedMixinCallPosition(call: ts.CallExpression): boolean {
   let n: ts.Node = call;
-  for (let p: ts.Node = n.parent; !ts.isSourceFile(p); n = p, p = p.parent) {
+  for (let p: ts.Node | undefined = n.parent; p !== undefined && !ts.isSourceFile(p); n = p, p = p.parent) {
     if (ts.isParenthesizedExpression(p)) continue;
     if (ts.isCallExpression(p) && p.arguments.length === 1 && p.arguments[0] === n) continue;
     if (ts.isVariableDeclaration(p) && p.initializer === n) {
@@ -589,7 +589,7 @@ function pinnedMixinCallPosition(call: ts.CallExpression): boolean {
  * statement, or a top-level class declaration's heritage clause. */
 function staticsEvalStatementOf(call: ts.CallExpression): ts.Statement | null {
   let n: ts.Node = call;
-  for (let p: ts.Node = n.parent; ; n = p, p = p.parent) {
+  for (let p: ts.Node | undefined = n.parent; p !== undefined; n = p, p = p.parent) {
     if (ts.isParenthesizedExpression(p)) continue;
     if (ts.isCallExpression(p) && p.arguments.length === 1 && p.arguments[0] === n) continue;
     if (
@@ -604,4 +604,5 @@ function staticsEvalStatementOf(call: ts.CallExpression): ts.Statement | null {
     if (ts.isClassDeclaration(p) && ts.isSourceFile(p.parent) && ts.isHeritageClause(n)) return p;
     return null;
   }
+  return null;
 }

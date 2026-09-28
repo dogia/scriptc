@@ -60,7 +60,7 @@ test("production RPC bridge preserves pinned SDK parser/checker behavior", () =>
     expect(nativeClient.parseConfigFile(config)).toEqual(sdk.parseConfigFile(config));
     const expected = sdk.updateSnapshot({ openProjects: [config] });
     const actual = nativeClient.updateSnapshot({ openProjects: [config] });
-    const facts = programFacts(actual, config, path);
+    const facts = programFacts(actual as unknown as Snapshot, config, path);
     expect(facts).toEqual(programFacts(expected, config, path));
     expect(facts.type).toBe("42");
     expect(facts.symbol).toBe("answer");
@@ -80,14 +80,19 @@ test("production RPC bridge preserves pinned SDK parser/checker behavior", () =>
     expect(symbol!.declarations[0]!.resolve()).toBe(symbol!.declarations[0]!.resolve());
     const declaration = symbol!.declarations[0]!.resolve()!;
     expect(declaration).toBeInstanceOf(AstNode);
-    const variable = source.statements[0]! as import("typescript/unstable/ast").VariableStatement;
+    const variable = source.statements[0]! as import("../../src/frontend/ts7/ast-types.js").VariableStatement;
     expect(variable.declarationList.declarations[0]).toBe(declaration);
     expect(project.checker.getSymbolAtLocation(variable.declarationList.declarations[0]!.name)).toBe(symbol);
     expect(project.checker.getTypeAtLocation(variable.declarationList.declarations[0]!.name)).toBe(first);
     const expectedSource = expected.getProject(config)!.program.getSourceFile(path)!;
-    expect(source.statements.pos).toBe(expectedSource.statements.pos);
-    expect(source.statements.end).toBe(expectedSource.statements.end);
-    expect(source.statements.transformFlags).toBe(expectedSource.statements.transformFlags);
+    expect(source.statements.map((node) => [node.kind, node.pos, node.end])).toEqual(
+      expectedSource.statements.map((node) => [node.kind, node.pos, node.end]),
+    );
+    // Native arrays retain element identity; SDK-only properties no longer
+    // need a JavaScript Object.assign adapter on production source lists.
+    expect(Array.isArray(source.statements)).toBe(true);
+    expect(Object.hasOwn(source.statements, "pos")).toBe(false);
+    expect(Object.hasOwn(source.statements, "transformFlags")).toBe(false);
     expect(source.referencedFiles).toBe(source.referencedFiles);
     expect(source.imports).toBe(source.imports);
   } finally {
@@ -164,12 +169,12 @@ test("native semantic registries preserve project scope and snapshot lifetimes",
   }
   try {
     const first = api.updateSnapshot({ openProjects: [firstConfig, secondConfig] });
-    const actual = facts(first);
+    const actual = facts(first as unknown as Snapshot);
     expect(actual.shape).toEqual(facts(sdk.updateSnapshot({ openProjects: [firstConfig, secondConfig] })).shape);
     expect(actual.signatureA).toBeInstanceOf(SemanticSignature);
     expect(actual.typeA).toBeInstanceOf(SemanticType);
     const second = api.updateSnapshot({ openProjects: [] });
-    const next = facts(second);
+    const next = facts(second as unknown as Snapshot);
     expect(next.fileA).toBe(actual.fileA);
     expect(next.typeA).not.toBe(actual.typeA);
     expect(next.symbolA).not.toBe(actual.symbolA);

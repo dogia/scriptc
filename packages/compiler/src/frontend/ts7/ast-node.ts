@@ -2,13 +2,15 @@ import { AstDecodeError } from "./ast-bytes.js";
 import { AstKind, AstModifierFlags, AstNodeFlags, KIND_NODE_LIST } from "./ast-schema.generated.js";
 import { astLineOfPosition, astLineStarts, astSkipTrivia } from "./ast-text.js";
 import { AstWireFile, parseAstNodeHandle, type AstFileReference } from "./ast-wire.js";
+import type { SourceFile } from "./ast-types.js";
+import { SyntaxKind, NodeFlags } from "./enums.js";
 
 /** One immutable AST response owns one object per node and one array per
  * list. Parent access is lazy, so resolving a checker handle near the bottom
  * of a deep tree never recursively constructs its ancestors. */
 export class AstFile {
   readonly wire: AstWireFile;
-  readonly root: AstNode;
+  readonly root: SourceFile;
   private readonly nodes = new Map<number, AstNode>();
   private readonly lists = new Map<number, AstNode[]>();
   private readonly references = new Map<number, AstFileReference[]>();
@@ -22,7 +24,8 @@ export class AstFile {
     private readonly materialized?: () => void,
   ) {
     this.wire = new AstWireFile(bytes);
-    this.root = new AstNode(this, 1);
+    if (this.wire.kind(1) !== AstKind.SourceFile) throw new AstDecodeError("expected a source file root");
+    this.root = new AstNode(this, 1) as SourceFile;
     this.nodes.set(1, this.root);
   }
 
@@ -95,10 +98,10 @@ export class AstFile {
 export class AstNode {
   constructor(readonly file: AstFile, readonly index: number) {}
 
-  get kind(): number { return this.file.wire.kind(this.index); }
+  get kind(): SyntaxKind { return this.file.wire.kind(this.index); }
   get pos(): number { return this.file.wire.pos(this.index); }
   get end(): number { return this.file.wire.end(this.index); }
-  get flags(): number { return this.file.wire.flags(this.index); }
+  get flags(): NodeFlags { return this.file.wire.flags(this.index); }
   get data(): number { return this.file.wire.data(this.index); }
   get id(): string { return `${this.index}.${this.kind}.${this.file.root.path}`; }
   get parent(): AstNode | undefined {
@@ -122,7 +125,7 @@ export class AstNode {
     return this.file.wire.kind(index) === KIND_NODE_LIST ? this.file.list(index) : this.file.node(index);
   }
 
-  forEachChild<T>(visitNode: (node: AstNode) => T, visitList?: (nodes: AstNode[]) => T): T | undefined {
+  forEachChild<T>(visitNode: (node: AstNode) => T, visitList?: (nodes: readonly AstNode[]) => T): T | undefined {
     for (const index of this.file.wire.children(this.index)) {
       const kind = this.file.wire.kind(index);
       if (kind === KIND_NODE_LIST) {
@@ -152,7 +155,7 @@ export class AstNode {
     return docs.length === 0 ? undefined : docs;
   }
 
-  getSourceFile(): AstNode { return this.file.root; }
+  getSourceFile(): SourceFile { return this.file.root; }
   getStart(sourceFile?: AstNode, includeJsDocComment?: boolean): number {
     if (this.pos === this.end && this.pos >= 0 && this.kind !== AstKind.EndOfFile) return this.pos;
     const source = sourceFile ?? this.file.root;
@@ -235,31 +238,31 @@ export class AstNode {
   // Generated from typescript@7.0.2; run scripts/generate-ts7-ast-schema.mjs.
   get argument(): AstNode | undefined { return this.childNode("argument"); }
   get argumentExpression(): AstNode | undefined { return this.childNode("argumentExpression"); }
-  get arguments(): AstNode[] | undefined { return this.childList("arguments"); }
+  get arguments(): readonly AstNode[] | undefined { return this.childList("arguments"); }
   get assertsModifier(): AstNode | undefined { return this.childNode("assertsModifier"); }
   get asteriskToken(): AstNode | undefined { return this.childNode("asteriskToken"); }
-  get attributes(): AstNode | AstNode[] | undefined { return this.child("attributes"); }
+  get attributes(): AstNode | readonly AstNode[] | undefined { return this.child("attributes"); }
   get awaitModifier(): AstNode | undefined { return this.childNode("awaitModifier"); }
   get block(): AstNode | undefined { return this.childNode("block"); }
   get body(): AstNode | undefined { return this.childNode("body"); }
   get caseBlock(): AstNode | undefined { return this.childNode("caseBlock"); }
   get catchClause(): AstNode | undefined { return this.childNode("catchClause"); }
   get checkType(): AstNode | undefined { return this.childNode("checkType"); }
-  get children(): AstNode | AstNode[] | undefined { return this.child("children"); }
+  get children(): AstNode | readonly AstNode[] | undefined { return this.child("children"); }
   get className(): AstNode | undefined { return this.childNode("className"); }
-  get clauses(): AstNode[] | undefined { return this.childList("clauses"); }
+  get clauses(): readonly AstNode[] | undefined { return this.childList("clauses"); }
   get closingElement(): AstNode | undefined { return this.childNode("closingElement"); }
   get closingFragment(): AstNode | undefined { return this.childNode("closingFragment"); }
   get colonToken(): AstNode | undefined { return this.childNode("colonToken"); }
-  get comment(): AstNode[] | undefined { return this.childList("comment"); }
+  get comment(): readonly AstNode[] | undefined { return this.childList("comment"); }
   get condition(): AstNode | undefined { return this.childNode("condition"); }
   get constraint(): AstNode | undefined { return this.childNode("constraint"); }
   get declarationList(): AstNode | undefined { return this.childNode("declarationList"); }
-  get declarations(): AstNode[] | undefined { return this.childList("declarations"); }
+  get declarations(): readonly AstNode[] | undefined { return this.childList("declarations"); }
   get defaultType(): AstNode | undefined { return this.childNode("defaultType"); }
   get dotDotDotToken(): AstNode | undefined { return this.childNode("dotDotDotToken"); }
   get elementType(): AstNode | undefined { return this.childNode("elementType"); }
-  get elements(): AstNode[] | undefined { return this.childList("elements"); }
+  get elements(): readonly AstNode[] | undefined { return this.childList("elements"); }
   get elseStatement(): AstNode | undefined { return this.childNode("elseStatement"); }
   get endOfFileToken(): AstNode | undefined { return this.childNode("endOfFileToken"); }
   get equalsGreaterThanToken(): AstNode | undefined { return this.childNode("equalsGreaterThanToken"); }
@@ -272,7 +275,7 @@ export class AstNode {
   get falseType(): AstNode | undefined { return this.childNode("falseType"); }
   get finallyBlock(): AstNode | undefined { return this.childNode("finallyBlock"); }
   get head(): AstNode | undefined { return this.childNode("head"); }
-  get heritageClauses(): AstNode[] | undefined { return this.childList("heritageClauses"); }
+  get heritageClauses(): readonly AstNode[] | undefined { return this.childList("heritageClauses"); }
   get importClause(): AstNode | undefined { return this.childNode("importClause"); }
   get incrementor(): AstNode | undefined { return this.childNode("incrementor"); }
   get indexType(): AstNode | undefined { return this.childNode("indexType"); }
@@ -281,8 +284,8 @@ export class AstNode {
   get label(): AstNode | undefined { return this.childNode("label"); }
   get left(): AstNode | undefined { return this.childNode("left"); }
   get literal(): AstNode | undefined { return this.childNode("literal"); }
-  get members(): AstNode[] | undefined { return this.childList("members"); }
-  get modifiers(): AstNode[] | undefined { return this.childList("modifiers"); }
+  get members(): readonly AstNode[] | undefined { return this.childList("members"); }
+  get modifiers(): readonly AstNode[] | undefined { return this.childList("modifiers"); }
   get moduleReference(): AstNode | undefined { return this.childNode("moduleReference"); }
   get moduleSpecifier(): AstNode | undefined { return this.childNode("moduleSpecifier"); }
   get name(): AstNode | undefined { return this.childNode("name"); }
@@ -297,9 +300,9 @@ export class AstNode {
   get operand(): AstNode | undefined { return this.childNode("operand"); }
   get operatorToken(): AstNode | undefined { return this.childNode("operatorToken"); }
   get parameterName(): AstNode | undefined { return this.childNode("parameterName"); }
-  get parameters(): AstNode[] | undefined { return this.childList("parameters"); }
+  get parameters(): readonly AstNode[] | undefined { return this.childList("parameters"); }
   get postfixToken(): AstNode | undefined { return this.childNode("postfixToken"); }
-  get properties(): AstNode[] | undefined { return this.childList("properties"); }
+  get properties(): readonly AstNode[] | undefined { return this.childList("properties"); }
   get propertyName(): AstNode | undefined { return this.childNode("propertyName"); }
   get qualifier(): AstNode | undefined { return this.childNode("qualifier"); }
   get questionDotToken(): AstNode | undefined { return this.childNode("questionDotToken"); }
@@ -307,24 +310,24 @@ export class AstNode {
   get readonlyToken(): AstNode | undefined { return this.childNode("readonlyToken"); }
   get right(): AstNode | undefined { return this.childNode("right"); }
   get statement(): AstNode | undefined { return this.childNode("statement"); }
-  get statements(): AstNode[] | undefined { return this.childList("statements"); }
+  get statements(): readonly AstNode[] | undefined { return this.childList("statements"); }
   get tag(): AstNode | undefined { return this.childNode("tag"); }
   get tagName(): AstNode | undefined { return this.childNode("tagName"); }
-  get tags(): AstNode[] | undefined { return this.childList("tags"); }
+  get tags(): readonly AstNode[] | undefined { return this.childList("tags"); }
   get template(): AstNode | undefined { return this.childNode("template"); }
-  get templateSpans(): AstNode[] | undefined { return this.childList("templateSpans"); }
+  get templateSpans(): readonly AstNode[] | undefined { return this.childList("templateSpans"); }
   get thenStatement(): AstNode | undefined { return this.childNode("thenStatement"); }
   get thisArg(): AstNode | undefined { return this.childNode("thisArg"); }
   get trueType(): AstNode | undefined { return this.childNode("trueType"); }
   get tryBlock(): AstNode | undefined { return this.childNode("tryBlock"); }
   get tupleNameSource(): AstNode | undefined { return this.childNode("tupleNameSource"); }
   get type(): AstNode | undefined { return this.childNode("type"); }
-  get typeArguments(): AstNode[] | undefined { return this.childList("typeArguments"); }
+  get typeArguments(): readonly AstNode[] | undefined { return this.childList("typeArguments"); }
   get typeExpression(): AstNode | undefined { return this.childNode("typeExpression"); }
   get typeName(): AstNode | undefined { return this.childNode("typeName"); }
   get typeParameter(): AstNode | undefined { return this.childNode("typeParameter"); }
-  get typeParameters(): AstNode[] | undefined { return this.childList("typeParameters"); }
-  get types(): AstNode[] | undefined { return this.childList("types"); }
+  get typeParameters(): readonly AstNode[] | undefined { return this.childList("typeParameters"); }
+  get types(): readonly AstNode[] | undefined { return this.childList("types"); }
   get value(): AstNode | undefined { return this.childNode("value"); }
   get variableDeclaration(): AstNode | undefined { return this.childNode("variableDeclaration"); }
   get whenFalse(): AstNode | undefined { return this.childNode("whenFalse"); }

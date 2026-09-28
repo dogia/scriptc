@@ -29,7 +29,7 @@ export function isBuiltinMemberImport(
   const symbol = checker.getSymbolAtLocation(ident);
   const decl = symbol ? checker.declarationsOf(symbol)[0] : undefined;
   if (decl !== undefined && ts.isImportSpecifier(decl)) {
-    const importDecl = decl.parent.parent.parent;
+    const importDecl = decl.parent?.parent?.parent;
     if (ts.isImportDeclaration(importDecl) && ts.isStringLiteral(importDecl.moduleSpecifier)) {
       const member = decl.propertyName?.text ?? decl.name.text;
       if (canonicalBuiltinModule(importDecl.moduleSpecifier.text) === moduleName && member === memberName) {
@@ -64,7 +64,7 @@ function isBuiltinNamespaceImport(
   const decl = symbol ? checker.declarationsOf(symbol)[0] : undefined;
   let importDecl: ts.ImportDeclaration | undefined;
   if (decl !== undefined && ts.isNamespaceImport(decl)) {
-    const candidate = decl.parent.parent;
+    const candidate = decl.parent?.parent;
     if (ts.isImportDeclaration(candidate)) importDecl = candidate;
   } else if (decl !== undefined && ts.isImportClause(decl) && decl.name !== undefined) {
     if (ts.isImportDeclaration(decl.parent)) importDecl = decl.parent;

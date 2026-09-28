@@ -946,7 +946,7 @@ export function mapType(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
  * family (every SITE using the value already carries its own fence). */
 function classExprNeverRegisters(decl: ts.ClassLikeDeclaration): boolean {
   if (!ts.isClassExpression(decl)) return false;
-  for (let p: ts.Node = decl.parent; !ts.isSourceFile(p); p = p.parent) {
+  for (let p: ts.Node | undefined = decl.parent; p !== undefined && !ts.isSourceFile(p); p = p.parent) {
     if (ts.isFunctionLike(p) || ts.isClassStaticBlockDeclaration(p)) return true;
   }
   return false;
@@ -3036,7 +3036,7 @@ function mapClassView(type: ts.Type, ctx: TypeMapperCtx, seen = new Set<ts.Type>
       (decl) => ts.isInterfaceDeclaration(decl) && !ctx.isStdlibFile(decl.getSourceFile()),
     )) return undefined;
     const target = type.isTypeReference() ? type.getTarget() : type;
-    if (!target.isClassOrInterface()) return undefined;
+    if (target === undefined || !target.isClassOrInterface()) return undefined;
     bases = checker.getBaseTypes(target);
     if (type.isTypeReference() && target.isTypeReference()) {
       const params = checker.getTypeArguments(target);
@@ -3116,7 +3116,7 @@ function mapCollectionView(type: ts.Type, ctx: TypeMapperCtx, seen = new Set<ts.
     (decl) => ts.isInterfaceDeclaration(decl) && !ctx.isStdlibFile(decl.getSourceFile()),
   )) return null;
   const target = type.getTarget();
-  if (!target.isClassOrInterface() || seen.has(target) || seen.size >= MAP_TYPE_MAX_DEPTH) return null;
+  if (target === undefined || !target.isClassOrInterface() || seen.has(target) || seen.size >= MAP_TYPE_MAX_DEPTH) return null;
   const bases = checker.getBaseTypes(target);
   if (bases.length !== 1) return null;
   if (checker.getCallSignatures(type).length || checker.getConstructSignatures(type).length ||
@@ -3234,8 +3234,8 @@ function mapNarrowedTypeParam(type: ts.Type, ctx: TypeMapperCtx): IrType | null 
 function mapBoundIndexedAccess(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
   const { checker, resolveTypeParamTs } = ctx;
   if (!resolveTypeParamTs || !type.isIndexedAccessType()) return null;
-  const resolveSide = (t: ts.Type): ts.Type | null =>
-    t.flags & ts.TypeFlags.TypeParameter ? resolveTypeParamTs(t) : t;
+  const resolveSide = (t: ts.Type | undefined): ts.Type | null =>
+    t === undefined ? null : t.flags & ts.TypeFlags.TypeParameter ? resolveTypeParamTs(t) : t;
   const objT = resolveSide(type.getObjectType());
   const idxT = resolveSide(type.getIndexType());
   if (!objT || !idxT) return null;
@@ -3281,7 +3281,7 @@ export function isConstAssertionTypeNode(t: ts.TypeNode): boolean {
  * structure between (object/array literals, property assignments,
  * parens) — the positions `as const` makes deeply readonly. */
 export function underConstAssertion(n: ts.Node): boolean {
-  for (let cur: ts.Node = n; cur !== undefined && !ts.isSourceFile(cur); cur = cur.parent) {
+  for (let cur: ts.Node | undefined = n; cur !== undefined && !ts.isSourceFile(cur); cur = cur.parent) {
     if (ts.isAsExpression(cur)) return isConstAssertionTypeNode(cur.type);
     if (
       !ts.isPropertyAssignment(cur) &&
@@ -3349,12 +3349,13 @@ function mapGenericIndexedAccess(type: ts.Type, ctx: TypeMapperCtx): IrType | nu
   const { resolveTypeParam, shapes } = ctx;
   if (!resolveTypeParam || !type.isIndexedAccessType()) return null;
   const obj = type.getObjectType();
-  if (!(obj.flags & ts.TypeFlags.TypeParameter)) return null;
+  if (obj === undefined || !(obj.flags & ts.TypeFlags.TypeParameter)) return null;
   const bound = resolveTypeParam(obj);
   if (!bound || bound.kind !== "record") return null;
   const shape = shapes.get(bound.shapeId);
   if (!shape || shape.tuple) return null;
   const idx = type.getIndexType();
+  if (idx === undefined) return null;
   let covered: IrType[] | null = null;
   if (idx.isStringLiteralType()) {
     const f = shape.fields.find((x) => x.name === idx.value);

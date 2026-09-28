@@ -1,14 +1,14 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
-import type { AstNode } from "./ast-node.js";
+import type { SourceFile } from "./ast-types.js";
 import { Ts7SourceCache, type Ts7SnapshotChanges } from "./session-cache.js";
 
 const require = createRequire(import.meta.url);
 const { SourceFileCache } = require(join(dirname(require.resolve("typescript/package.json")), "dist/api/sourceFileCache.js")) as {
   SourceFileCache: new () => {
-    getRetained(path: string, snapshot: number, project: string): AstNode | undefined;
-    set(path: string, file: AstNode, options: string, hash: string, snapshot: number, project: string): AstNode;
+    getRetained(path: string, snapshot: number, project: string): SourceFile | undefined;
+    set(path: string, file: SourceFile, options: string, hash: string, snapshot: number, project: string): SourceFile;
     retainForSnapshot(snapshot: number, previous: number, changes?: Ts7SnapshotChanges): void;
     releaseSnapshot(snapshot: number): void;
     clear(): void;
@@ -18,8 +18,8 @@ const { SourceFileCache } = require(join(dirname(require.resolve("typescript/pac
 
 // Cache tests need identity and the two wire keys, not a parser response.
 // The live native session test supplies real immutable AstFile instances.
-function source(hash: string, options = "0"): AstNode {
-  return { file: { wire: { contentHash: hash, parseOptionsKey: options } } } as AstNode;
+function source(hash: string, options = "0"): SourceFile {
+  return { file: { wire: { contentHash: hash, parseOptionsKey: options } } } as SourceFile;
 }
 
 test("the cache separates content, parser options, paths and retention owners", () => {

@@ -5,10 +5,11 @@ import { dirname, join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import type { SourceFile, Node } from "typescript/unstable/ast";
 import { AstFile, AstNode } from "./ast-node.js";
-import { AstKind, KIND_NODE_LIST, astChildNames } from "./ast-schema.generated.js";
+import { AstKind, KIND_NODE_LIST, astChildNames, HEADER_OFFSET_NODES, NODE_LEN } from "./ast-schema.generated.js";
 import { ts7Executable } from "./rpc-api.js";
 import { Ts7RpcClient } from "./rpc-client.js";
 import { spawnTs7Wire } from "./rpc-process.js";
+import { isJSDocTypeLiteral, isJSDocPropertyTag } from "./ast-guards.generated.js";
 
 const require = createRequire(import.meta.url);
 const sdkRoot = dirname(require.resolve("typescript/package.json"));
@@ -50,6 +51,7 @@ const cases: Record<string, string> = {
   "view.tsx": 'const view = <main aria-label="a"><p>Hello 😀</p>{value}<Thing {...props} /></main>;\nconst fragment = <><span /> text </>;',
   "types.d.ts": 'export interface Thing { name: string; }\ndeclare module "ambient.name" { export const a: number; }\n',
   "docs.js": '/** @typedef {{ name: string, count?: number }} Item */\n/** @param {Item} item Description\n * @returns {string} result\n * @deprecated use another\n */\nexport function show(item) { return item.name; }',
+  "properties.js": '/** @typedef {Object} Options\n * @property {string} name\n * @property {number} count\n */\n/** @type {Options} */ const options = { name: "x", count: 2 };',
   "missing.ts": 'const incomplete = ;\nfunction f( {\n',
   "empty.ts": "",
 };
@@ -77,6 +79,23 @@ afterAll(() => { if (directory) rmSync(directory, { recursive: true, force: true
 function ids(nodes: readonly Node[] | readonly AstNode[] | undefined): (number | undefined)[] | undefined {
   return nodes?.map((n) => (n as OracleNode).index);
 }
+
+test("JSDoc property refinements describe the pinned native wire", () => {
+  const { file, oracle } = decoded.get("properties.js")!;
+  let checked = 0;
+  for (let index = 1; index < file.wire.nodeCount; index++) {
+    if (file.wire.kind(index) !== AstKind.JSDocTypeLiteral) continue;
+    const node = file.node(index);
+    if (!isJSDocTypeLiteral(node)) throw new Error("invalid JSDoc kind");
+    const tag = node.jsdocPropertyTags;
+    expect(isJSDocPropertyTag(tag)).toBe(true);
+    expect(tag?.kind).toBe(AstKind.JSDocPropertyTag);
+    expect(tag?.index).toBe(Reflect.get(oracle.getOrCreateNodeAtIndex(index), "jsdocPropertyTags").index);
+    expect(tag).toBe(node.childNode("jsdocPropertyTags"));
+    checked++;
+  }
+  expect(checked).toBeGreaterThan(0);
+});
 
 for (const name of [...Object.keys(cases), "model.ts"]) {
   test(`nodes, named children, flags, text and spans match TypeScript: ${name}`, () => {
@@ -149,4 +168,13 @@ test("checker handles reject cross-file, wrong-kind and nil identities", () => {
   expect(() => file.resolve(`1.${AstKind.Identifier}.${file.root.path}`)).toThrow("kind");
   expect(() => file.resolve(`1.${AstKind.SourceFile}.${file.root.path}.other`)).toThrow("another source file");
   expect(() => file.resolve(`0.${AstKind.SourceFile}.${file.root.path}`)).toThrow("nil");
+});
+
+test("a source view requires a source-file root", () => {
+  const bytes = decoded.get("main.ts")!.bytes.slice();
+  const words = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const nodes = words.getUint32(HEADER_OFFSET_NODES, true);
+  words.setUint32(nodes + NODE_LEN, AstKind.Identifier, true);
+  expect(() => new AstFile(bytes)).toThrow("expected a source file root");
+  expect(decoded.get("empty.ts")!.file.root.statements).toEqual([]);
 });

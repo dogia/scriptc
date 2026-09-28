@@ -3256,8 +3256,9 @@ function neverReassigned(lowerer: Lowerer, sym: ts.Symbol): boolean {
   // source file for module-level bindings. Writes anywhere inside
   // (nested closures included) disqualify.
   let scope: ts.Node = decl;
-  while (!ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
-  const root: ts.Node = ts.isFunctionLike(scope.parent) ? scope.parent : scope.parent;
+  while (scope.parent !== undefined && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  const root = scope.parent;
+  if (root === undefined) return false;
   let written = false;
   const hitsSym = (n: ts.Node): boolean => {
     if (ts.isIdentifier(n) && lowerer.checker.getSymbolAtLocation(n) === sym) return true;

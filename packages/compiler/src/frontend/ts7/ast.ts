@@ -1,6 +1,7 @@
-/* The AST layer of the census under the 5.9.3 names, over 7.0.2's client
- * AST (typescript/unstable/ast — fully client-side, no IPC anywhere in this
- * module).
+/* Frontend AST helpers over the owned native TypeScript 7 node model.
+ * Kind-specific interfaces refine its concrete getters and preserve object
+ * identity. Guards and token spellings come from the pinned SDK generator;
+ * this module does not import an SDK runtime implementation.
  *
  * Guards: 82 of the census's 90 is* guards re-export same-name; seven were
  * renamed in 7 (isParameter -> isParameterDeclaration and friends) and alias
@@ -29,7 +30,7 @@ import type {
   SignatureDeclaration,
   SourceFile,
   StringLiteralLikeNode,
-} from "typescript/unstable/ast";
+} from "./ast-types.js";
 import {
   isAccessorDeclaration,
   isBindingElement,
@@ -43,38 +44,39 @@ import {
   isVariableDeclaration,
   isVariableDeclarationList,
   isVariableStatement,
-} from "typescript/unstable/ast/is";
-import type { Diagnostic } from "typescript/unstable/sync";
+} from "./ast-guards.generated.js";
+import type { Ts7DiagnosticData as Diagnostic } from "./session-schema.generated.js";
 import { ModifierFlags, SyntaxKind } from "./enums.js";
 
 /* ---- everything 7 kept under the same name ---- */
 
-// The full client AST: every census type-position name (Expression,
-// CallExpression, Statement, SourceFile, NodeArray, ...), all same-name
-// guards, tokenToString, escape helpers, the scanner, and the visitor.
-export * from "typescript/unstable/ast";
+// The frontend's node types, guards and token spellings share the concrete
+// AstNode layout. Parser and transform factories remain outside this client.
+export * from "./ast-types.js";
+export * from "./ast-guards.generated.js";
+export { tokenToString } from "./ast-tokens.generated.js";
 
 /* ---- the seven renamed guards, under their 5.9.3 names ---- */
 
-export const isParameter: (node: Node) => node is ParameterDeclaration = isParameterDeclaration;
-export const isPropertySignature: (node: Node) => node is PropertySignatureDeclaration =
+export const isParameter: (node: Node | undefined) => node is ParameterDeclaration = isParameterDeclaration;
+export const isPropertySignature: (node: Node | undefined) => node is PropertySignatureDeclaration =
   isPropertySignatureDeclaration;
-export const isStringLiteralLike: (node: Node) => node is StringLiteralLikeNode = isStringLiteralLikeNode;
-export const isGetAccessor: (node: Node) => node is GetAccessorDeclaration = isGetAccessorDeclaration;
-export const isSetAccessor: (node: Node) => node is SetAccessorDeclaration = isSetAccessorDeclaration;
-export const isAccessor: (node: Node) => node is AccessorDeclaration = isAccessorDeclaration;
+export const isStringLiteralLike: (node: Node | undefined) => node is StringLiteralLikeNode = isStringLiteralLikeNode;
+export const isGetAccessor: (node: Node | undefined) => node is GetAccessorDeclaration = isGetAccessorDeclaration;
+export const isSetAccessor: (node: Node | undefined) => node is SetAccessorDeclaration = isSetAccessorDeclaration;
+export const isAccessor: (node: Node | undefined) => node is AccessorDeclaration = isAccessorDeclaration;
 
 /* ---- renamed types, under their 5.9.3 names ---- */
 
 export type StringLiteralLike = StringLiteralLikeNode;
-export type MethodSignature = import("typescript/unstable/ast").MethodSignatureDeclaration;
+export type MethodSignature = import("./ast-types.js").MethodSignatureDeclaration;
 
 /** 5.9.3's isFunctionLike: true for every SignatureDeclaration kind. 7's
  * same-set guard is isSignatureDeclaration (its isFunctionLikeDeclaration is
  * the narrower declarations-only check); JSDocSignature joins because 5.9.3
  * counts it. 5.9.3 also accepted JSDocFunctionType — a node kind tsgo no
  * longer produces, so no walk over a 7 AST can present one. */
-export function isFunctionLike(node: Node): node is SignatureDeclaration {
+export function isFunctionLike(node: Node | undefined): node is SignatureDeclaration {
   return isSignatureDeclaration(node) || isJSDocSignature(node);
 }
 
@@ -162,7 +164,7 @@ const MODIFIER_HOSTS: ReadonlySet<number> = new Set<number>([
   SyntaxKind.ExportDeclaration,
 ]);
 
-export function canHaveModifiers(node: Node): node is Node & { modifiers?: NodeArray<Node> } {
+export function canHaveModifiers(node: Node): boolean {
   return MODIFIER_HOSTS.has(node.kind);
 }
 
@@ -212,17 +214,17 @@ function modifierFlagsOfNode(node: Node): number {
  * getCombinedModifierFlags, mirrored exactly: a binding element climbs to
  * the declaration that hosts its outermost pattern; a variable declaration
  * merges its list's flags, the list its statement's. */
-function walkUpBindingElementsAndPatterns(bindingElement: Node): Node {
+function walkUpBindingElementsAndPatterns(bindingElement: Node): Node | undefined {
   let node = bindingElement.parent; // the binding pattern
-  while (isBindingElement(node.parent)) {
+  while (node !== undefined && isBindingElement(node.parent)) {
     node = node.parent.parent;
   }
-  return node.parent; // VariableDeclaration or ParameterDeclaration
+  return node?.parent; // VariableDeclaration or ParameterDeclaration
 }
 
 function getCombinedFlags(node: Node, getFlags: (n: Node) => number): number {
   let n: Node | undefined = isBindingElement(node) ? walkUpBindingElementsAndPatterns(node) : node;
-  let flags = getFlags(n);
+  let flags = n === undefined ? 0 : getFlags(n);
   if (isVariableDeclaration(n)) n = n.parent;
   if (n !== undefined && isVariableDeclarationList(n)) {
     flags |= getFlags(n);

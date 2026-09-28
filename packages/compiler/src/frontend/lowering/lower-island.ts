@@ -3116,11 +3116,11 @@ export function lowerStaticReadableStreamReaderCall(
       // `export type { x }` / `export { type x }`: erased at runtime.
       for (const d of lowerer.checker.declarationsOf(sym)) {
         if (ts.isExportSpecifier(d)) {
-          const exportDecl = d.parent.parent;
+          const exportDecl = d.parent?.parent;
           if (d.isTypeOnly || (ts.isExportDeclaration(exportDecl) && exportDecl.isTypeOnly)) return null;
         }
         if (ts.isImportSpecifier(d)) {
-          const clause = d.parent.parent;
+          const clause = d.parent?.parent;
           if (d.isTypeOnly || (ts.isImportClause(clause) && clause.phaseModifier === ts.SyntaxKind.TypeKeyword)) return null;
         }
       }
@@ -3145,7 +3145,7 @@ export function lowerStaticReadableStreamReaderCall(
     }
     const sig = lowerer.fnSigsBySymbol.get(resolved);
     const decl0 = lowerer.checker.declarationsOf(resolved).find(
-      (d) => ts.isFunctionDeclaration(d) && (ts.isSourceFile(d.parent) || lowerer.nsBlocks.get(d.parent) === "flattened"),
+      (d) => ts.isFunctionDeclaration(d) && (ts.isSourceFile(d.parent) || (d.parent !== undefined && lowerer.nsBlocks.get(d.parent) === "flattened")),
     );
     if (sig && decl0) {
       if (!sig.params.every((p) => p.mode === "required")) {

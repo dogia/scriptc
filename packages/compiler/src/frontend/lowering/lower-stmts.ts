@@ -327,7 +327,7 @@ function pureAnnotatedDeadConst(stmt: ts.Statement, sf: ts.SourceFile): boolean 
 export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDeclaration): boolean {
   const sf = decl.getSourceFile();
   if (!isProvenanceSourceFile(sf.fileName)) return false;
-  const stmt = decl.parent.parent;
+  const stmt = decl.parent?.parent;
   if (!ts.isVariableStatement(stmt) || !pureAnnotatedDeadConst(stmt, sf)) return false;
   const diagsBefore = lowerer.diags.length;
   let mapped = false;
@@ -553,7 +553,7 @@ export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDec
     // `const id = setInterval(cb)` self-capture — the global slot is the
     // binding). Function-scope declarations have no global; they predeclare.
     if (lowerer.globalsBySymbol.has(symbol)) return false;
-    const varStmt = decl.parent.parent;
+    const varStmt = decl.parent?.parent;
     if (!ts.isVariableStatement(varStmt)) return false; // for-initializers stay out
     for (let i = lowerer.activeStmtLists.length - 1; i >= 0; i--) {
       const entry = lowerer.activeStmtLists[i]!;
@@ -645,7 +645,7 @@ export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDec
    * enclosing binding patterns), or null when the name belongs to some
    * other declaration form — a parameter pattern, a catch binding. */
   function hostVariableDeclarationOf(name: ts.Identifier): ts.VariableDeclaration | null {
-    let n: ts.Node = name.parent;
+    let n: ts.Node | undefined = name.parent;
     while (ts.isBindingElement(n) || ts.isArrayBindingPattern(n) || ts.isObjectBindingPattern(n)) {
       n = n.parent;
     }
@@ -3338,7 +3338,7 @@ export function isParseArgsDynCheckerType(lowerer: Lowerer, type: ts.Type): bool
 function inferredEvolvingLetType(lowerer: Lowerer, decl: ts.VariableDeclaration): IrType | null {
   if (!ts.isIdentifier(decl.name)) return null;
   const symbol = lowerer.checker.getSymbolAtLocation(decl.name);
-  const scope = decl.parent.parent.parent;
+  const scope = decl.parent?.parent?.parent;
   if (symbol === undefined || (!ts.isBlock(scope) && !ts.isSourceFile(scope))) return null;
 
   const isPlainAssignmentTarget = (node: ts.Identifier): boolean => {
@@ -3485,8 +3485,8 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     if (
       !decl.initializer &&
       (decl.name.text === "module" || decl.name.text === "exports") &&
-      ts.isVariableStatement(decl.parent.parent) &&
-      ts.isSourceFile(decl.parent.parent.parent) &&
+      ts.isVariableStatement(decl.parent?.parent) &&
+      ts.isSourceFile(decl.parent?.parent?.parent) &&
       !isJsSourceFile(decl.getSourceFile()) &&
       !decl.getSourceFile().statements.some(
         (s) =>

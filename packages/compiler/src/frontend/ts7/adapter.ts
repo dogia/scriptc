@@ -1,15 +1,11 @@
-/* The TS7 adapter: the census's ts.* surface (the survey's top-40 table plus
- * the long tail of census-ts-members.tsv) re-exported over typescript@7.0.2's
- * unstable API, shaped so the phase-2 mechanical port swaps
+/* The frontend's ts.* surface uses scriptc's concrete native AST, semantic
+ * objects and session lifecycle over the pinned TypeScript 7 protocol. It
+ * Lowering modules use a namespace import to retain both values and types:
  *
- *     import ts from "typescript";
- * for
  *     import * as ts from "./ts7/adapter.js";   // path per file
  *
- * per file and keeps every `ts.name` spelling — values (guards, enums,
- * helpers, createProgram) and types (ts.Expression, ts.Node, ts.Symbol, ...)
- * alike. The namespace-import form is the swap because ESM has no way to
- * hang types off a default export.
+ * This preserves familiar `ts.name` spellings for guards, enums, helpers,
+ * createProgram, Expression, Node, Symbol, and the other frontend types.
  *
  * TWO-WORLD DISCIPLINE. typescript@7.0.2 is the REAL "typescript"
  * dependency; typescript@5.9.3 stays installed under the "typescript5"
@@ -44,8 +40,6 @@
  * (`ts.Types` in the census tsv is a comment-text artifact, not an API.) */
 
 export * from "./enums.js";
-// Prefer the owned runtime declarations over the legacy AST type barrel.
-export { InternalSymbolName, ModifierFlags, NodeFlags, ScriptKind, ScriptTarget, SyntaxKind, TokenFlags } from "./enums.js";
 export * from "./ast.js";
 export * from "./checker.js";
 export * from "./program-adapter.js";
@@ -54,32 +48,7 @@ export * from "./program-adapter.js";
 export type { CheckerFacade as TypeChecker } from "./checker.js";
 export type { Ts7Program as Program } from "./program-adapter.js";
 
-/* Checker-world object types under their census names. Symbol and Signature
- * are 7's client classes (identity-bearing — the registry dedupes by server
- * handle); Type and friends are the client interfaces. TupleTypeReference
- * aliases 7's TupleType: in 5.9.3 a tuple's reference and its target were
- * split, in 7 the client hands back one object playing both roles (it
- * satisfies getTypeArguments and elementFlags alike, the two things the
- * census does with it). */
-export type {
-  CompilerOptions,
-  Diagnostic,
-  IndexInfo,
-  InterfaceType,
-  StringLiteralType,
-  NumberLiteralType,
-  BooleanLiteralType,
-  ObjectType,
-  Signature,
-  Symbol,
-  TupleType,
-  TupleType as TupleTypeReference,
-  Type,
-  TypePredicate,
-  TypeReference,
-  UnionOrIntersectionType,
-  UnionType,
-} from "typescript/unstable/sync";
+export * from "./semantic-types.js";
 
 /* No default export, deliberately: ESM cannot hang the TYPE side of the
  * census (ts.Expression, ts.Node, ...) off a default binding, so a default
