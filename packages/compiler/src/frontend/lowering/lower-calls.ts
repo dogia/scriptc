@@ -872,7 +872,9 @@ function completeFuncValueArgs(
     // slot): judge by the expression's OWN completed type; the slot's
     // coercion still enforces (or adapts) the flow it lands in.
     if (mappedFn?.kind !== "func" && contextual) {
-      mappedFn = lowerer.mapTypeOf(lowerer.typeOf(contextual));
+      const ownType = lowerer.typeOf(contextual);
+      mappedFn = lowerer.mapTypeOf(ownType) ??
+        (isJsSourceFile(contextual.getSourceFile()) ? dynFallbackType(lowerer, contextual, ownType) : null);
     }
     if (mappedFn && typeEquals(mappedFn, funcType)) return;
     // A target signature that agrees on the completed parameters and
@@ -10178,6 +10180,88 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
     return declaration !== undefined && ts.isArrowFunction(declaration) ? signatures[0]! : null;
   }
 
+  /** An inline arrow has lexical `this` and no observable own properties
+   * before binding. With no preset arguments, a fresh forwarding closure
+   * preserves its completed ABI, defaults and captured environment. Keep
+   * other receivers and rest/preset-argument forms on the named fence. */
+  function lowerInlineArrowBind(
+    lowerer: Lowerer,
+    call: ts.CallExpression,
+    access: ts.PropertyAccessExpression,
+  ): IrExpr | null {
+    if (access.name.text !== "bind" || call.arguments.length > 1 || call.arguments.some(ts.isSpreadElement)) return null;
+    let arrow = access.expression;
+    while (ts.isParenthesizedExpression(arrow)) arrow = arrow.expression;
+    if (!ts.isArrowFunction(arrow)) return null;
+    const callee = lowerer.lowerExpr(access.expression);
+    if (callee.type.kind !== "func" || callee.type.rest ||
+        !canBoxFuncIntoDyn(callee.type, (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))) return null;
+    const type = callee.type;
+    const loc = locOf(call);
+    const firstDefault = arrow.parameters.findIndex((p) => p.initializer !== undefined);
+    const length = firstDefault < 0 ? arrow.parameters.length : firstDefault;
+    const key = `arrow.bind:${typeKey(type)}:${length}`;
+    const existing = lowerer.arrHofHelpers.get(key);
+    const name = existing ?? `%arrow.bind.${lowerer.arrHofHelpers.size}`;
+    if (!existing) {
+      lowerer.arrHofHelpers.set(key, name);
+      lowerer.freshClosureAdapters.add(name);
+      const impl = `${name}.impl`;
+      const captured: IrLocal = { id: "f.0", name: "f", type, mutable: false, boxed: true };
+      const params: IrParam[] = type.params.map((type, i) => ({ localId: `p.${i}`, name: `p${i}`, type }));
+      const invoked: IrExpr = {
+        kind: "callValue",
+        callee: { kind: "varRef", localId: captured.id, type, loc },
+        args: params.map((p) => ({ kind: "varRef", localId: p.localId, type: p.type, loc })),
+        type: type.ret,
+        loc,
+      };
+      lowerer.liftedFns.push({
+        name: impl,
+        params,
+        returnType: type.ret,
+        captures: [{ localId: captured.id, name: captured.name, type }],
+        locals: [captured, ...params.map((p) => ({ id: p.localId, name: p.name, type: p.type, mutable: false }))],
+        body: [type.ret.kind === "void" ? { kind: "exprStmt", expr: invoked, loc } : { kind: "return", value: invoked, loc }],
+        loc,
+      });
+      const bound: IrExpr = { kind: "varRef", localId: "bound.0", type, loc };
+      const str = (value: string): IrExpr => ({ kind: "strLit", value, type: STRING, loc });
+      const descriptor = (value: IrExpr): IrExpr => ({
+        kind: "dynObjLit", fields: [{ key: str("value"), value: { kind: "dynFrom", value, type: DYN, loc } }], type: DYN, loc,
+      });
+      lowerer.liftedFns.push({
+        name,
+        params: [{ localId: captured.id, name: captured.name, type }],
+        returnType: type,
+        locals: [captured, { id: "bound.0", name: "bound", type, mutable: false }],
+        body: [
+          { kind: "varDecl", localId: "bound.0", init: { kind: "closure", fnName: impl, captures: [captured.id], type, loc }, loc },
+          // Store metadata on the closure so aliases and repeated dyn boxes
+          // observe the bound name and source arity, including defaults.
+          { kind: "exprStmt", expr: {
+            kind: "libCall", fn: "dyn.defineProps", args: [
+              { kind: "dynFrom", value: bound, type: DYN, loc },
+              { kind: "dynObjLit", fields: [
+                { key: str("name"), value: descriptor(str("bound ")) },
+                { key: str("length"), value: descriptor({ kind: "numLit", value: length, type: F64, loc }) },
+              ], type: DYN, loc },
+            ], type: DYN, loc,
+          }, loc },
+          { kind: "return", value: bound, loc },
+        ],
+        loc,
+      });
+    }
+    const saved = lowerer.declareHiddenLocal("%bindFn", type);
+    const stmts: IrStmt[] = [{ kind: "varDecl", localId: saved.id, init: callee, loc }];
+    // The receiver is ignored by the arrow, but its effects and throws
+    // happen after creating the arrow and before returning the bound value.
+    if (call.arguments[0]) stmts.push(lowerer.lowerExprStatement(call.arguments[0]));
+    const result: IrExpr = { kind: "call", callee: name, args: [{ kind: "varRef", localId: saved.id, type, loc }], type, loc };
+    return { kind: "seqExpr", stmts, result, type, loc };
+  }
+
   /** `arrow.apply(thisArg, dynArgs)` for a fixed-arity compiled arrow. Arrows
    * ignore `thisArg` and surplus arguments by language definition; declared
    * parameters validate from the dynamic array in order. */
@@ -10310,6 +10394,8 @@ export function lowerFunction(lowerer: Lowerer, decl: ts.FunctionDeclaration): I
     }
     const found = objLitGenericFnNodeOf(lowerer, propSym);
     if (!found) {
+      const arrowBind = lowerInlineArrowBind(lowerer, call, access);
+      if (arrowBind !== null) return arrowBind;
       const arrowApply = lowerArrowFunctionApply(lowerer, call, access);
       if (arrowApply !== null) return arrowApply;
       // Function.prototype.apply/call/bind spelled through a FUNCTION

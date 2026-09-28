@@ -8602,6 +8602,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/js-arrow-bind.cjs": {
+   "order": [
+    "<repo>/tests/corpus/js-arrow-bind.cjs"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/js-declared-fields.cjs": {
    "order": [
     "<repo>/tests/corpus/js-declared-fields.cjs"
@@ -8677,6 +8683,12 @@
   "<repo>/tests/diagnostics/any.ts": {
    "order": [
     "<repo>/tests/diagnostics/any.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/diagnostics/arrow-bind.ts": {
+   "order": [
+    "<repo>/tests/diagnostics/arrow-bind.ts"
    ],
    "diags": []
   },

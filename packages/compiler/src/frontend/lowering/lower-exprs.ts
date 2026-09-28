@@ -1885,6 +1885,14 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
         isJsSourceFile(expr.getSourceFile())
       ) {
         const probed = tryLowerExpression(lowerer, expr.expression);
+        // Inferred callable returns can use checked storage even when the
+        // checker still describes a function. Read its actual dyn value;
+        // the ambient Function member must not hide its own properties.
+        if (probed?.type.kind === "dyn" && lowerer.checker.getCallSignatures(lowerer.typeOf(expr.expression)).length > 0) {
+          const key: IrExpr = { kind: "strLit", value: expr.name.text, type: STRING, loc: locOf(expr.name) };
+          const opt = hasOptionalChainGuard(expr.expression);
+          return lowerer.maybeNarrow({ kind: "dynKeyGet", key, value: probed, ...(opt ? { optional: true as const } : {}), type: DYN, loc }, expr);
+        }
         if (
           probed?.type.kind === "func" &&
           canBoxFuncIntoDyn(probed.type, (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))
