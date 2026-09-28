@@ -46,6 +46,134 @@ export interface NpmStaticOverloadRewrite {
   insertions: readonly { offset: number; length: number }[];
 }
 
+/** Recover nullable class storage erased by a JavaScript bundle. A null
+ * field whose writes construct one named class or call one static factory (or reset to null)
+ * keeps that class's native methods instead of an opaque checked value.
+ * Unknown writes, shadowed constructors and authored annotations decline;
+ * downstream lowering still checks every assignment against the slot. */
+export function applyNpmStaticNullableClassFields(
+  sourcePath: string,
+  source: string,
+): NpmStaticOverloadRewrite | null {
+  const sourceFile = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const constructors = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (ts.isClassDeclaration(statement) && statement.name) constructors.add(statement.name.text);
+    if (ts.isImportDeclaration(statement) && !statement.importClause?.isTypeOnly) {
+      const clause = statement.importClause;
+      if (clause?.name) constructors.add(clause.name.text);
+      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const binding of clause.namedBindings.elements) {
+          if (!binding.isTypeOnly) constructors.add(binding.name.text);
+        }
+      }
+    }
+  }
+  const assignment = (node: ts.Node): node is ts.BinaryExpression => ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+  // Mutable constructor bindings cannot supply a stable nominal type.
+  const rejectAssignedName = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) constructors.delete(node.text);
+    else if (ts.isArrayLiteralExpression(node)) for (const item of node.elements) rejectAssignedName(item);
+    else if (ts.isObjectLiteralExpression(node)) for (const item of node.properties) {
+      if (ts.isPropertyAssignment(item)) rejectAssignedName(item.initializer);
+      else if (ts.isShorthandPropertyAssignment(item)) rejectAssignedName(item.name);
+      else if (ts.isSpreadAssignment(item)) rejectAssignedName(item.expression);
+    }
+    else if (ts.isSpreadElement(node) || ts.isParenthesizedExpression(node)) rejectAssignedName(node.expression);
+    else if (assignment(node)) rejectAssignedName(node.left);
+  };
+  const rejectMutable = (node: ts.Node): void => {
+    if (assignment(node)) rejectAssignedName(node.left);
+    if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) rejectAssignedName(node.initializer);
+    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+        ts.isIdentifier(node.operand)) constructors.delete(node.operand.text);
+    ts.forEachChild(node, rejectMutable);
+  };
+  rejectMutable(sourceFile);
+  const inserts: { offset: number; text: string }[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isClassDeclaration(statement)) continue;
+    const fields = new Map<string, { member: ts.PropertyDeclaration; className?: string; invalid: boolean }>();
+    for (const member of statement.members) {
+      if (!ts.isPropertyDeclaration(member) || !ts.isIdentifier(member.name) ||
+          member.initializer?.kind !== ts.SyntaxKind.NullKeyword || hasModifier(member, ts.SyntaxKind.StaticKeyword)) continue;
+      const leading = source.slice(member.getFullStart(), member.getStart(sourceFile));
+      if (ts.getJSDocType(member) !== undefined || leading.includes("@type")) continue;
+      fields.set(member.name.text, { member, invalid: false });
+    }
+    if (fields.size === 0) continue;
+    // Be conservative about scope: even a binding in an unrelated method
+    // excludes that constructor name from this class's inference.
+    const shadowed = new Set<string>();
+    const bindingNames = (name: ts.BindingName): void => {
+      if (ts.isIdentifier(name)) shadowed.add(name.text);
+      else for (const element of name.elements) if (ts.isBindingElement(element)) bindingNames(element.name);
+    };
+    const collectBindings = (node: ts.Node): void => {
+      if (ts.isParameter(node) || ts.isVariableDeclaration(node)) bindingNames(node.name);
+      if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) shadowed.add(node.name.text);
+      ts.forEachChild(node, collectBindings);
+    };
+    for (const member of statement.members) collectBindings(member);
+    const targetField = (node: ts.Node): string | null => {
+      if (ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword) return node.name.text;
+      if (ts.isElementAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword) {
+        return ts.isStringLiteral(node.argumentExpression) ? node.argumentExpression.text : "*";
+      }
+      return null;
+    };
+    const invalidate = (node: ts.Node): void => {
+      const name = targetField(node);
+      if (name === "*") for (const field of fields.values()) field.invalid = true;
+      else if (name !== null && fields.has(name)) fields.get(name)!.invalid = true;
+      ts.forEachChild(node, invalidate);
+    };
+    const visit = (node: ts.Node): void => {
+      if ((ts.isFunctionLike(node) && !ts.isArrowFunction(node)) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+      if (assignment(node)) {
+        const name = targetField(node.left);
+        const field = name !== null ? fields.get(name) : undefined;
+        if (field && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          let value = node.right;
+          while (ts.isParenthesizedExpression(value)) value = value.expression;
+          if (value.kind !== ts.SyntaxKind.NullKeyword) {
+            const construct = ts.isNewExpression(value) && ts.isIdentifier(value.expression) ? value.expression : null;
+            const factory = ts.isCallExpression(value) && !value.questionDotToken && ts.isPropertyAccessExpression(value.expression) &&
+              !value.expression.questionDotToken && ts.isIdentifier(value.expression.name) && ts.isIdentifier(value.expression.expression) ? value.expression : null;
+            const owner = construct ?? factory?.expression;
+            if (owner && ts.isIdentifier(owner) && constructors.has(owner.text) && !shadowed.has(owner.text)) {
+              // ReturnType asks the same implementation checker that types
+              // the call; no declaration-only class name is invented.
+              const name = factory ? `ReturnType<typeof ${owner.text}.${factory.name.text}>` : owner.text;
+              if (field.className !== undefined && field.className !== name) field.invalid = true;
+              field.className = name;
+            } else field.invalid = true;
+          }
+        } else invalidate(node.left);
+      }
+      if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+          (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) invalidate(node.operand);
+      if (ts.isDeleteExpression(node)) invalidate(node.expression);
+      ts.forEachChild(node, visit);
+    };
+    for (const member of statement.members) {
+      if (hasModifier(member, ts.SyntaxKind.StaticKeyword)) continue;
+      if ((ts.isConstructorDeclaration(member) || ts.isMethodDeclaration(member) || ts.isAccessor(member)) && member.body) visit(member.body);
+      if (ts.isPropertyDeclaration(member) && member.initializer) visit(member.initializer);
+    }
+    for (const field of fields.values()) {
+      if (field.invalid || field.className === undefined) continue;
+      inserts.push({ offset: field.member.getStart(sourceFile), text: `/** @type {${field.className} | null} */ ` });
+    }
+  }
+  if (inserts.length === 0) return null;
+  let text = source;
+  for (const insert of [...inserts].sort((a, b) => b.offset - a.offset)) text = text.slice(0, insert.offset) + insert.text + text.slice(insert.offset);
+  return { text, insertions: inserts.map((insert) => ({ offset: insert.offset, length: insert.text.length })) };
+}
+
 /** A JavaScript return annotation cannot make Array.find return a value
  * when no element matches. Widen only direct finds on constructor-owned
  * arrays; arbitrary methods also named find are left alone. */

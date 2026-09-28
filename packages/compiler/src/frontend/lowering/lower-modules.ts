@@ -13,7 +13,7 @@ import { isRelativeSpecifier } from "../workspace-registry.js";
 import { canonicalBuiltinModule, cjsExportAssignmentOf, cjsExportDiscardReason, entryPackageFilePredicate, isCjsJsFile, isJsSourceFile, isRequireStatement, locOf, makeCycleAdmission, orderedImportsOf, resolveImport, resolveNpmImport } from "../program.js";
 import type { CycleEdge } from "../program.js";
 import { invalidJsonModuleDiag, npmEmbedFailedDiag, requiresDynamicImportDiag } from "../../diagnostics/diagnostic.js";
-import { BOOL, DYN, F64, IrClassDef, IrExpr, IrFunction, IrGlobal, IrRecordShape, IrStmt, IrType, IrUnionDef, JSVAL, RUNTIME_ERROR_CLASSES, STRING, SrcLoc, VOID, arrayOf, canConvertToDyn, isUnitType } from "../../ir/ir.js";
+import { BOOL, DYN, F64, IrClassDef, IrExpr, IrFunction, IrGlobal, IrRecordShape, IrStmt, IrType, IrUnionDef, JSVAL, RUNTIME_ERROR_CLASSES, STRING, SrcLoc, VOID, arrayOf, canBoxFuncIntoDyn, canConvertToDyn, isUnitType } from "../../ir/ir.js";
 import { ENTRY_NAME, PoisonError, boundIdentifiersOf, dynFallbackType, dynUndefinedExpr, importCallHandleType, newFnCtx, staticImportNamespaceType, uncheckedOverloadHandleCall } from "./lowerer.js";
 import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRequireBindingDecl, createRequireNamespaceDecl, createRequireProgramModuleDecl, createRequireSpecOf, isPromisifyCall, registerBuiltinCallableAlias } from "./lower-builtins.js";
 import { bindingContextualGenericFnNodeOf, bindingGenericFnAliasInfoOf, bindingGenericFnInfoOf, bindingGenericFnNodeOf, bindingNeverReassigned, deadUnmappableBinding, implicitLocalFnInfoOf, implicitLocalFnNodeOf, nullishGenericBindingUnitOf, registerOverloadedCallableAlias } from "./lower-calls.js";
@@ -1503,6 +1503,33 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               }
               continue;
             }
+            // A function initializer can have a native calling convention
+            // even when its inferred return/parameter pieces need DYN. Keep
+            // that closure in a checked-value global so class methods and
+            // other module functions see its declaration-position assignment.
+            // A var starts undefined; lexical bindings retain the TDZ guard.
+            if (
+              isJsSourceFile(sf) && !lowerer.mapTypeOf(lowerer.typeOf(nameNode)) &&
+              ts.isIdentifier(decl.name) && nameNode === decl.name && decl.initializer &&
+              (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
+            ) {
+              const fallback = dynFallbackType(lowerer, nameNode, lowerer.typeOf(nameNode));
+              const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
+              if (symbol && fallback?.kind === "func" && canBoxFuncIntoDyn(fallback,
+                (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))) {
+                if (!lowerer.globalsBySymbol.has(symbol)) {
+                  const g: IrGlobal = {
+                    id: `%g.${tag}${nsPrefix}${nameNode.text}`, name: nameNode.text,
+                    type: DYN, mutable: isLet, source: bindingSource(nameNode),
+                    ...(!isVarDeclared(decl) ? { tdz: true as const } : {}),
+                  };
+                  lowerer.globalsBySymbol.set(symbol, g);
+                  lowerer.globalsList.push(g);
+                  if (isVarDeclared(decl)) noteVarGlobalEntryInit(lowerer, sf, g);
+                }
+                continue;
+              }
+            }
             // JS declarations whose STRICT type has no mapping register no
             // global at all: the declaration lowers as an %init-body LOCAL
             // whose type adopts the initializer's (lowerVarDecl's JS
@@ -1624,7 +1651,10 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               type,
               mutable: isLet,
               source: bindingSource(nameNode),
-              ...(codec ? { tdz: true as const } : {}),
+              // A function pointer must not be dereferenced before a lexical
+              // declaration assigns it. The shared pointer TDZ guard handles
+              // these bindings like stored codec records.
+              ...((codec || (type.kind === "func" && !isVarDeclared(decl))) ? { tdz: true as const } : {}),
             };
             lowerer.globalsBySymbol.set(symbol, g);
             lowerer.globalsList.push(g);

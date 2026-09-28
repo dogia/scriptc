@@ -1380,8 +1380,8 @@ export interface IrGlobal {
   name: string;
   type: IrType;
   mutable: boolean;
-  /** A lexical codec binding uses its initially-null record slot as the
-   * TDZ sentinel. Reads and later writes throw until initializing assign. */
+  /** Lexical record/function/checked-value bindings use their initially-null
+   * pointer as a TDZ sentinel. Reads and later writes throw until initializing assign. */
   tdz?: true;
   /** Original declaration and lexical scope, when this is a source binding. */
   source?: IrBindingSource;
@@ -1793,6 +1793,9 @@ export type IrBytesIntrinsicMethod =
   | "get"
   | "slice"
   | "subarray"
+  /** In-place overlapping copy, [target, start, end] relative indices;
+   * returns the receiver (+1). */
+  | "copyWithin"
   /** Fresh Uint8Array copying methods. `with` takes [index, value] and
    * throws a catchable RangeError for an invalid relative index. */
   | "toReversed"
@@ -1804,6 +1807,7 @@ export type IrBytesIntrinsicMethod =
    * array spread and typed-array destructuring rest. */
   | "toArray"
   | "setFrom"
+  | "setFromDyn"
   | "toString"
   /** Buffer.toString with a runtime-valued encoding. Same signature as
    * toString, but canonicalizes aliases/case and may throw
@@ -1877,6 +1881,7 @@ export const MAY_THROW_BYTES_METHODS: ReadonlySet<IrBytesIntrinsicMethod> = new 
   "toStringVar",
   "with",
   "setFrom",
+  "setFromDyn",
   "readNum",
   "writeNum",
   "readNumVar",
@@ -2027,6 +2032,9 @@ export type IrLibFn =
    * SEMANTICS.md notes the sloppy divergence: loud, never silent). Void
    * result; in the may-throw seed set. */
   | "dyn.keySet"
+  /** Delete an ordinary checked-native object's own key. Borrows both
+   * arguments; other receiver representations retain a runtime refusal. */
+  | "dyn.keyDelete"
   /** Destructuring pack over a dyn source — `const [a, b] = d`, a
    * destructured dyn callback param (args: the source and the STATIC
    * TypeError spelling, "" when the source has none — both borrowed;
@@ -3588,6 +3596,8 @@ export type IrLibFn =
   /** realpath(3) with Node's error shape (syscall "lstat" in the message,
    * Node's own spelling for realpathSync failures). +1 fresh string. */
   | "fs.realpathSync"
+  /** Native realpath with syscall "realpath" on failure. +1 fresh string. */
+  | "fs.realpathNativeSync"
   /** kill(2) with Node's exact semantics and error shapes: the pid must be
    * an int32 (else the ERR_INVALID_ARG_TYPE TypeError text), the named
    * form resolves Node's signal-name table (unknown names throw the
@@ -4502,6 +4512,9 @@ export type IrLibFn =
    * from UTF-16 code units. Adjacent surrogate pairs combine; lone
    * surrogates follow the runtime's replacement policy. */
   | "string.fromCharCode"
+  /** Numeric code points, with catchable RangeError for non-integers or
+   * values outside 0..0x10ffff. Uses the same UTF-8 surrogate policy. */
+  | "string.fromCodePoint"
   /** lastIndexOf returns the last UTF-16 start index, or -1. The two-arg
    * form searches at or before its numeric position; NaN starts at the end.
    * String arguments are borrowed and neither form throws. */
@@ -4919,12 +4932,14 @@ export type IrExpr =
    *   truncate; a negative/huge result THROWS Node's "Invalid typed array
    *   length" RangeError catchably — backends' may-throw analyses seed on
    *   bytesNew with a non-bytes, non-array source).
-   * - bytes (same elem — frontend-fenced) — an independent COPY. Never
-   *   throws.
+   * - bytes — an independent, element-coerced COPY. Never throws.
    * - array of f64 — a per-element-coerced copy (ToUint8/ToUint32/float).
    *   Never throws.
+   * - dyn — checked native input; can throw on invalid lengths/coercion.
+   *   `from` selects TypedArray.from's iterable/array-like semantics instead
+   *   of constructor length coercion (notably for strings and numbers).
    * The source is BORROWED; the result is owned (+1). */
-  | { kind: "bytesNew"; source: IrExpr | null; type: IrType; loc: SrcLoc }
+  | { kind: "bytesNew"; source: IrExpr | null; from?: true; type: IrType; loc: SrcLoc }
   /** Typed-array/Buffer method or property on a bytes receiver — see
    * IrBytesIntrinsicMethod for the surface and conventions. Methods in
    * MAY_THROW_BYTES_METHODS raise catchable RangeErrors (may-throw
@@ -6093,6 +6108,23 @@ export function isDynTypedRefType(t: IrType): t is Extract<IrType, { kind: "obje
  * observable properties at runtime. */
 export function isClassOwnEnumerableFieldName(name: string): boolean {
   return !name.startsWith("#") && !name.startsWith("%");
+}
+
+/** A class capsule can always preserve its exact native identity. Its
+ * optional property view additionally needs converters in both directions;
+ * fields such as Maps may remain opaque without preventing the round trip. */
+export function classDynViewSupported(
+  fields: readonly { name: string; type: IrType }[],
+  getRecord: (shapeId: string) => IrRecordShape | undefined,
+  getUnion: (unionId: string) => IrUnionDef | undefined,
+): boolean {
+  const checkable = (type: IrType): boolean => {
+    if (isDynTypedRefType(type) || isUnitType(type)) return true;
+    if (type.kind === "union") return getUnion(type.unionId)?.arms.every(checkable) ?? false;
+    return canDynCheckTo(type, getRecord, getUnion);
+  };
+  return fields.every((field) => !isClassOwnEnumerableFieldName(field.name) ||
+    (canConvertToDyn(field.type, getRecord, getUnion) && checkable(field.type)));
 }
 
 /** A static type that CONVERTS into a dyn value — the dynFrom domain:
@@ -7763,12 +7795,15 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   // throws Node's catchable SyntaxError at construction.
   "regex.new",
   "dyn.keySet",
+  "dyn.keyDelete",
   // the destructuring pack throws V8's TypeError on non-iterable dyn kinds
   "dyn.iterPack",
   "dyn.toString",
+  "string.fromCodePoint",
   "dyn.defineProps",
   "process.chdir",
   "fs.realpathSync",
+  "fs.realpathNativeSync",
   "fs.readFileSync",
   "fs.writeFileSync",
   "fs.appendFileSync",

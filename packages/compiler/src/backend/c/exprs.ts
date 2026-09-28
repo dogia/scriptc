@@ -3,7 +3,7 @@ import { InternalCompilerError } from "../../errors.js";
  * expression lands in a fresh C temp, with RC ownership tracked on the
  * emitter's frames (see the discipline comment in emitter core). */
 import type { CEmitter, Temp } from "./c-emitter.js";
-import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM_T, CHILDWRITER_T, DYN, F64, type IrExpr, type IrLibFn, type IrRecordShape, type IrType, islandPromisePayloadTag, isClassOwnEnumerableFieldName, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, MAY_THROW_LIB_FNS, NETSOCKET_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, typeKey } from "../../ir/ir.js";
+import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM_T, CHILDWRITER_T, DYN, F64, type IrExpr, type IrLibFn, type IrRecordShape, type IrType, islandPromisePayloadTag, classDynViewSupported, isClassOwnEnumerableFieldName, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, MAY_THROW_LIB_FNS, NETSOCKET_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, typeKey } from "../../ir/ir.js";
 import { BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleClassNew, mangleClassRetain, mangleClassStruct, mangleField, mangleFnClosure, mangleFunction, mangleGlobal, mangleLocal, mangleRecordClone, mangleRecordNew, mangleRecordStruct, mangleVtStruct } from "../mangle.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
@@ -237,6 +237,13 @@ function streamTypedRefAdapter(
   /* Register before walking children: recursive record/array types refer
    * back to this prototype without recursively generating helpers. */
   ctx.adapters.set(key, adapter);
+  if (isDynTypedRefType(t)) {
+    const fields = emitter.classMeta.get(t.className)?.def.fields;
+    if (fields && !classDynViewSupported(fields, (id) => emitter.recordsById.get(id), (id) => emitter.unionsById.get(id))) {
+      adapter.snapshot = "scr_dyn_class_view_unavailable";
+      return adapter;
+    }
+  }
   emitter.walkerProtos.push(
     `static ScrDyn *${snapshot}(void *sc_p); /* materialize live stream value ${key} */`,
   );
@@ -1913,9 +1920,8 @@ function emitContainerExpr(
       case "bytesNew": {
         // Typed-array/Buffer construction; the SOURCE's static type picks
         // the runtime entry (see the node doc). The source is borrowed;
-        // every form hands back +1. Only the f64 (length) form can throw
-        // (Node's "Invalid typed array length" RangeError) — pending check
-        // after the temp joins its frame.
+        // every form hands back +1. Length and checked-input forms can
+        // throw; check after the result joins its ownership frame.
         if (e.type.kind !== "bytes") throw new InternalCompilerError("emitter bug: bytesNew of non-bytes type");
         const kind = bytesElemKindC(e.type.elem);
         if (!e.source) return emitter.newTemp(e.type, `scr_bytes_new(${kind}, 0)`);
@@ -1926,7 +1932,12 @@ function emitContainerExpr(
           return t;
         }
         if (e.source.type.kind === "bytes") {
-          return emitter.newTemp(e.type, `scr_bytes_copy(${src.name})`);
+          return emitter.newTemp(e.type, `scr_bytes_convert(${kind}, ${src.name})`);
+        }
+        if (e.source.type.kind === "dyn") {
+          const t = emitter.newTemp(e.type, `scr_bytes_from_dyn(${kind}, ${src.name}, ${e.from ? "true" : "false"})`);
+          emitter.emitPendingCheck();
+          return t;
         }
         if (e.source.type.kind === "array") {
           return emitter.newTemp(e.type, `scr_bytes_from_arr(${kind}, ${src.name})`);
@@ -2009,6 +2020,8 @@ function emitContainerExpr(
             );
           case "toReversed":
             return emitter.newTemp(e.type, `scr_bytes_to_reversed(${r.name})`);
+          case "copyWithin":
+            return emitter.newTemp(e.type, `scr_bytes_copy_within(${r.name}, ${args[0]!.name}, ${args[1]!.name}, ${args[2]!.name})`);
           case "with": {
             const out = emitter.newTemp(
               e.type,
@@ -2024,11 +2037,12 @@ function emitContainerExpr(
             );
           case "toArray":
             return emitter.newTemp(e.type, `scr_bytes_to_arr(${r.name})`);
-          case "setFrom": {
+          case "setFrom":
+          case "setFromDyn": {
             // dst.set(src, offset?) — void; throws Node's RangeError on
             // overflow (may-throw seed).
             emitter.line(
-              `scr_bytes_set_from(${r.name}, ${args[0]!.name}, ${args[1]?.name ?? "0"});${emitter.srcComment(e.loc)}`,
+              `${method === "setFromDyn" ? "scr_bytes_set_from_dyn" : "scr_bytes_set_from"}(${r.name}, ${args[0]!.name}, ${args[1]?.name ?? "0"});${emitter.srcComment(e.loc)}`,
             );
             emitter.emitPendingCheck();
             return { name: "", type: e.type };
@@ -4432,6 +4446,8 @@ function emitDynamicLibCall(state: LibCallState): Temp {
             // member retains the value in); throws Node's TypeErrors on
             // non-object receivers (may-throw seed set).
             return finish(`scr_dyn_key_set(${arg(0)}, ${arg(1)}, ${arg(2)})`);
+          case "dyn.keyDelete":
+            return finish(`scr_dyn_key_delete(${arg(0)}, ${arg(1)})`);
           case "dyn.iterPack":
             // Destructuring/for-of pack over a dyn source: both borrowed,
             // fresh array +1; throws V8's not-iterable TypeError on
@@ -4847,6 +4863,8 @@ function emitFilesystemLibCall(state: LibCallState): Temp {
           }
           case "fs.realpathSync":
             return finish(`scr_fs_realpath(${arg(0)})`);
+          case "fs.realpathNativeSync":
+            return finish(`scr_fs_realpath_promise(${arg(0)})`);
           // The fs option forms (scr_lib.c) — all in the may-throw seed,
           // like the rest of sync fs.
           case "fs.mkdirRecursiveSync":
@@ -5529,6 +5547,10 @@ function emitPrimitiveLibCall(state: LibCallState): Temp {
                 ? `scr_str_from_char_code_bytes(${arg(0)})`
                 : `scr_str_from_char_code(${arg(0)})`,
             );
+          case "string.fromCodePoint":
+            return finish(e.args[0]!.type.kind === "bytes"
+              ? `scr_str_from_code_point_bytes(${arg(0)})`
+              : `scr_str_from_code_point(${arg(0)})`);
           case "string.lastIndexOf":
             return finish(`scr_str_last_index_of(${arg(0)}, ${arg(1)})`);
           case "string.lastIndexOfFrom":

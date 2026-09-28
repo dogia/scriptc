@@ -185,10 +185,10 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           break;
         case "bytesNew": {
           // The size form (`new Uint8Array(n)`) throws Node's "Invalid
-          // typed array length" RangeError on a bad length; copy/array
-          // sources never throw.
+          // typed array length" RangeError on a bad length. Checked
+          // inputs can also throw during element conversion.
           const source = rec.source;
-          if (source && source.type?.kind === "f64") f.throws = true;
+          if (source && (source.type?.kind === "f64" || source.type?.kind === "dyn")) f.throws = true;
           break;
         }
         case "bytesIntrinsic":

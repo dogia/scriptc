@@ -704,6 +704,7 @@ export const BUILTIN_MODULE_FNS: Record<string, Record<string, BuiltinModuleFn |
     // realpath(3) — Node's realpathSync (failures spell syscall "lstat",
     // Node's own message shape).
     realpathSync: { fn: "fs.realpathSync", params: [STRING], result: STRING },
+    "realpathSync.native": { fn: "fs.realpathNativeSync", params: [STRING], result: STRING },
     // The fd pair behind spawn's fd-stdio form (the daemon-log idiom:
     // openSync(logPath, "a") → spawn stdio ["ignore", fd, fd] →
     // closeSync). String flags use the established two-argument path;

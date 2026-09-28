@@ -3725,9 +3725,11 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     // function (with its hint), not the unmappable declared type. If it
     // poisons, still declare the local when its type is representable, so
     // later references to this name don't produce cascading errors.
+    const inferredObjectType = isJsSourceFile(decl.getSourceFile()) ? lowerer.mapTypeOf(lowerer.typeOf(decl.name)) : null;
+    const expandsObject = inferredObjectType?.kind === "record" && jsObjectBindingExpands(lowerer, decl, inferredObjectType);
     let init: IrExpr;
     try {
-      init = immediatelyGuardedAbsenceProbe(lowerer, decl)
+      init = expandsObject ? lowerer.lowerExprExpecting(decl.initializer, DYN) : immediatelyGuardedAbsenceProbe(lowerer, decl)
         ? (lowerAbsenceProbe(lowerer, decl.initializer) ?? lowerer.lowerExpr(decl.initializer))
         : lowerVariableInitializer(lowerer, decl.initializer);
     } catch (e) {
@@ -3783,6 +3785,11 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
       isJsSourceFile(decl.getSourceFile()) &&
       npmStaticPackageOfPath(decl.getSourceFile().fileName) !== null
     ) {
+      type = DYN;
+    }
+    const preservesObjectIdentity = init.type.kind === "dyn" && inferredObjectType?.kind === "record" &&
+      !decl.type && !hasJsTypeAnnotation(decl);
+    if (expandsObject || preservesObjectIdentity) {
       type = DYN;
     }
     // A JS `let x = {}`: TS's empty-object-literal type admits ANY later
@@ -3920,7 +3927,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     const optionalSelfWriteType = isLet
       ? npmStaticOptionalSelfWriteType(lowerer, decl, settledType)
       : null;
-    settledType = lowerer.runtimeOptionalBindingType(decl.name, settledType);
+    settledType = expandsObject || preservesObjectIdentity ? DYN : lowerer.runtimeOptionalBindingType(decl.name, settledType);
     if (optionalSelfWriteType !== null) settledType = optionalSelfWriteType;
     if (returnedEmptyArrayType !== null) settledType = returnedEmptyArrayType;
     // Exhaustiveness witnesses (`const unreachable: never = value`) have
@@ -4070,6 +4077,71 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
         else lowerer.chainRecvByNode.delete(keyNode);
       }
     }
+  }
+
+  /** A JS object literal's inferred fields do not close its later storage.
+   * Keep the original native object when writes add keys or delete fields;
+   * converting it to a fixed record would discard that behavior. */
+  function jsObjectBindingExpands(lowerer: Lowerer, decl: ts.VariableDeclaration, type: IrType & { kind: "record" }): boolean {
+    if (decl.type || !decl.initializer || !ts.isIdentifier(decl.name) || !isJsSourceFile(decl.getSourceFile())) return false;
+    let initializer = decl.initializer;
+    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+    if (!ts.isObjectLiteralExpression(initializer)) return false;
+    if (hasJsTypeAnnotation(decl)) return false;
+    const symbol = lowerer.resolveValueSymbol(decl.name);
+    const shape = lowerer.shapes.get(type.shapeId);
+    if (!symbol || !shape) return false;
+    const names = new Set(shape.fields.map((field) => field.name));
+    let scope: ts.Node = decl;
+    while (scope.parent && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent;
+    const aliases = new Set([symbol]);
+    const unwrap = (node: ts.Expression): ts.Expression => {
+      while (ts.isParenthesizedExpression(node)) node = node.expression;
+      return node;
+    };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const collect = (node: ts.Node): void => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && !node.type && !hasJsTypeAnnotation(node)) {
+          const source = unwrap(node.initializer);
+          const sourceSymbol = ts.isIdentifier(source) ? lowerer.resolveValueSymbol(source) : undefined;
+          const alias = lowerer.resolveValueSymbol(node.name);
+          if (sourceSymbol && aliases.has(sourceSymbol) && alias && !aliases.has(alias)) {
+            aliases.add(alias);
+            changed = true;
+          }
+        }
+        ts.forEachChild(node, collect);
+      };
+      collect(scope);
+    }
+    let expands = false;
+    const property = (node: ts.Node): string | null | undefined => {
+      if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+      const receiver = unwrap(node.expression);
+      const receiverSymbol = ts.isIdentifier(receiver) ? lowerer.resolveValueSymbol(receiver) : undefined;
+      if (!receiverSymbol || !aliases.has(receiverSymbol)) return undefined;
+      if (ts.isPropertyAccessExpression(node)) return node.name.text;
+      return ts.isStringLiteral(node.argumentExpression) || ts.isNumericLiteral(node.argumentExpression)
+        ? node.argumentExpression.text : null;
+    };
+    const visit = (node: ts.Node): void => {
+      if (expands) return;
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
+        const name = property(node.left);
+        if (name === null || (name !== undefined && !names.has(name))) expands = true;
+      }
+      if (ts.isDeleteExpression(node) && property(node.expression) !== undefined) expands = true;
+      ts.forEachChild(node, visit);
+    };
+    visit(scope);
+    return expands;
+  }
+
+  function hasJsTypeAnnotation(decl: ts.VariableDeclaration): boolean {
+    const statement = decl.parent?.parent;
+    return !!statement && /@type\b/.test(decl.getSourceFile().text.slice(statement.pos, decl.getStart()));
   }
 
   function immediatelyGuardedAbsenceProbe(lowerer: Lowerer, decl: ts.VariableDeclaration): boolean {
@@ -4336,6 +4408,9 @@ function lowerBranchSwitch(
       };
     }
     const obj = lowerer.lowerExpr(target.expression);
+    if (obj.type.kind === "dyn") {
+      return { kind: "exprStmt", expr: { kind: "libCall", fn: "dyn.keyDelete", args: [obj, lowerKey()], type: VOID, loc }, loc };
+    }
     if (obj.type.kind === "record") {
       const shape = lowerer.shapes.get(obj.type.shapeId);
       if (shape?.indexValue && shape.fields.length === 0 && !shape.tuple) {

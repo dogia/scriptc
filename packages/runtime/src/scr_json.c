@@ -780,18 +780,27 @@ static void scr_dyn_typed_ref_preserve_children(
   }
 }
 
+ScrDyn *scr_dyn_class_view_unavailable(void *ptr) {
+  (void)ptr;
+  static const char message[] = "class fields cannot be represented as checked-dynamic properties";
+  scr_throw_error_msg(SCR_ERR_TYPE, message, sizeof message - 1);
+  return scr_dyn_retain(scr_dyn_undefined());
+}
+
 ScrDyn *scr_dyn_typed_ref_materialize(const ScrDyn *d) {
   ScrDyn *capsule = (ScrDyn *)d;
+  ScrDyn *fresh = capsule->v.typed_ref.materialize(capsule->v.typed_ref.ptr);
+  if (scr_exc_pending()) {
+    scr_dyn_release(fresh);
+    return scr_dyn_retain(scr_dyn_undefined());
+  }
   if (!capsule->v.typed_ref.materialized) {
-    capsule->v.typed_ref.materialized =
-        capsule->v.typed_ref.materialize(capsule->v.typed_ref.ptr);
+    capsule->v.typed_ref.materialized = fresh;
   } else {
     /* Keep the stable dyn object identity while refreshing its contents
      * from the live typed source. The fresh snapshot owns exactly one
      * reference; swapping payloads lets its release dispose the old
      * detached contents without changing the cached node's address. */
-    ScrDyn *fresh =
-        capsule->v.typed_ref.materialize(capsule->v.typed_ref.ptr);
     scr_dyn_typed_ref_preserve_children(
         capsule->v.typed_ref.materialized, fresh);
     size_t cached_rc = capsule->v.typed_ref.materialized->rc;
@@ -2841,6 +2850,23 @@ static void scr_json_delete_member(ScrDyn *object, const ScrStr *key) {
     object->v.obj.len--;
     return;
   }
+}
+
+/* Ordinary native objects carry removable own data properties. Dense
+ * arrays, typed references and handles keep their explicit boundary;
+ * deleting from a materialized snapshot would lose the mutation. */
+void scr_dyn_key_delete(ScrDyn *recv, const ScrStr *key) {
+  if (recv->kind == SCR_DYN_OBJ) {
+    scr_json_delete_member(recv, key);
+    return;
+  }
+  if (recv->kind == SCR_DYN_UNDEF || recv->kind == SCR_DYN_NULL) {
+    const char *message = "Cannot convert undefined or null to object";
+    scr_throw_error_msg(SCR_ERR_TYPE, message, strlen(message));
+    return;
+  }
+  const char *message = "delete on this checked-native receiver is not supported yet";
+  scr_throw_error_msg_code(SCR_ERR_ERROR, message, strlen(message), "SC2020");
 }
 
 static ScrDyn *scr_json_revive(ScrDyn *holder, const ScrStr *key,

@@ -10142,6 +10142,16 @@ export class Lowerer {
    * import forms key the same lowering tables. Null for everything else. */
   builtinMemberOf(access: ts.PropertyAccessExpression): { module: string; member: string } | null {
     if (access.questionDotToken) return null;
+    // Function-owned builtin members still require import provenance. A
+    // user object named realpathSync must retain its ordinary method call.
+    if (access.name.text === "native") {
+      const owner = access.expression;
+      const imported = ts.isIdentifier(owner) ? this.builtinImportOf(owner)
+        : ts.isPropertyAccessExpression(owner) ? this.builtinMemberOf(owner) : null;
+      if (imported?.module === "fs" && imported.member === "realpathSync") {
+        return { module: "fs", member: "realpathSync.native" };
+      }
+    }
     const module = this.builtinNamespaceModuleOf(access.expression);
     if (module !== null) return { module, member: access.name.text };
     // The RE-EXPORT FACADE's namespace spelling: `import * as assert from

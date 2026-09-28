@@ -230,7 +230,7 @@ test("global assignments cannot masquerade as lexical initialization", () => {
   expect(validateModule(mod).some((error) => error.message.includes("initializing assign requires a TDZ binding"))).toBe(true);
 });
 
-test("TDZ globals require record storage and round-trip initialization", () => {
+test("TDZ globals require guarded pointer storage and round-trip initialization", () => {
   const mod = tdzModule();
   const type = { kind: "record", shapeId: "codec" } as const;
   mod.records = [{ id: "codec", fields: [{ name: "%TextEncoder", type: F64 }], declaredOrder: [] }];
@@ -243,7 +243,7 @@ test("TDZ globals require record storage and round-trip initialization", () => {
   expect(validateModule(mod)).toEqual([]);
   expect(deserializeModule(serializeModule(mod))).toEqual(mod);
   mod.globals[0]!.type = F64;
-  expect(validateModule(mod).some((error) => error.message.includes('TDZ global "value" must have record storage'))).toBe(true);
+  expect(validateModule(mod).some((error) => error.message.includes('TDZ global "value" must have record, function, or checked-value storage'))).toBe(true);
 });
 
 test("legacy const TDZ declarations remain readable", () => {

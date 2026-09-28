@@ -4368,20 +4368,20 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
     const loc = locOf(call);
     if (name === "getStore" && call.arguments.length === 0) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
-      return { kind: "libCall", fn: "als.get", args: [receiver], type: DYN, loc };
+      return alsTypedResult(lowerer, call, { kind: "libCall", fn: "als.get", args: [receiver], type: DYN, loc });
     }
     if (name === "run" && call.arguments.length >= 2) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
       const value = dcMessageArg(lowerer, call.arguments[0]!);
       const fn = dcSubscriberArg(lowerer, call.arguments[1]!);
       const rest = dcTraceArgsArr(lowerer, call.arguments.slice(2), loc);
-      return { kind: "libCall", fn: "als.run", args: [receiver, value, fn, rest], type: DYN, loc };
+      return alsTypedResult(lowerer, call, { kind: "libCall", fn: "als.run", args: [receiver, value, fn, rest], type: DYN, loc });
     }
     if (name === "exit" && call.arguments.length >= 1) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
       const fn = dcSubscriberArg(lowerer, call.arguments[0]!);
       const rest = dcTraceArgsArr(lowerer, call.arguments.slice(1), loc);
-      return { kind: "libCall", fn: "als.exitRun", args: [receiver, fn, rest], type: DYN, loc };
+      return alsTypedResult(lowerer, call, { kind: "libCall", fn: "als.exitRun", args: [receiver, fn, rest], type: DYN, loc });
     }
     if (name === "enterWith" && call.arguments.length === 1) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
@@ -4398,6 +4398,18 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
       "run(store, fn, ...args), exit(fn, ...args), getStore(), enterWith(store), and disable() are the supported AsyncLocalStorage members",
       lowerer.checker.getSymbolAtLocation(access.name),
     );
+  }
+
+  /** The runtime carries a tagged value, while a typed ALS call promises
+   * its generic store/callback result. Convert at that boundary so inferred
+   * locals and immediate method calls share the same checked representation.
+   * Untyped JS and unknown stores keep the original dynamic value. */
+  function alsTypedResult(lowerer: Lowerer, call: ts.CallExpression, value: IrExpr): IrExpr {
+    const expected = lowerer.mapTypeOf(lowerer.typeOf(call));
+    // Promises already use the runtime's dynamic async path; unlike class
+    // capsules, boxed typed promises do not have a checked extraction ABI.
+    if (!expected || expected.kind === "dyn" || expected.kind === "void" || expected.kind === "promise") return value;
+    return lowerer.coerceInto(call, value, expected);
   }
 
   /** Property reads on Channel receivers: `.name` (the registration
@@ -4823,6 +4835,19 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
       }
       const argNode = call.arguments[0]!;
       let value = lowerer.lowerExpr(argNode);
+      // Optional Map/array reads and partially narrowed unions keep their
+      // storage representation when lowered as ordinary arguments. Select
+      // the JSON walker from the proven use-site type, using a checked
+      // conversion so a stale capture cannot read an impossible payload.
+      if (value.type.kind === "union") {
+        const narrowed = lowerer.mapTypeOf(lowerer.typeOf(argNode));
+        if (narrowed && !isUnitType(narrowed) && narrowed.kind !== "void") {
+          const helper = narrowed.kind === "union"
+            ? lowerer.narrowedRetagHelper(argNode, value.type.unionId, narrowed.unionId, loc)
+            : lowerer.narrowedArmHelper(value.type.unionId, narrowed, loc);
+          if (helper) value = { kind: "call", callee: helper, args: [value], type: narrowed, loc };
+        }
+      }
       const replacer = call.arguments[1];
       if (replacer && !jsonNullishArgument(lowerer, replacer)) {
         const callback = lowerJsonCallback(lowerer, replacer, "replacer");
@@ -8888,16 +8913,16 @@ function lowerStoredTextCodecCall(lowerer: Lowerer, call: ts.CallExpression, acc
     return { kind: "libCall", fn: "buffer.fromStr", args: [s, enc], type: BYTES_U8, loc };
   }
 
-/** `String.fromCharCode(...codes)` on THE String global: every argument
+/** `String.fromCharCode/fromCodePoint(...codes)` on THE String global: every argument
    * lowers as a number and packs into ONE f64[] array-literal argument
    * (the path.join convention) — or ONE whole-array spread forwards the
-   * array itself. Other String statics (fromCodePoint, raw) fall through
-   * to the member fence. Null for non-String receivers. */
+   * array itself. String.raw has its own template path below.
+   * Null for non-String receivers. */
   export function lowerStringStaticCall(lowerer: Lowerer, call: ts.CallExpression,
     access: ts.PropertyAccessExpression,): IrExpr | null {
     if (call.questionDotToken) return null;
     const member = lowerer.stdlibGlobalMember(access, "String");
-    if (member !== "fromCharCode" && member !== "raw") return null;
+    if (member !== "fromCharCode" && member !== "fromCodePoint" && member !== "raw") return null;
     const loc = locOf(call);
     // String.raw(template, ...substitutions): the template's `raw` member
     // is a string[] read off any record that carries one (the lib's
@@ -8951,9 +8976,9 @@ function lowerStoredTextCodecCall(lowerer: Lowerer, call: ts.CallExpression, acc
     if (spread) {
       if (call.arguments.length !== 1) {
         lowerer.noLowering(
-          "String.fromCharCode with a mixed spread call",
+          `String.${member} with a mixed spread call`,
           call,
-          "spread a whole array (String.fromCharCode(...codes)) or pass plain arguments",
+          `spread a whole array (String.${member}(...codes)) or pass plain arguments`,
         );
       }
       // A typed-array/Buffer spread (String.fromCharCode(...data.slice(4, 8))
@@ -8963,14 +8988,14 @@ function lowerStoredTextCodecCall(lowerer: Lowerer, call: ts.CallExpression, acc
       if (spreadT?.kind === "bytes") {
         const packed = lowerer.lowerExpr(spread.expression);
         if (packed.type.kind !== "bytes") lowerer.badType(spread.expression, lowerer.typeOf(spread.expression));
-        return { kind: "libCall", fn: "string.fromCharCode", args: [packed], type: STRING, loc };
+        return { kind: "libCall", fn: `string.${member}`, args: [packed], type: STRING, loc };
       }
       const packed = lowerer.lowerExprExpecting(spread.expression, arrayOf(F64));
-      return { kind: "libCall", fn: "string.fromCharCode", args: [packed], type: STRING, loc };
+      return { kind: "libCall", fn: `string.${member}`, args: [packed], type: STRING, loc };
     }
     const elems = call.arguments.map((a) => lowerer.lowerExprExpecting(a, F64));
     const packed: IrExpr = { kind: "arrayLit", elems, type: arrayOf(F64), loc };
-    return { kind: "libCall", fn: "string.fromCharCode", args: [packed], type: STRING, loc };
+    return { kind: "libCall", fn: `string.${member}`, args: [packed], type: STRING, loc };
   }
 
 /** `s.lastIndexOf(searchValue?, position?)` on string receivers, using UTF-16

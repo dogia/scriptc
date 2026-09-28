@@ -1078,6 +1078,12 @@
       "status": "static"
     },
     {
+      "id": "node-builtin.fs.realpathSync.native",
+      "kind": "node-builtin",
+      "name": "fs.realpathSync.native",
+      "status": "static"
+    },
+    {
       "id": "node-builtin.fs.rename",
       "kind": "node-builtin",
       "name": "fs.rename",

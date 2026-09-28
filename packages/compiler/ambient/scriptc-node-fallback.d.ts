@@ -1178,6 +1178,9 @@ declare module "node:fs" {
   /* realpath(3) — resolves symlinks, `.`/`..`, throwing Node's fs error
    * shapes for missing paths. */
   export function realpathSync(path: string): string;
+  export namespace realpathSync {
+    function native(path: string): string;
+  }
   /* statfs(2)/statvfs(3) — the filesystem-capacity snapshot (the fields
    * Node's statfsSync reports; bavail × bsize is the free-space probe). */
   export interface StatsFs {

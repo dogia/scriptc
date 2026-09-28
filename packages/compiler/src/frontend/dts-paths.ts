@@ -1,14 +1,10 @@
 import { createRequire } from "node:module";
 import { npmPackageNameOf } from "./workspace-registry.js";
+import { tsgoPath } from "./ts7/session-path.js";
+
+export { tsgoPath } from "./ts7/session-path.js";
 
 const require = createRequire(import.meta.url);
-
-/** tsgo uses slash-normalized file names on Windows (for SourceFile names
- * and virtual-FS callbacks), while Node's path APIs use backslashes there.
- * POSIX backslashes stay literal: they are valid filename characters. */
-export function tsgoPath(path: string, platform: NodeJS.Platform = process.platform): string {
-  return platform === "win32" ? path.replaceAll("\\", "/") : path;
-}
 
 /** Path of the shipped ambient declarations — the always-shipped CORE
  * (comptime/__island_eval, setTimeout). Part of EVERY program scriptc

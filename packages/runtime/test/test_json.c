@@ -35,6 +35,42 @@ static bool str_is(const ScrStr *s, const char *want) {
   return s && s->len == strlen(want) && memcmp(s->data, want, s->len) == 0;
 }
 
+static bool typed_view_fails = false;
+static void *view_retain(void *value) { return scr_str_retain(value); }
+static void view_release(void *value) { scr_str_release(value); }
+static ScrDyn *view_materialize(void *value) {
+  if (typed_view_fails) return scr_dyn_class_view_unavailable(value);
+  ScrDyn *view = scr_dyn_new_obj();
+  scr_dyn_obj_set(view, "value", 5, scr_dyn_new_num(7));
+  return view;
+}
+
+static void typed_view_failure_tests(void) {
+  ScrStr *source = S("native identity");
+  ScrDyn *capsule = scr_dyn_new_typed_ref(source, view_retain, view_release,
+      "test", 4, view_materialize, NULL);
+  ScrDyn *first = scr_dyn_typed_ref_materialize(capsule);
+  check(first->kind == SCR_DYN_OBJ && !scr_exc_pending(), "typed view begins valid");
+  for (int i = 0; i < 3; i++) {
+    typed_view_fails = true;
+    ScrDyn *failed = scr_dyn_typed_ref_materialize(capsule);
+    check(failed->kind == SCR_DYN_UNDEF && scr_exc_pending(), "typed view failure stays catchable");
+    scr_exc_clear();
+    scr_dyn_release(failed);
+    check(first->kind == SCR_DYN_OBJ, "failed refresh preserves cached view");
+    typed_view_fails = false;
+    ScrDyn *next = scr_dyn_typed_ref_materialize(capsule);
+    check(next == first && !scr_exc_pending(), "typed view recovers with stable identity");
+    scr_dyn_release(next);
+    ScrStr *roundtrip = scr_dyn_typed_ref_unbox(capsule);
+    check(roundtrip == source, "failed view preserves native identity");
+    scr_str_release(roundtrip);
+  }
+  scr_dyn_release(first);
+  scr_dyn_release(capsule);
+  scr_str_release(source);
+}
+
 /* Parse `text`, expect success, return the checked-dynamic tree (+1). */
 static ScrDyn *parse_ok(const char *text, const char *name) {
   ScrStr *t = S(text);
@@ -466,6 +502,7 @@ int main(void) {
   }
 
   json_callback_tests();
+  typed_view_failure_tests();
 
   printf("%d/%d checks passed\n", checks - failures, checks);
   return failures == 0 ? 0 : 1;

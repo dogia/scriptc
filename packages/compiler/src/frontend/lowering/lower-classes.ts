@@ -5553,6 +5553,13 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
               if (seed.type.kind === "jsval" && lowerer.boundaryExitSafe(arrayOf(mapped.elem))) {
                 seed = { kind: "jsExit", value: seed, type: arrayOf(mapped.elem), loc: seed.loc };
               }
+              if (seed.type.kind === "dyn" && (mapped.elem.kind === "f64" || mapped.elem.kind === "string")) {
+                seed = lowerer.coerceInto(argNode, {
+                  kind: "libCall", fn: "dyn.iterPack", args: [seed,
+                    { kind: "strLit", value: argNode.getText(), type: STRING, loc: seed.loc }],
+                  type: DYN, loc: seed.loc,
+                }, arrayOf(mapped.elem));
+              }
               if (typeEquals(seed.type, arrayOf(mapped.elem))) {
                 return { kind: "setNew", seed, type: mapped, loc };
               }

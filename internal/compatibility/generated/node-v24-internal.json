@@ -507,9 +507,9 @@
       "apiEntries": 276,
       "static": {
         "supported": 0,
-        "partial": 48,
+        "partial": 49,
         "refused": 0,
-        "not-implemented": 228,
+        "not-implemented": 227,
         "by-design": 0,
         "unreviewed": 0,
         "not-applicable": 0
@@ -50632,7 +50632,8 @@
           "tests/corpus/2940-fsp-realpath.ts",
           "tests/corpus/2941-fsp-lstat-identity.ts",
           "tests/corpus/2942-fsp-readdir-dirent.ts",
-          "tests/corpus/2950-fs-descriptor-publication.ts"
+          "tests/corpus/2950-fs-descriptor-publication.ts",
+          "tests/corpus/fs-native-realpath.ts"
         ]
       },
       "dynamic": {
@@ -55354,8 +55355,11 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:fs"
+        "status": "partial",
+        "evidence": "surface-manifest:node-builtin.fs.realpathSync.native",
+        "tests": [
+          "tests/corpus/fs-native-realpath.ts"
+        ]
       },
       "dynamic": {
         "status": "not-implemented",

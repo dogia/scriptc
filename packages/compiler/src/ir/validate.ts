@@ -112,6 +112,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "json.parseReviver": { argTypes: [STRING, DYN], result: DYN },
   "json.stringifyReplacer": { argTypes: [DYN, DYN, STRING], result: DYN },
   "dyn.keySet": { argTypes: [DYN, STRING, DYN], result: VOID },
+  "dyn.keyDelete": { argTypes: [DYN, STRING], result: VOID },
   "dyn.iterPack": { argTypes: [DYN, STRING], result: DYN },
   "dyn.arrLen": { argTypes: [DYN], result: F64 },
   "dyn.arrAt": { argTypes: [DYN, F64], result: DYN },
@@ -221,6 +222,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "net.getAutoSelTimeout": { argTypes: [], result: F64 },
   "net.setAutoSelTimeout": { argTypes: [F64], result: VOID },
   "fs.realpathSync": { argTypes: [STRING], result: STRING },
+  "fs.realpathNativeSync": { argTypes: [STRING], result: STRING },
   "os.userName": { argTypes: [], result: STRING },
   "os.userShell": { argTypes: [], result: STRING },
   "os.userHomedir": { argTypes: [], result: STRING },
@@ -1378,6 +1380,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   // Arg 0 is a packed f64[] OR a bytes value (the spread-typed-array
   // form) — checked in the libCall case.
   "string.fromCharCode": { argTypes: [null], result: STRING },
+  "string.fromCodePoint": { argTypes: [null], result: STRING },
   "string.lastIndexOf": { argTypes: [STRING, STRING], result: F64 },
   "string.lastIndexOfFrom": { argTypes: [STRING, STRING, F64], result: F64 },
   "string.raw": { argTypes: [arrayOf(STRING), arrayOf(STRING)], result: STRING },
@@ -1885,8 +1888,8 @@ export function validateModule(mod: IrModule): IrValidationError[] {
     }
   };
   for (const g of mod.globals ?? []) {
-    if (g.tdz && g.type.kind !== "record") {
-      errors.push({ message: `TDZ global "${g.name}" must have record storage`, loc: noLoc });
+    if (g.tdz && g.type.kind !== "record" && g.type.kind !== "func" && g.type.kind !== "dyn") {
+      errors.push({ message: `TDZ global "${g.name}" must have record, function, or checked-value storage`, loc: noLoc });
     }
     if (isUnitType(g.type)) {
       errors.push({ message: `global "${g.name}" has bare unit type ${g.type.kind}`, loc: noLoc });
@@ -2693,19 +2696,15 @@ function validateFunction(
         if (e.source) {
           checkExpr(e.source);
           const sk = e.source.type;
-          if (sk.kind === "bytes") {
-            // Same-elem copies only (cross-kind construction is fenced).
-            if (!typeEquals(sk, e.type)) {
-              err(`bytesNew copy source elem mismatch`, e.loc);
-            }
-          } else if (sk.kind === "array") {
+          if (sk.kind === "array") {
             if (sk.elem.kind !== "f64") {
               err(`bytesNew array source must hold f64, got ${sk.elem.kind}`, e.loc);
             }
-          } else if (sk.kind !== "f64") {
+          } else if (sk.kind !== "f64" && sk.kind !== "bytes" && sk.kind !== "dyn") {
             err(`bytesNew source of kind ${sk.kind}`, e.loc);
           }
         }
+        if (e.from && e.source?.type.kind !== "dyn") err("bytesNew from requires a dyn source", e.loc);
         break;
       }
       case "bytesIntrinsic": {
@@ -2742,6 +2741,8 @@ function validateFunction(
           err(`bytesIntrinsic ${e.method} args[1] must be a strLit encoding`, e.loc);
         }
         const EXTRA_SIGS: Record<string, { argTypes: IrType[]; minArgs: number; result: IrType } | undefined> = {
+          setFromDyn: { argTypes: [DYN, F64], minArgs: 1, result: VOID },
+          copyWithin: { argTypes: [F64, F64, F64], minArgs: 3, result: bytesOf(recv.elem) },
           equals: { argTypes: [BYTES_U8], minArgs: 1, result: BOOL },
           compareBuf: { argTypes: [BYTES_U8, F64, F64, F64, F64], minArgs: 1, result: F64 },
           // [needle, align, byteOffset?] — an OMITTED byteOffset is Node's
@@ -2782,7 +2783,7 @@ function validateFunction(
                     : e.method === "toArray"
                       ? { argTypes: [], minArgs: 0, result: arrayOf(F64) }
                 : e.method === "setFrom"
-                  ? { argTypes: [bytesOf(recv.elem), F64], minArgs: 1, result: VOID }
+                  ? { argTypes: [e.args[0]?.type.kind === "bytes" ? e.args[0].type : bytesOf(recv.elem), F64], minArgs: 1, result: VOID }
                   : e.method === "toString" || e.method === "toStringVar"
                     ? { argTypes: [STRING, F64, F64], minArgs: 1, result: STRING }
                     : e.method === "readNum"
@@ -4106,13 +4107,13 @@ function validateFunction(
           }
           break;
         }
-        if (e.fn === "string.fromCharCode") {
+        if (e.fn === "string.fromCharCode" || e.fn === "string.fromCodePoint") {
           // One packed f64[] or one bytes value (the spread form).
           const t = e.args[0]?.type;
           const ok =
             t && ((t.kind === "array" && t.elem.kind === "f64") || t.kind === "bytes");
           if (!ok) {
-            err(`libCall string.fromCharCode arg 0: expected number[] or bytes, got ${t?.kind}`, e.loc);
+            err(`libCall ${e.fn} arg 0: expected number[] or bytes, got ${t?.kind}`, e.loc);
           }
           break;
         }
