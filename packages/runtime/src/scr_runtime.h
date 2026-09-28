@@ -3392,6 +3392,10 @@ typedef struct {
   char *key;
   size_t key_len;
   ScrDyn *value; /* owned */
+  /* Data-property attributes. Ordinary object insertion uses all three. */
+  bool writable;
+  bool enumerable;
+  bool configurable;
 } ScrDynEntry;
 
 struct ScrDyn {
@@ -3611,6 +3615,8 @@ ScrDyn *scr_dyn_iter_pack(const ScrDyn *src, const ScrStr *msg);
 double scr_dyn_arr_len(const ScrDyn *d);
 ScrDyn *scr_dyn_arr_at(const ScrDyn *d, double i);
 void scr_dyn_obj_set(ScrDyn *obj, const char *key, size_t key_len, ScrDyn *value);
+ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor);
+ScrDyn *scr_dyn_get_own_property_descriptor(ScrDyn *target, ScrDyn *key);
 /* The checked-dynamic keyed WRITE (`h.k = v` on a dyn receiver): OBJ sets
  * the member (JS: later writes win, insertion order); undefined/null and
  * non-object kinds throw Node's catchable TypeErrors (strict-mode
@@ -3703,9 +3709,9 @@ ScrDyn *scr_dyn_invoke(ScrDyn *recv, const char *method, ScrDyn *const *args, si
  * the key answers nothing (the caller's undefined). Never throws. */
 ScrDyn *scr_dyn_fn_get(const ScrDyn *d, const char *key, size_t key_len);
 /* Object.defineProperties over dyn values (targets: OBJ and FUNC): each
- * descriptor's `value` becomes a plain own property — writable/enumerable/
- * configurable are accepted and IGNORED (dyn properties are plain data
- * properties; SEMANTICS.md), get/set throw the loud unsupported Error.
+ * descriptor's `value` becomes an own data property. OBJ targets preserve
+ * writable/enumerable/configurable; FUNC targets still use plain properties.
+ * get/set throw the loud unsupported Error.
  * Returns the target (+1, JS's return), or NULL with a pending catchable
  * TypeError (non-object target/descriptor — Node's messages). */
 ScrDyn *scr_dyn_define_props(ScrDyn *target, ScrDyn *descs);

@@ -762,10 +762,7 @@ static ScrDyn *scr_dyn_invoke_impl(
   return NULL;
 }
 
-/* Object.defineProperties over dyn values (see scr_runtime.h). Value
- * descriptors only: writable/enumerable/configurable accepted and IGNORED
- * (dyn properties are plain data properties — SEMANTICS.md); get/set
- * throw the loud unsupported Error, never a silent drop. */
+/* Object.defineProperties over dyn values (see scr_runtime.h). */
 ScrDyn *scr_dyn_define_props(ScrDyn *target, ScrDyn *descs) {
   /* Island-held operands ARE objects to Node — the non-object TypeError
    * below would be a wrong claim. Loud fence (lane dyn-routing-ops). */
@@ -801,7 +798,13 @@ ScrDyn *scr_dyn_define_props(ScrDyn *target, ScrDyn *descs) {
     ScrDyn *value = scr_dyn_obj_get(ent->value, "value", 5);
     if (!value) value = scr_dyn_undefined();
     if (target->kind == SCR_DYN_OBJ) {
-      scr_dyn_obj_set(target, ent->key, ent->key_len, scr_dyn_retain(value));
+      ScrStr *name = scr_str_new(ent->key, ent->key_len);
+      ScrDyn *key = scr_dyn_new_str(name);
+      scr_str_release(name);
+      ScrDyn *defined = scr_dyn_define_property(target, key, ent->value);
+      scr_dyn_release(key);
+      if (!defined) return NULL;
+      scr_dyn_release(defined);
     } else {
       if (!target->v.fn.clo->props) {
         ScrBox *box = scr_box_new_obj(&scr_dyn_retain_v, &scr_dyn_release_v, NULL);

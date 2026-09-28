@@ -2051,13 +2051,14 @@ export type IrLibFn =
   | "dyn.hasKey"
   /** Object.defineProperties over dyn values (args: target, descriptors —
    * both borrowed dyn; result: the target, +1 — JS's return value).
-   * Value descriptors become plain own properties on OBJ and FUNC targets
-   * (writable/enumerable/configurable accepted and IGNORED — dyn
-   * properties are plain data properties, SEMANTICS.md); get/set
+   * Value descriptors become own properties on OBJ and FUNC targets;
+   * OBJ targets preserve data attributes. get/set
    * descriptors and non-object targets/descriptors throw catchably
    * (Node's TypeError texts; accessors the loud unsupported Error). In
    * the may-throw seed set. */
   | "dyn.defineProps"
+  | "dyn.defineProperty"
+  | "dyn.getOwnPropertyDescriptor"
   /** Bare `typeof v` on a dyn value AS A STRING (arg: the dyn value,
    * borrowed; result: an owned string) — the dyn kind's JS answer:
    * undefined→"undefined", null/object/array/bytes→"object" (JS's oldest
@@ -7767,6 +7768,8 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "dyn.iterPack",
   "dyn.toString",
   "dyn.defineProps",
+  "dyn.defineProperty",
+  "dyn.getOwnPropertyDescriptor",
   "process.chdir",
   "fs.realpathSync",
   "fs.readFileSync",

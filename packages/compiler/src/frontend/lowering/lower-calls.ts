@@ -8954,11 +8954,26 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
       }
       return null;
     }
+    if ((member === "defineProperty" && call.arguments.length === 3) ||
+        (member === "getOwnPropertyDescriptor" && call.arguments.length === 2)) {
+      if (call.arguments.some((a) => ts.isSpreadElement(a))) return null;
+      let target = tryLowerExpression(lowerer, call.arguments[0]!);
+      if (!target || (target.type.kind !== "dyn" && !isUnitType(target.type))) return null;
+      if (target.type.kind !== "dyn") target = { kind: "dynFrom", value: target, type: DYN, loc: locOf(call.arguments[0]!) };
+      const key = lowerer.lowerExprExpecting(call.arguments[1]!, DYN);
+      if (key.type.kind !== "dyn") return null;
+      if (member === "getOwnPropertyDescriptor") {
+        return { kind: "libCall", fn: "dyn.getOwnPropertyDescriptor", args: [target, key], type: DYN, loc: locOf(call) };
+      }
+      const descriptor = lowerer.lowerExprExpecting(call.arguments[2]!, DYN);
+      if (descriptor.type.kind !== "dyn") return null;
+      return { kind: "libCall", fn: "dyn.defineProperty", args: [target, key, descriptor], type: DYN, loc: locOf(call) };
+    }
     // Object.defineProperties over a CHECKED-DYNAMIC target (test/common's
     // _mustCallInner copying name/length onto the mustCall wrapper): the
-    // runtime turns each descriptor's `value` into a plain own property on
-    // the dyn node (OBJ members; FUNC nodes carry an own-property table) —
-    // flags accepted and ignored, accessors throw loudly (SEMANTICS.md).
+    // runtime turns each descriptor's `value` into an own property on
+    // the dyn node (OBJ members preserve attributes; FUNC nodes carry an
+    // own-property table). Accessors throw loudly.
     // The result is the target, like JS. Typed targets keep the fence:
     // static shapes have no property table to extend.
     if (member === "defineProperties" && call.arguments.length === 2 &&
@@ -8972,6 +8987,9 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
         target && target.type.kind === "func" &&
         canBoxFuncIntoDyn(target.type, (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))
       ) {
+        target = { kind: "dynFrom", value: target, type: DYN, loc: locOf(call.arguments[0]!) };
+      }
+      if (target && isUnitType(target.type)) {
         target = { kind: "dynFrom", value: target, type: DYN, loc: locOf(call.arguments[0]!) };
       }
       if (target?.type.kind === "dyn") {

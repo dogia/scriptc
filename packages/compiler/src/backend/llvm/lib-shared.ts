@@ -511,6 +511,8 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "dyn.arrAt": "scr_dyn_arr_at",
   "dyn.hasKey": "scr_dyn_has_key",
   "dyn.defineProps": "scr_dyn_define_props",
+  "dyn.defineProperty": "scr_dyn_define_property",
+  "dyn.getOwnPropertyDescriptor": "scr_dyn_get_own_property_descriptor",
   "dyn.typeof": "scr_dyn_typeof",
   "dyn.objectTag": "scr_dyn_object_tag",
   "dyn.toString": "scr_dyn_to_string_method",

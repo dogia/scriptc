@@ -645,6 +645,9 @@ static void scr_dyn_obj_put(ScrDyn *obj, char *key, size_t key_len, ScrDyn *valu
   e->key = key;
   e->key_len = key_len;
   e->value = value;
+  e->writable = true;
+  e->enumerable = true;
+  e->configurable = true;
 }
 
 /* ── dyn construction (compiler-emitted converters & overflow reads) ───── */
@@ -1367,6 +1370,109 @@ void scr_dyn_obj_set(ScrDyn *obj, const char *key, size_t key_len, ScrDyn *value
   scr_dyn_obj_put(obj, copy, key_len, value);
 }
 
+static ScrStr *scr_dyn_property_key(const ScrDyn *key) {
+  if (key->kind == SCR_DYN_STR) return scr_str_retain(key->v.str);
+  if (key->kind == SCR_DYN_NUM) return scr_f64_to_scrstr(key->v.num);
+  if (key->kind == SCR_DYN_BOOL) return scr_str_new(key->v.b ? "true" : "false", key->v.b ? 4 : 5);
+  if (key->kind == SCR_DYN_NULL) return scr_str_new("null", 4);
+  if (key->kind == SCR_DYN_UNDEF) return scr_str_new("undefined", 9);
+  static const char msg[] = "Property key coercion on this dynamic value is not supported yet";
+  scr_throw_error_msg(SCR_ERR_ERROR, msg, sizeof msg - 1);
+  return NULL;
+}
+
+static ScrDynEntry *scr_dyn_entry(ScrDyn *obj, const ScrStr *key) {
+  for (size_t i = 0; i < obj->v.obj.len; i++) {
+    ScrDynEntry *entry = &obj->v.obj.entries[i];
+    if (entry->key_len == key->len && memcmp(entry->key, key->data, key->len) == 0) return entry;
+  }
+  return NULL;
+}
+
+static bool scr_dyn_property_same_value(const ScrDyn *a, const ScrDyn *b) {
+  if (a->kind == SCR_DYN_NUM && b->kind == SCR_DYN_NUM) return scr_num_same_value(a->v.num, b->v.num);
+  return scr_dyn_strict_eq(a, b);
+}
+
+ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor) {
+  if (target->kind != SCR_DYN_OBJ) {
+    static const char msg[] = "Object.defineProperty called on non-object";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  if (descriptor->kind != SCR_DYN_OBJ) {
+    static const char msg[] = "Property description must be an object";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  if (scr_dyn_obj_get(descriptor, "get", 3) || scr_dyn_obj_get(descriptor, "set", 3)) {
+    static const char msg[] = "Accessor property descriptors are not supported yet";
+    scr_throw_error_msg(SCR_ERR_ERROR, msg, sizeof msg - 1);
+    return NULL;
+  }
+  ScrStr *name = scr_dyn_property_key(key);
+  if (!name) return NULL;
+  ScrDynEntry *prior = scr_dyn_entry(target, name);
+  ScrDyn *value = scr_dyn_obj_get(descriptor, "value", 5);
+  ScrDyn *w = scr_dyn_obj_get(descriptor, "writable", 8);
+  ScrDyn *e = scr_dyn_obj_get(descriptor, "enumerable", 10);
+  ScrDyn *c = scr_dyn_obj_get(descriptor, "configurable", 12);
+  bool writable = w ? scr_dyn_truthy(w) : prior ? prior->writable : false;
+  bool enumerable = e ? scr_dyn_truthy(e) : prior ? prior->enumerable : false;
+  bool configurable = c ? scr_dyn_truthy(c) : prior ? prior->configurable : false;
+  if (prior && !prior->configurable &&
+      (configurable || enumerable != prior->enumerable ||
+       (!prior->writable && writable) ||
+       (!prior->writable && value && !scr_dyn_property_same_value(prior->value, value)))) {
+    scr_str_release(name);
+    static const char msg[] = "Cannot redefine property";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  if (prior) {
+    if (value) {
+      ScrDyn *replacement = scr_dyn_retain(value);
+      scr_dyn_release(prior->value);
+      prior->value = replacement;
+    }
+    prior->writable = writable;
+    prior->enumerable = enumerable;
+    prior->configurable = configurable;
+  } else {
+    scr_dyn_obj_set(target, name->data, name->len, scr_dyn_retain(value ? value : scr_dyn_undefined()));
+    ScrDynEntry *entry = scr_dyn_entry(target, name);
+    entry->writable = writable;
+    entry->enumerable = enumerable;
+    entry->configurable = configurable;
+  }
+  scr_str_release(name);
+  return scr_dyn_retain(target);
+}
+
+ScrDyn *scr_dyn_get_own_property_descriptor(ScrDyn *target, ScrDyn *key) {
+  if (target->kind == SCR_DYN_NULL || target->kind == SCR_DYN_UNDEF) {
+    static const char msg[] = "Cannot convert undefined or null to object";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  if (target->kind != SCR_DYN_OBJ) {
+    static const char msg[] = "Object.getOwnPropertyDescriptor on this value is not supported yet";
+    scr_throw_error_msg(SCR_ERR_ERROR, msg, sizeof msg - 1);
+    return NULL;
+  }
+  ScrStr *name = scr_dyn_property_key(key);
+  if (!name) return NULL;
+  ScrDynEntry *entry = scr_dyn_entry(target, name);
+  scr_str_release(name);
+  if (!entry) return scr_dyn_retain(scr_dyn_undefined());
+  ScrDyn *out = scr_dyn_new_obj();
+  scr_dyn_obj_set(out, "value", 5, scr_dyn_retain(entry->value));
+  scr_dyn_obj_set(out, "writable", 8, scr_dyn_new_bool(entry->writable));
+  scr_dyn_obj_set(out, "enumerable", 10, scr_dyn_new_bool(entry->enumerable));
+  scr_dyn_obj_set(out, "configurable", 12, scr_dyn_new_bool(entry->configurable));
+  return out;
+}
+
 /* ToBoolean over a dyn value (`v || dflt`, `if (v)` on a dyn operand):
  * bool by value; number falsy exactly for 0, -0, and NaN; string falsy
  * exactly when empty; obj/arr/bytes/func always true; undefined and null
@@ -2053,6 +2159,14 @@ void scr_dyn_key_set(ScrDyn *recv, ScrStr *key, ScrDyn *value) {
     return;
   }
   if (recv->kind == SCR_DYN_OBJ) {
+    for (size_t i = 0; i < recv->v.obj.len; i++) {
+      ScrDynEntry *entry = &recv->v.obj.entries[i];
+      if (entry->key_len == key->len && memcmp(entry->key, key->data, key->len) == 0 && !entry->writable) {
+        static const char msg[] = "Cannot assign to read only property";
+        scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+        return;
+      }
+    }
     scr_dyn_obj_set(recv, key->data, key->len, scr_dyn_retain(value));
     return;
   }
@@ -2203,6 +2317,7 @@ void scr_jb_put_dyn(ScrJsonBuf *b, const ScrDyn *d) {
     bool first = true;
     for (size_t i = 0; i < d->v.obj.len; i++) {
       const ScrDynEntry *e = &d->v.obj.entries[i];
+      if (!e->enumerable) continue;
       if (e->value->kind == SCR_DYN_UNDEF || e->value->kind == SCR_DYN_FUNC) continue; /* dropped, like Node */
       if (e->value->kind == SCR_DYN_JSVAL && scr_dyn_isl_typeof_is(e->value, "function")) continue; /* engine functions drop too */
       if (!first) scr_jb_putc(b, ',');
@@ -2878,7 +2993,13 @@ static ScrDyn *scr_json_revive(ScrDyn *holder, const ScrStr *key,
         scr_json_delete_member(value, name);
         scr_dyn_release(replacement);
       } else {
-        scr_dyn_obj_set(value, name->data, name->len, replacement);
+        ScrDynEntry *entry = scr_dyn_entry(value, name);
+        if (entry) {
+          scr_dyn_release(entry->value);
+          entry->value = replacement;
+        } else {
+          scr_dyn_obj_set(value, name->data, name->len, replacement);
+        }
       }
     }
     scr_dyn_release(keys);
@@ -3395,12 +3516,12 @@ static ScrDyn *scr_dyn_objwalk(const ScrDyn *v, ScrObjWalk mode) {
       if (best == (size_t)-1) break;
       last = idx[best];
       const ScrDynEntry *e = &v->v.obj.entries[best];
-      scr_dyn_objwalk_push(out, mode, e->key, e->key_len, e->value);
+      if (e->enumerable) scr_dyn_objwalk_push(out, mode, e->key, e->key_len, e->value);
     }
     for (size_t i = 0; i < n; i++) {
       if (is_index[i]) continue;
       const ScrDynEntry *e = &v->v.obj.entries[i];
-      scr_dyn_objwalk_push(out, mode, e->key, e->key_len, e->value);
+      if (e->enumerable) scr_dyn_objwalk_push(out, mode, e->key, e->key_len, e->value);
     }
     free(is_index);
     free(idx);
@@ -3486,6 +3607,7 @@ static void scr_dyn_assign_from(ScrDyn *target, const ScrDyn *src) {
   if (src->kind == SCR_DYN_UNDEF || src->kind == SCR_DYN_NULL) return;
   if (src->kind == SCR_DYN_OBJ) {
     for (size_t i = 0; i < src->v.obj.len; i++) {
+      if (!src->v.obj.entries[i].enumerable) continue;
       scr_dyn_obj_set(target, src->v.obj.entries[i].key,
                       src->v.obj.entries[i].key_len,
                       scr_dyn_retain(src->v.obj.entries[i].value));
