@@ -117,3 +117,13 @@ const invalidGet = new Proxy(noGetter, { get() { return 91; } });
 try { console.log(invalidGet.fixed); } catch (error) { console.log(error.name); }
 const invalidSet = new Proxy(proxyTarget, { set() { return true; } });
 try { invalidSet.fixed = 91; } catch (error) { console.log(error.name); }
+const accessorHandler = JSON.parse('{}');
+let trapReads = 0;
+function proxyGetTrap() { return 23; }
+function readProxyGetTrap() { trapReads++; return proxyGetTrap; }
+Object.defineProperty(accessorHandler, 'get', { get: readProxyGetTrap });
+const handlerProxy = new Proxy(proxyTarget, accessorHandler);
+console.log(handlerProxy.fixed, trapReads);
+const throwingHandler = JSON.parse('{}');
+Object.defineProperty(throwingHandler, 'get', { get: explode });
+try { console.log(new Proxy(proxyTarget, throwingHandler).fixed); } catch (error) { console.log(error.name); }

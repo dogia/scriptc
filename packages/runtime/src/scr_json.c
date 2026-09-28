@@ -762,8 +762,11 @@ ScrDyn *scr_dyn_proxy_new(const ScrDyn *target, const ScrDyn *handler) {
 /* GetMethod observes handler mutations on every operation. Retain the
  * callable across invocation, since a trap may replace itself. */
 static ScrDyn *scr_dyn_proxy_trap(const ScrDyn *proxy, const char *name) {
-  ScrDyn *method = scr_dyn_obj_get(proxy->v.proxy.handler, name, strlen(name));
-  if (!method || method->kind == SCR_DYN_UNDEF || method->kind == SCR_DYN_NULL) return NULL;
+  ScrDyn *method = scr_dyn_obj_read(proxy->v.proxy.handler, name, strlen(name));
+  if (!method || method->kind == SCR_DYN_UNDEF || method->kind == SCR_DYN_NULL) {
+    scr_dyn_release(method);
+    return NULL;
+  }
   if (method->kind != SCR_DYN_FUNC) {
     ScrJsonBuf msg;
     scr_jb_init(&msg);
@@ -771,9 +774,10 @@ static ScrDyn *scr_dyn_proxy_trap(const ScrDyn *proxy, const char *name) {
     scr_jb_puts(&msg, name);
     scr_jb_puts(&msg, "' is not callable");
     scr_throw_error(SCR_ERR_TYPE, scr_jb_finish(&msg));
+    scr_dyn_release(method);
     return NULL;
   }
-  return scr_dyn_retain(method);
+  return method;
 }
 
 static ScrDyn *scr_dyn_proxy_call(const ScrDyn *proxy, ScrDyn *trap, ScrDyn *const *args, size_t argc) {
