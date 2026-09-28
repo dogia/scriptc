@@ -1371,14 +1371,7 @@ void scr_dyn_obj_set(ScrDyn *obj, const char *key, size_t key_len, ScrDyn *value
 }
 
 static ScrStr *scr_dyn_property_key(const ScrDyn *key) {
-  if (key->kind == SCR_DYN_STR) return scr_str_retain(key->v.str);
-  if (key->kind == SCR_DYN_NUM) return scr_f64_to_scrstr(key->v.num);
-  if (key->kind == SCR_DYN_BOOL) return scr_str_new(key->v.b ? "true" : "false", key->v.b ? 4 : 5);
-  if (key->kind == SCR_DYN_NULL) return scr_str_new("null", 4);
-  if (key->kind == SCR_DYN_UNDEF) return scr_str_new("undefined", 9);
-  static const char msg[] = "Property key coercion on this dynamic value is not supported yet";
-  scr_throw_error_msg(SCR_ERR_ERROR, msg, sizeof msg - 1);
-  return NULL;
+  return scr_dyn_string_coerce_js(key);
 }
 
 static ScrDynEntry *scr_dyn_entry(ScrDyn *obj, const ScrStr *key) {
@@ -1395,6 +1388,10 @@ static bool scr_dyn_property_same_value(const ScrDyn *a, const ScrDyn *b) {
 }
 
 ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor) {
+  scr_dyn_isl_fence(target, "Object.defineProperty");
+  if (!scr_exc_pending()) scr_dyn_isl_fence(key, "Object.defineProperty key");
+  if (!scr_exc_pending()) scr_dyn_isl_fence(descriptor, "Object.defineProperty descriptor");
+  if (scr_exc_pending()) return NULL;
   if (target->kind != SCR_DYN_OBJ) {
     static const char msg[] = "Object.defineProperty called on non-object";
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
@@ -1450,6 +1447,9 @@ ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor)
 }
 
 ScrDyn *scr_dyn_get_own_property_descriptor(ScrDyn *target, ScrDyn *key) {
+  scr_dyn_isl_fence(target, "Object.getOwnPropertyDescriptor");
+  if (!scr_exc_pending()) scr_dyn_isl_fence(key, "Object.getOwnPropertyDescriptor key");
+  if (scr_exc_pending()) return NULL;
   if (target->kind == SCR_DYN_NULL || target->kind == SCR_DYN_UNDEF) {
     static const char msg[] = "Cannot convert undefined or null to object";
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
