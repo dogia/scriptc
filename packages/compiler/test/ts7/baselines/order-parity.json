@@ -7535,6 +7535,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3110-builtin-error-families.ts": {
+   "order": [
+    "<repo>/tests/corpus/3110-builtin-error-families.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/3110-identity-collection-mutation.ts": {
    "order": [
     "<repo>/tests/corpus/3110-identity-collection-mutation.ts"
