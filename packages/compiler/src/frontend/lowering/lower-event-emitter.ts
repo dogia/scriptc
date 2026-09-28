@@ -19,9 +19,12 @@
  * emit arguments box to dyn, JS-exact arity, the original kept as the
  * registry entry's identity). Computed string names with a provable
  * constant prefix or suffix use a checked-dynamic callback and exact-arity
- * argument vector instead. The
- * pattern must exclude internal error, meta, and stream events; literal
- * names it may reach take the same path. The remaining cases are fenced:
+ * argument vector instead. The pattern must exclude internal error, meta,
+ * and stream events; literal names it may reach take the same path. The
+ * same vector handles varying or inference-unknown JavaScript emit tuples
+ * when every known listener accepts checked-dynamic parameters or no
+ * parameters. Typed listener constraints keep the fixed-tuple refusal.
+ * The remaining cases are fenced:
  * unrestricted names, symbol names, conflicting literal tuples, the
  * meta-events' listener-function argument (meta listeners take at most
  * the event name; dyn meta listeners fence — Node
@@ -80,6 +83,18 @@ interface EventSig {
   dynListener: boolean;
   /** At least one literal-name registration exists for this event. */
   hasListener: boolean;
+  /** JS emits may have varying arity/types or inference-only payloads. */
+  jsEmit?: true;
+  unmappedEmit?: true;
+  /** A listener with any concrete parameter still needs the fixed ABI. */
+  typedListener?: true;
+}
+
+function flexibleJsEvent(name: string, sig: EventSig | undefined): boolean {
+  // A stream may be upcast to EventEmitter. Its runtime-emitted payloads
+  // keep their fixed ABI even when the static receiver looks ordinary.
+  return !STREAM_FORCED_EVENT_NAMES.has(name) && sig?.jsEmit === true && sig.typedListener !== true &&
+    (sig.unmappedEmit === true || sig.conflict !== null);
 }
 
 interface ComputedEventPattern {
@@ -134,10 +149,14 @@ function emitterEvents(lowerer: Lowerer): Map<string, EventSig> {
   table.set("removeListener", { tuple: [STRING], fromEmit: true, conflict: null, dynListener: false, hasListener: false });
 
   const fmt = (t: IrType): string => lowerer.fmt(t);
-  const mergeEmit = (name: string, args: (IrType | null)[]): void => {
-    if (args.some((a) => a === null)) return; // its own site will diagnose
-    const tuple = args as IrType[];
+  const mergeEmit = (name: string, args: (IrType | null)[], js: boolean): void => {
     const sig = sigOf(name);
+    if (js) sig.jsEmit = true;
+    if (args.some((a) => a === null)) {
+      sig.unmappedEmit = true;
+      return; // a flexible site's lowered values must still convert to dyn
+    }
+    const tuple = args as IrType[];
     if (sig.conflict) return;
     if (!sig.fromEmit) {
       // Listener prefixes seen so far must fit under this tuple.
@@ -233,10 +252,13 @@ function emitterEvents(lowerer: Lowerer): Map<string, EventSig> {
       if (streamForcedTuple(lowerer, info, name) !== null) return;
       try {
         if (isEmit) {
-          mergeEmit(name, node.arguments.slice(1).map((a) => lowerer.mapTypeOf(lowerer.typeOf(a))));
+          mergeEmit(name, node.arguments.slice(1).map((a) => lowerer.mapTypeOf(lowerer.typeOf(a))), isJsSourceFile(sf));
         } else if (node.arguments[1]) {
           const cbCt = lowerer.typeOf(node.arguments[1]);
           const cbT = lowerer.mapTypeOf(cbCt) ?? dynFallbackType(lowerer, node.arguments[1], cbCt);
+          if (cbT?.kind !== "dyn" && (cbT?.kind !== "func" || cbT.params.some((p) => p.kind !== "dyn"))) {
+            sigOf(name).typedListener = true;
+          }
           // Dyn-flavored listeners (a checked-dynamic value, or a func
           // with dyn parameters — the JS lane) register through the
           // adapter and constrain nothing: a dyn parameter accepts any
@@ -724,19 +746,19 @@ export function lowerEmitterMethodCall(lowerer: Lowerer, call: ts.CallExpression
     }
     return receiver;
   };
-  const lowerFlexEmit = (name: IrExpr): IrExpr => {
+  const lowerFlexEmit = (name: IrExpr, kind = "computed-name"): IrExpr => {
     const below: ClassInfo[] = [];
     collectEmitOverridesBelow(info, below);
     if (emitOverrideAtOrAbove(info) || below.length > 0) {
       lowerer.noLowering(
-        "computed-name emit through an EventEmitter subclass overriding emit", call,
+        `${kind} emit through an EventEmitter subclass overriding emit`, call,
         "the override specialization needs a literal event name and fixed argument tuple",
       );
     }
     const receiver = lowerReceiver();
     if (receiver.type.kind !== "object") {
       lowerer.noLowering(
-        "computed-name emit on a nullable or non-emitter receiver", access.expression,
+        `${kind} emit on a nullable or non-emitter receiver`, access.expression,
         "narrow the receiver to an EventEmitter instance before emitting",
       );
     }
@@ -846,7 +868,7 @@ export function lowerEmitterMethodCall(lowerer: Lowerer, call: ts.CallExpression
     if (
       !META_EVENTS.has(name) && name !== "error" &&
       streamForcedTuple(lowerer, info, name) === null &&
-      computedPatterns(lowerer).some((pattern) => patternMatchesName(pattern, name))
+      (flexibleJsEvent(name, table.get(name)) || computedPatterns(lowerer).some((pattern) => patternMatchesName(pattern, name)))
     ) {
       return lowerFlexListenerCall(
         lowerer, member, strLit(name, loc), lowerReceiver(), args[1]!, registering,
@@ -973,8 +995,8 @@ export function lowerEmitterMethodCall(lowerer: Lowerer, call: ts.CallExpression
     if (
       name !== "error" && !META_EVENTS.has(name) &&
       streamForcedTuple(lowerer, info, name) === null &&
-      computedPatterns(lowerer).some((pattern) => patternMatchesName(pattern, name))
-    ) return lowerFlexEmit(strLit(name, loc));
+      (flexibleJsEvent(name, table.get(name)) || computedPatterns(lowerer).some((pattern) => patternMatchesName(pattern, name)))
+    ) return lowerFlexEmit(strLit(name, loc), flexibleJsEvent(name, table.get(name)) ? "variable-arity" : "computed-name");
     const receiver = lowerReceiver();
     if (name === "error") {
       // The special event: exactly one %Error-rooted payload; no listener
@@ -1095,7 +1117,7 @@ export function lowerEmitterMethodCall(lowerer: Lowerer, call: ts.CallExpression
     }
     const name = eventNameOf(lowerer, member, args[0]!);
     const sig = table.get(name);
-    if (sig?.dynListener || computedPatterns(lowerer).some((pattern) => pattern.listener && patternMatchesName(pattern, name))) {
+    if (sig?.dynListener || flexibleJsEvent(name, sig) || computedPatterns(lowerer).some((pattern) => pattern.listener && patternMatchesName(pattern, name))) {
       // A dyn-adapted registration means the runtime bucket can hold
       // originals of MIXED signatures — no one honest element type.
       lowerer.noLowering(
