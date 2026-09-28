@@ -15,6 +15,7 @@ node_modules/
 !tests/fixtures/gateway-e2e/node_modules/
 !tests/fixtures/node-types/node_modules/
 dist/
+output/
 /packages/llvm-darwin-arm64/bin/
 /packages/runtime-darwin-arm64/artifacts/
 /packages/runtime-darwin-arm64/runtime-pack.json
