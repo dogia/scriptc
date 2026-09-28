@@ -1639,7 +1639,7 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
       value =
         fenceClosureProbe(lowerer, prop, fieldType, () => lowerer.lowerLambda(prop)) ?? lowerer.lowerLambda(prop);
     } else {
-      lowerer.unsupported("SC1090", prop, `syntax '${ts.SyntaxKind[(prop as ts.Node).kind]}'`);
+      lowerer.unsupported("SC1090", prop, `syntax '${ts.syntaxKindName((prop as ts.Node).kind)}'`);
     }
     } catch (err) {
       // A member VALUE a JS file cannot lower (a namespace object in an

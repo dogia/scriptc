@@ -6,6 +6,7 @@ import { Ts7Wire } from "../../../packages/compiler/src/frontend/ts7/rpc-wire.js
 import { AstFile, AstNode } from "../../../packages/compiler/src/frontend/ts7/ast-node.js";
 import { AstKind, KIND_NODE_LIST, astChildNames } from "../../../packages/compiler/src/frontend/ts7/ast-schema.generated.js";
 import { decodeAstString } from "../../../packages/compiler/src/frontend/ts7/ast-bytes.js";
+import { SyntaxKind, ScriptTarget, ModuleKind, ModuleResolutionKind, ModuleDetectionKind, syntaxKindName, scriptTargetName, moduleKindName, moduleResolutionKindName, moduleDetectionKindName } from "../../../packages/compiler/src/frontend/ts7/enums.js";
 import { Ts7Session } from "../../../packages/compiler/src/frontend/ts7/session.js";
 import { Ts7Paths, ts7DocumentFile } from "../../../packages/compiler/src/frontend/ts7/session-path.js";
 import { parseSemanticJson } from "../../../packages/compiler/src/frontend/ts7/semantic-json.js";
@@ -65,6 +66,7 @@ function checkAst(ast: AstFile, source: string): void {
     if (ast.wire.kind(index) === KIND_NODE_LIST) { ast.list(index); continue; }
     const node = ast.node(index);
     check(ast.resolve(node.id) === node, "handle identity");
+    check(syntaxKindName(node.kind) !== undefined, "native syntax kind names");
     check(node.getFullText() === source.substring(node.pos, node.end), "full text span");
     check(node.getText() === source.substring(node.getStart(), node.end), "token text span");
     check(node.getFullWidth() === node.end - node.pos, "full width");
@@ -159,6 +161,15 @@ function checkFailures(): void {
 }
 
 checkFailures();
+check(SyntaxKind.SourceFile === AstKind.SourceFile && SyntaxKind.Identifier === AstKind.Identifier, "owned syntax enums");
+check(scriptTargetName(ScriptTarget.ESNext) === "Latest", "native target reverse alias");
+check(moduleKindName(ModuleKind.ESNext) === "ESNext", "native module name");
+check(moduleResolutionKindName(ModuleResolutionKind.Bundler) === "Bundler", "native resolution name");
+check(moduleDetectionKindName(ModuleDetectionKind.Force) === "Force", "native detection name");
+for (const invalid of [-100, 0.5, 65536]) {
+  check(syntaxKindName(invalid) === undefined && scriptTargetName(invalid) === undefined && moduleKindName(invalid) === undefined,
+    "unknown enum values remain undefined");
+}
 
 // Canonical protocol paths do not depend on the executable's host OS.
 const windowsPaths = new Ts7Paths("C:/Work", false);

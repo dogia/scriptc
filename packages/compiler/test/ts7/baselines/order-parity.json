@@ -10576,6 +10576,25 @@
     "<repo>/tests/fixtures/node-types/url-getters.ts"
    ],
    "diags": []
+  },
+  "<repo>/tests/corpus/class-interface-refinements.ts": {
+   "order": [
+    "<repo>/tests/corpus/class-interface-refinements.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/diagnostics/class-interface-refinements.ts": {
+   "order": [
+    "<repo>/tests/diagnostics/class-interface-refinements.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/generic-class-js-functions/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/generic-class-js-functions/functions.js",
+    "<repo>/tests/corpus/generic-class-js-functions/main.ts"
+   ],
+   "diags": []
   }
  }
 }

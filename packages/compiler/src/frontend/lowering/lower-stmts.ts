@@ -1102,7 +1102,7 @@ export function lowerStmt(lowerer: Lowerer, stmt: ts.Statement): IrStmt | IrStmt
 
     const entry = UNSUPPORTED_STMT[stmt.kind];
     if (entry) lowerer.unsupported(entry.code as `SC${number}` & keyof typeof UNSUPPORTED, stmt, entry.feature);
-    lowerer.unsupported("SC1090", stmt, `syntax '${ts.SyntaxKind[stmt.kind]}'`);
+    lowerer.unsupported("SC1090", stmt, `syntax '${ts.syntaxKindName(stmt.kind)}'`);
   }
 
 /** A variable statement may carry several declarators (`let a = 1,

@@ -2008,7 +2008,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
         } else if (ts.isIndexSignatureDeclaration(member)) {
           lowerer.unsupported("SC1090", member, "index signatures");
         } else if (!ts.isSemicolonClassElement(member)) {
-          lowerer.unsupported("SC1090", member, `syntax '${ts.SyntaxKind[member.kind]}'`);
+          lowerer.unsupported("SC1090", member, `syntax '${ts.syntaxKindName(member.kind)}'`);
         }
       }
 
@@ -2475,7 +2475,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
    * unmapped, the fenced-JS-class story. Null answers (unmappable type
    * arguments, the instance cap, an uncollected family) make the whole
    * reference unmappable — per-site diagnostics own the fence. */
-  export function genericClassInstanceType(lowerer: Lowerer, decl: ts.ClassLikeDeclaration, ref: ts.Type): IrType | null {
+  export function genericClassInstanceType(lowerer: Lowerer, decl: ts.ClassLikeDeclaration, ref: ts.Type, mapArgument?: (type: ts.Type) => IrType | null): IrType | null {
     const gci = lowerer.genericClassByDecl.get(decl);
     if (!gci) {
       // The family never collected (a deferred/poisoned declaration): the
@@ -2502,7 +2502,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
     const mapped: IrType[] = [];
     if (args.length === gci.typeParams.length) {
       for (const a of args) {
-        const m = lowerer.mapTypeOf(a);
+        const m = lowerer.mapTypeOf(a, mapArgument);
         if (!m || m.kind === "void") {
           // An UNBOUND type parameter argument (`Box<T>` outside any
           // instantiation) stays honestly unmapped — nothing concrete is

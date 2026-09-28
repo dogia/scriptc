@@ -27,19 +27,19 @@ import type {
 } from "typescript/unstable/sync";
 import type { SourceFile } from "typescript/unstable/ast";
 import { CheckerFacade } from "./checker.js";
-import { enumKeyOf, ModuleDetectionKind, ModuleKind, ModuleResolutionKind, ScriptTarget } from "./enums.js";
+import { moduleDetectionKindName, moduleKindName, moduleResolutionKindName, scriptTargetName, ScriptTarget } from "./enums.js";
 import { tsgoPath } from "../dts-paths.js";
 import { trackedAccessibleEntries, trackedDirectoryExists, trackedFileExists, trackedReadFile, trackedRealpath } from "../input-tracker.js";
 
 /** The compiler options our createProgram accepts: TS7's CompilerOptions
  * shape (numeric enums for target/module/moduleResolution — the enums module
- * re-exports them symbolically) with the 5.9.3 "lib.es2025.d.ts" lib
+ * generates them from the pinned SDK) with the 5.9.3 "lib.es2025.d.ts" lib
  * spelling also accepted. */
 export type Ts7CompilerOptions = CompilerOptions;
 
 /* tsconfig JSON wants enum NAMES; the options object carries TS7's numeric
- * enum values. The names come from the enum objects' own reverse mappings —
- * nothing here knows a number. */
+ * enum values. Generated name lookups preserve the SDK's reverse mappings
+ * without materializing enum objects in the native compiler. */
 function serializeOptions(options: Ts7CompilerOptions): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(options)) {
@@ -55,16 +55,16 @@ function serializeOptions(options: Ts7CompilerOptions): Record<string, unknown> 
         out[key] =
           value === ScriptTarget.ESNext
             ? "esnext"
-            : (enumKeyOf(ScriptTarget as never, value as number)?.toLowerCase() ?? value);
+            : (scriptTargetName(value as number)?.toLowerCase() ?? value);
         break;
       case "module":
-        out[key] = enumKeyOf(ModuleKind as never, value as number)?.toLowerCase() ?? value;
+        out[key] = moduleKindName(value as number)?.toLowerCase() ?? value;
         break;
       case "moduleResolution":
-        out[key] = enumKeyOf(ModuleResolutionKind as never, value as number)?.toLowerCase() ?? value;
+        out[key] = moduleResolutionKindName(value as number)?.toLowerCase() ?? value;
         break;
       case "moduleDetection":
-        out[key] = enumKeyOf(ModuleDetectionKind as never, value as number)?.toLowerCase() ?? value;
+        out[key] = moduleDetectionKindName(value as number)?.toLowerCase() ?? value;
         break;
       case "lib":
         // 5.9.3 spells lib entries "lib.es2025.d.ts"; tsconfig wants "es2025".

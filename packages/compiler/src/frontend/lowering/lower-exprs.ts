@@ -2108,7 +2108,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
 
     const entry = UNSUPPORTED_EXPR[expr.kind];
     if (entry) lowerer.unsupported(entry.code as `SC${number}` & keyof typeof UNSUPPORTED, expr, entry.feature);
-    lowerer.unsupported("SC1090", expr, `syntax '${ts.SyntaxKind[expr.kind]}'`);
+    lowerer.unsupported("SC1090", expr, `syntax '${ts.syntaxKindName(expr.kind)}'`);
   }
 
   function moduleFileName(lowerer: Lowerer, sf: ts.SourceFile): string {
@@ -5734,6 +5734,19 @@ export function lowerTemplate(lowerer: Lowerer, expr: ts.TemplateExpression): Ir
       if (target?.kind === "map" || target?.kind === "set") {
         return lowerer.coerceInto(expr, inner, target);
       }
+      // A class-derived interface still names the class's native layout.
+      // An assertion must not let a structural mock acquire that layout;
+      // unions retain their checked extraction below, and real instances
+      // keep the ordinary class narrowing path.
+      if (target?.kind === "object" && inner.type.kind !== "object" && inner.type.kind !== "union") {
+        return lowerer.coerceInto(expr, inner, target);
+      }
+      if (target?.kind === "object" && inner.type.kind === "object" &&
+          !typeEquals(target, inner.type) &&
+          !lowerer.isSubclassOf(inner.type.className, target.className) &&
+          !lowerer.isSubclassOf(target.className, inner.type.className)) {
+        return lowerer.coerceInto(expr, inner, target);
+      }
       // Static assertions normally erase, but record layouts are
       // monomorphic: a consumer selected from the asserted shape must see
       // that shape physically. Reuse the ordinary slot coercion so plain
@@ -5911,7 +5924,7 @@ export function lowerPrefixUnary(lowerer: Lowerer, expr: ts.PrefixUnaryExpressio
         // `++x` / `--x` in expression position: yields the NEW value.
         return lowerIncDec(lowerer, expr, true);
     }
-    lowerer.unsupported("SC1090", expr, `syntax '${ts.SyntaxKind[expr.kind]}'`);
+    lowerer.unsupported("SC1090", expr, `syntax '${ts.syntaxKindName(expr.kind)}'`);
   }
 
 /** `x++`/`x--`/`++x`/`--x` in EXPRESSION position — the incDec node:
@@ -6041,7 +6054,7 @@ function lowerAnyBinaryInIsland(
   };
   const jop = JS_BIN[op];
   if (jop === undefined) {
-    lowerer.unsupported("SC1090", expr, `operator '${ts.tokenToString(op) ?? ts.SyntaxKind[op]}' on 'any' values`);
+    lowerer.unsupported("SC1090", expr, `operator '${ts.tokenToString(op) ?? ts.syntaxKindName(op)}' on 'any' values`);
   }
   const type = jsOpResultKind(jop) === "bool" ? BOOL : JSVAL;
   return {
@@ -6719,7 +6732,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
         // the engine apply JS's exact coercion semantics. Static builds
         // retain the SC2011 promise that --dynamic lifts this site.
         if (lowerer.dynamic) return lowerAnyBinaryInIsland(lowerer, expr, left, right, loc);
-        lowerer.anyOpFence(`the '${ts.tokenToString(op) ?? ts.SyntaxKind[op]}' operator`, expr);
+        lowerer.anyOpFence(`the '${ts.tokenToString(op) ?? ts.syntaxKindName(op)}' operator`, expr);
       }
       // tsc allows ===/!== on unknown (arithmetic/comparisons it rejects
       // itself); a dynamic equality would need a dyn walk — validate first.
@@ -7130,7 +7143,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
       default:
         break;
     }
-    lowerer.unsupported("SC1090", expr, `operator '${ts.tokenToString(op) ?? ts.SyntaxKind[op]}'`);
+    lowerer.unsupported("SC1090", expr, `operator '${ts.tokenToString(op) ?? ts.syntaxKindName(op)}'`);
   }
 
   function lowerAbsenceAwareOrChain(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr | null {

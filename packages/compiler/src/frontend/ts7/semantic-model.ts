@@ -296,9 +296,17 @@ export class SemanticSymbol {
   getDocumentationComment(checker: SemanticChecker): string { return checker.getDocumentationCommentOfSymbol(this); }
 }
 
-/** Kind-specific accessors share one nominal layout. The legacy frontend
- * still narrows its type-only SDK interfaces at the boundary; native code
- * uses this concrete class and tests the same flag predicates. */
+/** Type refinements keep the same native object, including its project and
+ * lazy handle caches. Narrowed fields are read from their original storage. */
+export interface SemanticObjectType extends SemanticType { readonly objectFlags: number; }
+export interface SemanticIntrinsicType extends SemanticType { readonly intrinsicName: string; }
+export interface SemanticLiteralType extends SemanticType { readonly value: string | number | boolean | bigint; }
+export interface SemanticStringLiteralType extends SemanticLiteralType { readonly value: string; }
+export interface SemanticNumberLiteralType extends SemanticLiteralType { readonly value: number; }
+export interface SemanticBigIntLiteralType extends SemanticLiteralType { readonly value: bigint; }
+export interface SemanticBooleanLiteralType extends SemanticLiteralType { readonly value: boolean; }
+
+/** Kind-specific accessors share one nominal layout. */
 export class SemanticType {
   readonly id: number;
   readonly flags: number;
@@ -373,14 +381,14 @@ export class SemanticType {
   isClassOrInterface(): boolean { return this.isObjectType() && ((this.objectFlags ?? 0) & ObjectFlags.ClassOrInterface) !== 0; }
   isUnionType(): boolean { return (this.flags & TypeFlags.Union) !== 0; }
   isIntersectionType(): boolean { return (this.flags & TypeFlags.Intersection) !== 0; }
-  isObjectType(): boolean { return (this.flags & TypeFlags.Object) !== 0; }
-  isIntrinsicType(): boolean { return (this.flags & TypeFlags.Intrinsic) !== 0; }
+  isObjectType(): this is SemanticObjectType { return (this.flags & TypeFlags.Object) !== 0; }
+  isIntrinsicType(): this is SemanticIntrinsicType { return (this.flags & TypeFlags.Intrinsic) !== 0; }
   isErrorType(): boolean { return this.isIntrinsicType() && this.intrinsicName === "error"; }
-  isLiteralType(): boolean { return (this.flags & TypeFlags.Literal) !== 0; }
-  isStringLiteralType(): boolean { return (this.flags & TypeFlags.StringLiteral) !== 0; }
-  isNumberLiteralType(): boolean { return (this.flags & TypeFlags.NumberLiteral) !== 0; }
-  isBigIntLiteralType(): boolean { return (this.flags & TypeFlags.BigIntLiteral) !== 0; }
-  isBooleanLiteralType(): boolean { return (this.flags & TypeFlags.BooleanLiteral) !== 0; }
+  isLiteralType(): this is SemanticLiteralType { return (this.flags & TypeFlags.Literal) !== 0; }
+  isStringLiteralType(): this is SemanticStringLiteralType { return (this.flags & TypeFlags.StringLiteral) !== 0; }
+  isNumberLiteralType(): this is SemanticNumberLiteralType { return (this.flags & TypeFlags.NumberLiteral) !== 0; }
+  isBigIntLiteralType(): this is SemanticBigIntLiteralType { return (this.flags & TypeFlags.BigIntLiteral) !== 0; }
+  isBooleanLiteralType(): this is SemanticBooleanLiteralType { return (this.flags & TypeFlags.BooleanLiteral) !== 0; }
   isTypeReference(): boolean { return this.isObjectType() && ((this.objectFlags ?? 0) & ObjectFlags.Reference) !== 0; }
   isTupleType(): boolean { return this.isObjectType() && ((this.objectFlags ?? 0) & ObjectFlags.Tuple) !== 0; }
   isIndexType(): boolean { return (this.flags & TypeFlags.Index) !== 0; }

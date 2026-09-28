@@ -26,8 +26,8 @@
  *     where the adapter takes one, and vice versa (world-check.ts pins this
  *     with @ts-expect-error assertions that pnpm build enforces).
  *   - Mixing ENUM VALUES cannot be fenced by the type system alone (both
- *     erase to number), which is why every enum here re-exports 7's own
- *     objects symbolically and no new scriptc source may import
+ *     erase to number), which is why every enum here is generated from 7's pinned
+ *     declarations, checked against its runtime objects, and no new source may import
  *     "typescript5" outside the enforced island allowlist.
  *
  * Census coverage not present here, by design (the survey's MISSING list):
@@ -44,6 +44,8 @@
  * (`ts.Types` in the census tsv is a comment-text artifact, not an API.) */
 
 export * from "./enums.js";
+// Prefer the owned runtime declarations over the legacy AST type barrel.
+export { InternalSymbolName, ModifierFlags, NodeFlags, ScriptKind, ScriptTarget, SyntaxKind, TokenFlags } from "./enums.js";
 export * from "./ast.js";
 export * from "./checker.js";
 export * from "./program-adapter.js";

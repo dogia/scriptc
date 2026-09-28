@@ -1982,7 +1982,7 @@ export class Lowerer {
       classNamer: this.classNamer,
       resolveTypeParam: this.typeParamResolver,
       resolveTypeParamTs: this.typeParamTsResolver,
-      genericClassInstance: (decl, ref) => this.genericClassInstanceType(decl, ref),
+      genericClassInstance: (decl, ref, mapArgument) => this.genericClassInstanceType(decl, ref, mapArgument),
       mixinClassInstance: (decl) =>
         this.mixinTypeContext && this.mixinTypeContext.classNode === decl
           ? { kind: "object", className: this.mixinTypeContext.className }
@@ -4787,9 +4787,10 @@ export class Lowerer {
   }
 
   /** mapType with this Lowerer's registries and (while a generic instance
-   * body lowers) type-parameter bindings threaded through. */
-  mapTypeOf(t: ts.Type): IrType | null {
-    const mapped = mapType(t, this.typeCtx);
+   * body lowers) type-parameter bindings threaded through. A supplied mapper
+   * retains interface-view substitutions while sharing ABI normalization. */
+  mapTypeOf(t: ts.Type, mapper?: (type: ts.Type) => IrType | null): IrType | null {
+    const mapped = mapper ? mapper(t) : mapType(t, this.typeCtx);
     return mapped?.kind === "func" ? jsArgumentsFunctionType(this, t) ?? mapped : mapped;
   }
 
@@ -8532,8 +8533,8 @@ export class Lowerer {
    * registration. */
   onLateClassCollected: ((info: ClassInfo) => void) | null = null;
 
-  genericClassInstanceType(decl: ts.ClassLikeDeclaration, ref: ts.Type): IrType | null {
-    return genericClassInstanceType(this, decl, ref);
+  genericClassInstanceType(decl: ts.ClassLikeDeclaration, ref: ts.Type, mapArgument?: (type: ts.Type) => IrType | null): IrType | null {
+    return genericClassInstanceType(this, decl, ref, mapArgument);
   }
 
   findStaticOn(info: ClassInfo | null, name: string): ReturnType<typeof findStaticOn> {

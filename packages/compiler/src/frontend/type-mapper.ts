@@ -783,9 +783,11 @@ export interface TypeMapperCtx {
    * concrete instantiation reference (`Box<number>`) — the Lowerer
    * registers/reuses the instantiation (`Box%0`) and answers its object
    * type; null when a type argument doesn't map, the cap tripped, or the
-   * family never collected. Absent in checkers with no lowering attached
-   * (generic instance types stay unmapped there). */
-  genericClassInstance?: (decl: ts.ClassLikeDeclaration, typeRef: ts.Type) => IrType | null;
+   * family never collected. The argument mapper retains substitutions from
+   * class-derived interfaces as well as the current function bindings.
+   * Absent in checkers with no lowering attached (generic instance types
+   * stay unmapped there). */
+  genericClassInstance?: (decl: ts.ClassLikeDeclaration, typeRef: ts.Type, mapArgument: (type: ts.Type) => IrType | null) => IrType | null;
   /** MIXIN class nodes (the class inside a mixin function): one shared
    * AST node, one instantiation per call site — the node's instance type
    * resolves to the instantiation CURRENTLY collecting/lowering (`this`
@@ -1323,8 +1325,6 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     const brandedPrimitive = mapBrandedPrimitiveIntersection(widened, ctx);
     if (brandedPrimitive) return brandedPrimitive;
   }
-  // Class instances: the type's symbol is a class declared in the user's
-  // file. The class NAME as a value has the *constructor* type — same
   // REFINED handle intersections — @types/node's idioms: `ServerResponse<
   // IncomingMessage> & { req: IncomingMessage }` (RequestListener's
   // inferred res param — every unannotated http.createServer handler) and
@@ -1377,8 +1377,10 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
       }
     }
   }
-  // symbol, but with construct signatures — that is the STATIC side, and
-  // it maps to classval below.
+  const classView = mapClassView(widened, ctx);
+  if (classView !== undefined) return classView;
+  // Class instances name a program class. The same symbol with construct
+  // signatures names its static side, mapped to classval below.
   const widenedSym = widened.getSymbol();
   const classDecl = widenedSym ? checker.valueDeclarationOf(widenedSym) : undefined;
   if (
@@ -1414,7 +1416,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     // hook owns the instance table (monomorphization by flow).
     if (classDecl.typeParameters) {
       const instance = ctx.genericClassInstance
-        ? ctx.genericClassInstance(classDecl, widened)
+        ? ctx.genericClassInstance(classDecl, widened, (argument) => mapType(argument, ctx))
         : null;
       // Before the generic declaration's collection turn, the hook can only
       // return its family shell; after collection the same checker type names
@@ -3012,6 +3014,92 @@ function unionDiscriminant(
     }
   }
   return undefined;
+}
+
+/** A class-derived interface or intersection can refine existing members
+ * without changing the object's layout. Keep the unique program class as
+ * its representation; structural lookalikes without a class base do not
+ * qualify. Construction and coercion must still supply that actual class.
+ * Undefined means no class view, while null is a recognized but unsupported
+ * view: do not fall through and copy an identity-bearing object to a record. */
+function mapClassView(type: ts.Type, ctx: TypeMapperCtx, seen = new Set<ts.Type>()): IrType | null | undefined {
+  const { checker } = ctx;
+  if (seen.has(type) || seen.size >= MAP_TYPE_MAX_DEPTH) return null;
+  let bases: readonly ts.Type[];
+  let viewCtx = ctx;
+  if (type.isIntersectionType()) {
+    bases = ts.constituentTypes(type);
+  } else {
+    const symbol = type.getSymbol();
+    const declarations = symbol ? checker.declarationsOf(symbol) : [];
+    if (declarations.length === 0 || !declarations.every(
+      (decl) => ts.isInterfaceDeclaration(decl) && !ctx.isStdlibFile(decl.getSourceFile()),
+    )) return undefined;
+    const target = type.isTypeReference() ? type.getTarget() : type;
+    if (!target.isClassOrInterface()) return undefined;
+    bases = checker.getBaseTypes(target);
+    if (type.isTypeReference() && target.isTypeReference()) {
+      const params = checker.getTypeArguments(target);
+      const args = checker.getTypeArguments(type);
+      viewCtx = {
+        ...ctx,
+        canMemoizeType: () => false,
+        resolveTypeParam: (param) => {
+          const index = params.indexOf(param);
+          const arg = index >= 0 ? args[index] : undefined;
+          return arg && arg !== param ? mapType(arg, ctx) : ctx.resolveTypeParam?.(param) ?? null;
+        },
+        resolveTypeParamTs: (param) => {
+          const index = params.indexOf(param);
+          const arg = index >= 0 ? args[index] : undefined;
+          return arg && arg !== param ? ctx.resolveTypeParamTs?.(arg) ?? arg : ctx.resolveTypeParamTs?.(param) ?? null;
+        },
+      };
+    }
+  }
+  seen.add(type);
+  try {
+    let baseType: ts.Type | undefined;
+    let representation: IrType | undefined;
+    for (const base of bases) {
+      const symbol = base.getSymbol();
+      const declaration = symbol ? checker.valueDeclarationOf(symbol) : undefined;
+      const classBase = declaration && (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) &&
+        !declaration.getSourceFile().isDeclarationFile;
+      const mapped = classBase ? mapType(base, viewCtx) : mapClassView(base, viewCtx, seen);
+      if (mapped === null) return null;
+      if (mapped === undefined) continue;
+      if (mapped.kind !== "object" || (representation && !typeEquals(representation, mapped))) return null;
+      baseType = base;
+      representation = mapped;
+    }
+    if (!representation || !baseType) return undefined;
+    if (checker.getCallSignatures(type).length || checker.getConstructSignatures(type).length ||
+        checker.getIndexInfosOfType(type).length) return null;
+    for (const property of checker.getPropertiesOfType(type)) {
+      const original = checker.getPropertyOfType(baseType, property.name);
+      if (!original) return null;
+      if (original === property) continue;
+      const originalDeclarations = checker.declarationsOf(original);
+      const declarations = checker.declarationsOf(property);
+      // Instantiating an inherited member can create a new symbol without
+      // changing its declaration or ABI. Only refinements need validation.
+      if (declarations.length > 0 && declarations.length === originalDeclarations.length &&
+          declarations.every((declaration, index) => declaration === originalDeclarations[index])) continue;
+      const before = checker.getTypeOfSymbol(original);
+      const after = checker.getTypeOfSymbol(property);
+      if (checker.getCallSignatures(before).length || checker.getCallSignatures(after).length) {
+        const from = mapType(before, viewCtx);
+        const to = mapType(after, viewCtx);
+        if (!from || !to || !typeEquals(from, to)) return null;
+      } else if (!checker.isTypeAssignableTo(after, before)) {
+        return null;
+      }
+    }
+    return representation;
+  } finally {
+    seen.delete(type);
+  }
 }
 
 /** Interface views of native collections may inherit their runtime surface

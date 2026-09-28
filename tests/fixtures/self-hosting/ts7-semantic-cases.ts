@@ -210,6 +210,12 @@ export function checkSemanticModel(snapshot: SemanticSnapshot, checker: Semantic
   check(ready.symbol === symbolAt(checker, declaration(root, "Mode").members![0]!.name!), "completion symbol identity");
   check(checker.getCompletionsAtPosition(root.fileName, answerName.getStart()) === undefined, "absent completions");
   check(answerType.flags === SemanticTypeFlags.NumberLiteral, "literal flags pin");
+  check(checkSemanticRefinements(answerType) === "number:43", "native number literal refinement");
+  check(checkSemanticRefinements(typeAt(checker, declaration(root, "emptyString").name!)) === "string:", "native string literal refinement");
+  check(checkSemanticRefinements(huge) === "bigint:-123456789012345678901234567889", "native bigint literal refinement");
+  check(checkSemanticRefinements(typeAt(checker, declaration(root, "flag").name!)) === "boolean:no", "native boolean literal refinement");
+  check(checkSemanticRefinements(intrinsicString) === "intrinsic:STRING", "native intrinsic refinement");
+  check(checkSemanticRefinements(pair).startsWith("object:"), "native object flags refinement");
 
   // Disposed object graphs must not fetch a replacement under recycled ids.
   snapshot.dispose();
@@ -220,4 +226,16 @@ export function checkSemanticModel(snapshot: SemanticSnapshot, checker: Semantic
   refused = false;
   try { answerSymbol.declarations[0]!.resolve(); } catch { refused = true; }
   check(refused, "declaration access after disposal");
+}
+
+/** Exercise the concrete client through its own predicates. Field reads
+ * retain the original tagged layout while the views retain object identity. */
+export function checkSemanticRefinements(type: SemanticType): string {
+  if (type.isStringLiteralType()) return "string:" + type.value.toUpperCase();
+  if (type.isNumberLiteralType()) return "number:" + (type.value + 1);
+  if (type.isBigIntLiteralType()) return "bigint:" + (type.value + 1n).toString();
+  if (type.isBooleanLiteralType()) return "boolean:" + (type.value ? "yes" : "no");
+  if (type.isObjectType()) return "object:" + type.objectFlags.toString();
+  if (type.isIntrinsicType()) return "intrinsic:" + type.intrinsicName.toUpperCase();
+  return "other";
 }

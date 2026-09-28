@@ -16,6 +16,44 @@ const { SyntaxKind } = require(join(packageRoot, "dist/enums/syntaxKind.js"));
 const { NodeFlags } = require(join(packageRoot, "dist/enums/nodeFlags.js"));
 const { ModifierFlags } = require(join(packageRoot, "dist/enums/modifierFlags.js"));
 
+// The frontend's runtime enum surface is part of the same pinned protocol.
+// Emit real enum declarations so member types retain the TS7/TS5 fence and
+// reverse lookups keep the SDK's last-alias spelling.
+const enumNames = [
+  "InternalSymbolName", "ModifierFlags", "NodeFlags", "ScriptKind", "ScriptTarget", "SyntaxKind", "TokenFlags",
+  "DiagnosticCategory", "ElementFlags", "ModuleKind", "NodeBuilderFlags", "ObjectFlags", "SignatureFlags",
+  "SignatureKind", "SymbolFlags", "TypeFlags", "TypePredicateKind", "ModuleResolutionKind", "ModuleDetectionKind",
+];
+const enumLines = [
+  "/* eslint-disable @typescript-eslint/no-duplicate-enum-values -- TypeScript aliases are part of the protocol. */",
+  `// Generated from typescript@${version} by scripts/generate-ts7-ast-schema.mjs.`,
+  "// TypeScript is Copyright Microsoft Corporation, licensed under Apache-2.0.",
+  "// Regenerate when changing the TypeScript pin; do not edit by hand.",
+];
+for (const name of enumNames) {
+  const basename = name[0].toLowerCase() + name.slice(1);
+  const declaration = readFileSync(join(packageRoot, "dist/enums", `${basename}.enum.d.ts`), "utf8");
+  const match = declaration.match(new RegExp(`export declare enum ${name} \\{[\\s\\S]*?\\n\\}`));
+  if (!match) throw new Error(`Missing TypeScript enum: ${name}`);
+  enumLines.push("", match[0].replace("export declare enum", "export enum"));
+  if (["SyntaxKind", "ScriptTarget", "ModuleKind", "ModuleResolutionKind", "ModuleDetectionKind"].includes(name)) {
+    const values = require(join(packageRoot, "dist/enums", `${basename}.js`))[name];
+    enumLines.push("", `/** Numeric lookup with the SDK's aliases and undefined for unknown values. */`,
+      `export function ${basename}Name(value: number): string | undefined {`, "  switch (value) {");
+    for (const [key, value] of Object.entries(values)) {
+      if (typeof value === "string" && Number.isFinite(Number(key))) enumLines.push(`    case ${key}: return ${JSON.stringify(value)};`);
+    }
+    enumLines.push("    default: return undefined;", "  }", "}");
+  }
+}
+const enumOutput = enumLines.join("\n") + "\n";
+const enumTarget = join(root, "packages/compiler/src/frontend/ts7/enums.generated.ts");
+if (process.argv.includes("--check")) {
+  if (readFileSync(enumTarget, "utf8") !== enumOutput) throw new Error("TypeScript enums are stale; run node scripts/generate-ts7-ast-schema.mjs");
+} else {
+  writeFileSync(enumTarget, enumOutput);
+}
+
 const lines = [
   `// Generated from typescript@${version} by scripts/generate-ts7-ast-schema.mjs.`,
   "// TypeScript is Copyright Microsoft Corporation, licensed under Apache-2.0.",
