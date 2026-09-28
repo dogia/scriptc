@@ -35,14 +35,14 @@ function numericReadModule(overrides: Partial<IrExpr & { kind: "arrIntrinsic" }>
     type: F64, loc, ...overrides,
   };
   return {
-    irVersion: 12, sourceFile: loc.file, entry: "main",
+    irVersion: 13, sourceFile: loc.file, entry: "main",
     functions: [{ name: "main", params: [], locals: [], returnType: VOID, body: [{ kind: "exprStmt", expr: read, loc }], loc }],
   };
 }
 
 function expressionModule(expr: IrExpr, unions: IrUnionDef[]): IrModule {
   return {
-    irVersion: 12, sourceFile: loc.file, entry: "main", unions,
+    irVersion: 13, sourceFile: loc.file, entry: "main", unions,
     functions: [{ name: "main", params: [], locals: [], returnType: VOID, body: [{ kind: "exprStmt", expr, loc }], loc }],
   };
 }
@@ -196,7 +196,7 @@ test.each([
 function tdzModule(mutable = true): IrModule {
   const value: IrExpr = { kind: "numLit", value: 0, type: F64, loc };
   return {
-    irVersion: 12, sourceFile: loc.file, entry: "main",
+    irVersion: 13, sourceFile: loc.file, entry: "main",
     functions: [{
       name: "main", params: [], returnType: VOID, loc,
       locals: [{ id: "value", name: "value", type: F64, mutable, boxed: true, tdz: true }],
@@ -313,7 +313,7 @@ test("TDZ locals require a shared box", () => {
 
 function discriminatedModule(): IrModule {
   return {
-    irVersion: 12, sourceFile: loc.file, entry: "main",
+    irVersion: 13, sourceFile: loc.file, entry: "main",
     functions: [{ name: "main", params: [], locals: [], returnType: VOID, body: [], loc }],
     records: [
       { id: "empty", fields: [{ name: "kind", type: STRING }] },

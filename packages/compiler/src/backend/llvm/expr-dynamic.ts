@@ -56,7 +56,7 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
             );
             host.liveDynRefAdapters.set(key, adapter);
           }
-          const rc = vAdapters(host, v.type);
+          const rc = vAdapters(host.shapeHost, v.type);
           host.declare(
             `declare ptr @scr_dyn_new_typed_ref(ptr, ptr, ptr, ptr, ${host.sizeType}, ptr, ptr)`,
           );

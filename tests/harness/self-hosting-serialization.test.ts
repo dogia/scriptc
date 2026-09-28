@@ -22,7 +22,7 @@ function numericModule(): IrModule {
     functions: [{
       name: "main", params: [], returnType: VOID, locals: [], loc,
       body: [
-        // The fixture's failure mode changes this first literal to NaN.
+        // The fixture can change this first literal to NaN before encoding.
         { kind: "exprStmt", expr: numLit(0, loc), loc },
         { kind: "exprStmt", expr: { kind: "intrinsic", name: "console.log", args: numbers.map((n) => numLit(n, loc)), type: VOID, loc }, loc },
         { kind: "exprStmt", expr: { kind: "intrinsic", name: "console.log", args: [{
@@ -126,9 +126,13 @@ for (const backend of ["c", "llvm"] as const) {
       expect(mismatch.native.stdout).toEqual(mismatch.oracle.stdout);
       expect(mismatch.native.stdout.toString()).toContain("IR version mismatch");
       const nan = run(serializeModule(numericModule()), ["nan"]);
-      expect(nan.native.status).toBe(1);
-      expect(nan.native.stdout).toEqual(nan.oracle.stdout);
-      expect(nan.native.stdout.toString()).toContain("IR contains NaN; refusing to serialize");
+      expect(nan.native.status).toBe(0);
+      expect(deserializeModule(nan.native.stdout.toString())).toEqual(deserializeModule(nan.oracle.stdout.toString()));
+      expect(nan.native.stdout.toString()).toContain('"$nonfinite": "nan"');
+      const fromNan = run(nan.native.stdout.toString());
+      expect(fromNan.native.status).toBe(0);
+      expect(fromNan.native.stdout).toEqual(nan.native.stdout);
+      expect(fromNan.native.stdout).toEqual(fromNan.oracle.stdout);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

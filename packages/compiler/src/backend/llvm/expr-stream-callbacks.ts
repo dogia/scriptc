@@ -1,6 +1,6 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
-import { IrType, isRefCounted, typeKey } from "../../ir/ir.js";
+import { type IrType, isRefCounted, typeKey } from "../../ir/ir.js";
 import { FN_ATTRS, releaseSym, retainSym, traceArg } from "./shapes.js";
 import type { LlvmEmitterContext } from "./expr-context.js";
 
@@ -35,7 +35,7 @@ export function streamDataAdapter(host: LlvmEmitterContext, cbT: IrType & { kind
       } else {
         d.push(`  %ret = call ${retTy} %fn(${argList})`);
         if (isRefCounted(cbT.ret)) {
-          d.push(`  call void ${releaseSym(host, cbT.ret)}(ptr %ret) ; discarded listener result`);
+          d.push(`  call void ${releaseSym(host.shapeHost, cbT.ret)}(ptr %ret) ; discarded listener result`);
         }
       }
       d.push(`  call void @scr_closure_release(ptr %orig)`, `  ret void`);
@@ -57,7 +57,7 @@ export function streamDataAdapter(host: LlvmEmitterContext, cbT: IrType & { kind
         `  call void @scr_closure_release(ptr %orig)`,
         `  ret void`,
         `ok:`,
-        `  %r0 = call ptr ${retainSym(host, p)}(ptr ${slot})`,
+        `  %r0 = call ptr ${retainSym(host.shapeHost, p)}(ptr ${slot})`,
       );
       finish("%r0");
       d.push(`}`, ``);
@@ -563,7 +563,7 @@ export function streamCbThunkFor(host: LlvmEmitterContext, kind: "r" | "w" | "f"
           `  br i1 %euh${i}, label %euy${i}, label %eun${i}`,
           `euy${i}:`,
           `  %eur${i} = call ptr @scr_error_retain_v(ptr %err)`,
-          `  %euu${i} = call ptr @scr_union_new_ref(i32 ${errTag}, ptr %eur${i}, ptr @scr_error_retain_v, ptr @scr_error_release_v, ptr ${traceArg(host, def!.arms[errTag]!)})`,
+          `  %euu${i} = call ptr @scr_union_new_ref(i32 ${errTag}, ptr %eur${i}, ptr @scr_error_retain_v, ptr @scr_error_release_v, ptr ${traceArg(host.shapeHost, def!.arms[errTag]!)})`,
           `  store ptr %euu${i}, ptr %euslot${i}`,
           `  br label %eug${i}`,
           `eun${i}:`,
@@ -593,7 +593,7 @@ export function streamCbThunkFor(host: LlvmEmitterContext, kind: "r" | "w" | "f"
     } else {
       d.push(`  %ret = call ${retTy} %fn(${passed.join(", ")})`);
       if (isRefCounted(cbT.ret)) {
-        d.push(`  call void ${releaseSym(host, cbT.ret)}(ptr %ret) ; discarded option-callback result`);
+        d.push(`  call void ${releaseSym(host.shapeHost, cbT.ret)}(ptr %ret) ; discarded option-callback result`);
       }
     }
     d.push(`  ret void`, `}`, ``);

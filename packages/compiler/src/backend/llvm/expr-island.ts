@@ -1,7 +1,7 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
 import { undefinedArmTag } from "../../ir/analysis.js";
-import { canMarshalFuncIntoIsland, IrExpr, IrType, islandCallbackRet, islandPromisePayloadTag, isRefCounted, isUnitType, STRING, typeKey } from "../../ir/ir.js";
+import { canMarshalFuncIntoIsland, type IrExpr, type IrType, islandCallbackRet, islandPromisePayloadTag, isRefCounted, isUnitType, STRING, typeKey } from "../../ir/ir.js";
 import { FN_ATTRS, releaseSym } from "./shapes.js";
 import type { LlvmEmitterContext, LlValue } from "./expr-context.js";
 import { f64Lit } from "./common.js";
@@ -565,7 +565,7 @@ export function islandTypedAdapter(host: LlvmEmitterContext, fn: IrType & { kind
       if (isRefCounted(p)) {
         cleanup.push(
           `  %cf${i} = load ptr, ptr %sl${i}`,
-          `  call void ${releaseSym(host, p)}(ptr %cf${i})`,
+          `  call void ${releaseSym(host.shapeHost, p)}(ptr %cf${i})`,
         );
       }
     });
@@ -769,12 +769,12 @@ export function islandTypedAdapter(host: LlvmEmitterContext, fn: IrType & { kind
             `  %rpend = call zeroext i1 @scr_exc_pending()`,
             `  br i1 %rpend, label %jfail, label %jok`,
             `jfail:`,
-            ...(isRefCounted(fn.ret) ? [`  call void ${releaseSym(host, fn.ret)}(${host.llType(fn.ret)} %rv)`] : []),
+            ...(isRefCounted(fn.ret) ? [`  call void ${releaseSym(host.shapeHost, fn.ret)}(${host.llType(fn.ret)} %rv)`] : []),
             `  ret ptr null`,
             `jok:`,
             `  call void @scr_jb_init(ptr %jbuf)`,
             `  call void @${helper}(ptr %jbuf, ${host.llType(fn.ret)} %rv)`,
-            ...(isRefCounted(fn.ret) ? [`  call void ${releaseSym(host, fn.ret)}(${host.llType(fn.ret)} %rv)`] : []),
+            ...(isRefCounted(fn.ret) ? [`  call void ${releaseSym(host.shapeHost, fn.ret)}(${host.llType(fn.ret)} %rv)`] : []),
             `  %rj = call ptr @scr_jb_finish(ptr %jbuf)`,
             `  %j = call ptr @scr_jsval_from_json(ptr %rj)`,
             `  call void @scr_str_release(ptr %rj)`,

@@ -1,6 +1,6 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
-import { IrType, isRefCounted, isUnitType, typeEquals } from "../../ir/ir.js";
+import { type IrType, isRefCounted, isUnitType, typeEquals } from "../../ir/ir.js";
 import { mangleRecordNew } from "../mangle.js";
 import { arrNewCall, traceAdapter, traceArg, vAdapters } from "./shapes.js";
 import { LlvmUnsupportedError } from "./unsupported.js";
@@ -67,7 +67,7 @@ export function emitIntrinsicExpr(host: LlvmEmitterContext, e: ExprOf<"intrinsic
           B.line(`${len} = call double @scr_arr_len(ptr ${ps.name})`);
           B.line(`${cap} = fptoui double ${len} to ${host.sizeType}`);
           const vals = B.tmp();
-          B.line(`${vals} = ${arrNewCall(host, elem, cap)}`);
+          B.line(`${vals} = ${arrNewCall(host.shapeHost, elem, cap)}`);
           host.own({ name: vals, type: e.type.inner });
           const t = B.tmp();
           B.line(`${t} = call ptr @scr_promise_all(ptr ${ps.name}, ptr ${vals}, ptr @${store})`);
@@ -124,11 +124,11 @@ export function emitIntrinsicExpr(host: LlvmEmitterContext, e: ExprOf<"intrinsic
             host.declare(`declare void @scr_promise_fulfill_str(ptr, ptr)`);
             B.line(`call void @scr_promise_fulfill_str(ptr ${p}, ptr ${v.name})`);
           } else {
-            const rc = vAdapters(host, t);
+            const rc = vAdapters(host.shapeHost, t);
             host.moveTemp(v);
             host.declare(`declare void @scr_promise_fulfill_ref(ptr, ptr, ptr, ptr, ptr)`);
             B.line(
-              `call void @scr_promise_fulfill_ref(ptr ${p}, ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, t)})`,
+              `call void @scr_promise_fulfill_ref(ptr ${p}, ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host.shapeHost, t)})`,
             );
           }
           return out;
@@ -229,7 +229,7 @@ export function emitSerializationExpr(host: LlvmEmitterContext, e: ExprOf<"jsonS
           // TypeError mid-walk: finish still runs (frees the buffer, the
           // partial string joins the frame and releases on unwind), then
           // the pending check unwinds — the C emitter's contract exactly.
-          if (traceAdapter(host, e.value.type) !== null) host.emitPendingCheck();
+          if (traceAdapter(host.shapeHost, e.value.type) !== null) host.emitPendingCheck();
         }
         // A pretty-print form (`stringify(v, null, 2)`): the frontend
         // resolved the space to a compile-time indent string (Node's
@@ -318,10 +318,10 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" | 
             host.declare(`declare void @scr_gen_out_ref(ptr, ptr, ptr)`);
             const g = B.tmp();
             B.line(`${g} = call ptr @scr_gen_of_fiber(ptr ${coro.self})`);
-            B.line(`call void @scr_gen_out_ref(ptr ${g}, ptr ${v.name}, ptr ${vAdapters(host, yt).release})`);
+            B.line(`call void @scr_gen_out_ref(ptr ${g}, ptr ${v.name}, ptr ${vAdapters(host.shapeHost, yt).release})`);
           } else {
             host.declare(`declare void @scr_gen_yield_ref(ptr, ptr)`);
-            B.line(`call void @scr_gen_yield_ref(ptr ${v.name}, ptr ${vAdapters(host, yt).release})`);
+            B.line(`call void @scr_gen_yield_ref(ptr ${v.name}, ptr ${vAdapters(host.shapeHost, yt).release})`);
           }
         }
         if (host.wasi) host.emitWasiSuspendPrepared();
@@ -370,7 +370,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" | 
             B.line(`call void @scr_gen_in_bool(ptr ${g.name}, i1 ${name})`);
           } else {
             host.declare(`declare void @scr_gen_in_ref(ptr, ptr, ptr)`);
-            B.line(`call void @scr_gen_in_ref(ptr ${g.name}, ptr ${name}, ptr ${vAdapters(host, t).release})`);
+            B.line(`call void @scr_gen_in_ref(ptr ${g.name}, ptr ${name}, ptr ${vAdapters(host.shapeHost, t).release})`);
           }
         };
         if (genT.async) {
@@ -403,7 +403,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" | 
                 call = `call ptr @scr_async_gen_next_bool(ptr ${g.name}, i1 ${a.name})`;
               } else {
                 host.declare(`declare ptr @scr_async_gen_next_ref(ptr, ptr, ptr)`);
-                call = `call ptr @scr_async_gen_next_ref(ptr ${g.name}, ptr ${a.name}, ptr ${vAdapters(host, t).release})`;
+                call = `call ptr @scr_async_gen_next_ref(ptr ${g.name}, ptr ${a.name}, ptr ${vAdapters(host.shapeHost, t).release})`;
               }
             }
           } else if (e.mode === "return") {
@@ -422,7 +422,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" | 
                 call = `call ptr @scr_async_gen_return_bool(ptr ${g.name}, i1 ${a.name})`;
               } else {
                 host.declare(`declare ptr @scr_async_gen_return_ref(ptr, ptr, ptr)`);
-                call = `call ptr @scr_async_gen_return_ref(ptr ${g.name}, ptr ${a.name}, ptr ${vAdapters(host, t).release})`;
+                call = `call ptr @scr_async_gen_return_ref(ptr ${g.name}, ptr ${a.name}, ptr ${vAdapters(host.shapeHost, t).release})`;
               }
             }
           } else {
@@ -474,7 +474,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" | 
                 B.line(`call void @scr_gen_ret_bool(ptr ${g.name}, i1 ${name})`);
               } else {
                 host.declare(`declare void @scr_gen_ret_ref(ptr, ptr, ptr)`);
-                B.line(`call void @scr_gen_ret_ref(ptr ${g.name}, ptr ${name}, ptr ${vAdapters(host, t).release})`);
+                B.line(`call void @scr_gen_ret_ref(ptr ${g.name}, ptr ${name}, ptr ${vAdapters(host.shapeHost, t).release})`);
               }
             });
           }
@@ -730,7 +730,8 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" | 
         B.line(`${rec} = call ptr @${mangleRecordNew(e.type.shapeId)}()`);
         const out = host.own({ name: rec, type: e.type });
         // The three +1s move straight into the fresh record's fields.
-        for (const [field, value] of [["promise", p], ["resolve", resolve], ["reject", reject]] as const) {
+        const fields: [string, string][] = [["promise", p], ["resolve", resolve], ["reject", reject]];
+        for (const [field, value] of fields) {
           const { ptr } = host.recordFieldPtr(rec, e.type.shapeId, field);
           B.line(`store ptr ${value}, ptr ${ptr}`);
         }

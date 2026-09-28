@@ -9,8 +9,8 @@ try {
     console.log(JSON.stringify(errors));
     process.exitCode = 1;
   } else {
-    // Exercise the serializer's refusal through a real number literal,
-    // without placing an invalid non-JSON number in the input document.
+    // Introduce a native NaN before serialization, independently of the
+    // input document's sentinel decoding.
     if (process.argv[3] === "nan") {
       const statement = mod.functions[0]!.body[0];
       if (statement?.kind === "exprStmt" && statement.expr.kind === "numLit") statement.expr.value = NaN;

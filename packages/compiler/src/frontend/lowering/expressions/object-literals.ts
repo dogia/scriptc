@@ -342,6 +342,15 @@ if (srcShape && shapeHasAccessorSlots(srcShape)) {
   );
 }
 }
+
+/** Only definitely present later records replace earlier defaults. A
+ * callback binding may store undefined despite its checker annotation. */
+function laterSpreadType(lowerer: Lowerer, expr: ts.Expression): IrType | null {
+  let source = expr;
+  while (ts.isParenthesizedExpression(source)) source = source.expression;
+  if (ts.isIdentifier(source)) return lowerer.lowerExpr(source).type;
+  return lowerer.mapTypeOf(lowerer.typeOf(source));
+}
 /** The JS trap-closure fallback for FUNCTION-VALUED object properties: a
  * lambda whose body fails to lower inside a JS object literal becomes a
  * closure of the field's exact func type whose body is the runtime fence —
@@ -1188,8 +1197,7 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
       // equal type (a wider source would silently DROP fields JS keeps —
       // the width fence, same as literals). Later contributors override
       // earlier ones (JS last-write-wins; the reads are side-effect-free,
-      // so dropping the earlier read is exact). Identifier sources
-      // re-read per field (historic path); any OTHER source must be a
+      // so dropping the earlier read is exact). Sources must be a
       // re-emittable pure read, sharing one lowered node per field.
       // The desugar's one-entry-per-name list reads spread fields
       // EAGERLY at the spread's position, so an explicit property
@@ -1211,10 +1219,14 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
       const srcLowered =
         prop === expr.properties[0] && leadingSpreadLowered !== null
           ? leadingSpreadLowered
-          : ts.isIdentifier(srcNode)
-            ? null
-            : lowerer.lowerExpr(srcNode);
-      const srcType = srcLowered ? srcLowered.type : lowerer.mapTypeOf(lowerer.typeOf(srcNode));
+          : lowerer.lowerExpr(srcNode);
+      // Array callbacks can receive a record-or-undefined ABI even when
+      // TypeScript describes a required record. Select the copy strategy
+      // from that stored representation so absent sources copy nothing.
+      // Checked-dynamic bindings still use the checker's field contract.
+      const srcType = srcLowered.type.kind === "dyn"
+        ? lowerer.mapTypeOf(lowerer.typeOf(srcNode))
+        : srcLowered.type;
       // `...options.installConfig` — a spread of `Partial<X> | undefined`
       // (the optional-options merge idiom `{ ...DEFAULTS, ...overrides }`):
       // JS spreads nothing for the unit arm and copies present keys
@@ -1272,7 +1284,7 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
         for (const later of expr.properties.slice(expr.properties.indexOf(prop) + 1)) {
           if (ts.isSpreadAssignment(later)) {
             if (conditionalSpreadOf(later.expression)) continue;
-            const lt = lowerer.mapTypeOf(lowerer.typeOf(later.expression));
+            const lt = laterSpreadType(lowerer, later.expression);
             if (lt?.kind === "record") {
               for (const lf of lowerer.shapes.get(lt.shapeId)?.fields ?? []) laterNames.add(lf.name);
             }
@@ -1410,7 +1422,7 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
       for (const later of expr.properties.slice(expr.properties.indexOf(prop) + 1)) {
         if (ts.isSpreadAssignment(later)) {
           if (conditionalSpreadOf(later.expression)) continue;
-          const lt = lowerer.mapTypeOf(lowerer.typeOf(later.expression));
+          const lt = laterSpreadType(lowerer, later.expression);
           if (lt?.kind === "record") {
             for (const lf of lowerer.shapes.get(lt.shapeId)?.fields ?? []) laterNames.add(lf.name);
           }

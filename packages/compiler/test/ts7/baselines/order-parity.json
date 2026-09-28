@@ -7595,6 +7595,18 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3119-runtime-optional-spread.ts": {
+   "order": [
+    "<repo>/tests/corpus/3119-runtime-optional-spread.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3120-ir-nonfinite-numbers.ts": {
+   "order": [
+    "<repo>/tests/corpus/3120-ir-nonfinite-numbers.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
@@ -9787,6 +9799,12 @@
   "<repo>/tests/diagnostics/spread-fences.ts": {
    "order": [
     "<repo>/tests/diagnostics/spread-fences.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/diagnostics/spread-runtime-optional.ts": {
+   "order": [
+    "<repo>/tests/diagnostics/spread-runtime-optional.ts"
    ],
    "diags": []
   },

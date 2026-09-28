@@ -1,6 +1,6 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
-import { IrType, isRefCounted, isUnitType, typeEquals, typeKey } from "../../ir/ir.js";
+import { type IrType, isRefCounted, isUnitType, typeEquals, typeKey } from "../../ir/ir.js";
 import { mangleGenResThunk, mangleRecordNew, mangleRecordStruct } from "../mangle.js";
 import { FN_ATTRS, releaseSym, retainSym, traceArg, vAdapters } from "./shapes.js";
 import { LlvmUnsupportedError } from "./unsupported.js";
@@ -33,10 +33,10 @@ export function raceAdapterFor(host: LlvmEmitterContext, from: IrType, to: IrTyp
       if (tag < 0) throw new InternalCompilerError("llvm emitter bug: race adapter arm missing (frontend must fence)");
       return tag;
     };
-    const rv = vAdapters(host, to);
+    const rv = vAdapters(host.shapeHost, to);
     host.declare(`declare void @scr_promise_fulfill_ref(ptr, ptr, ptr, ptr, ptr)`);
     const fulfill = (value: string): string =>
-      `call void @scr_promise_fulfill_ref(ptr %dst, ptr ${value}, ptr ${rv.retain}, ptr ${rv.release}, ptr ${traceArg(host, to)})`;
+      `call void @scr_promise_fulfill_ref(ptr %dst, ptr ${value}, ptr ${rv.retain}, ptr ${rv.release}, ptr ${traceArg(host.shapeHost, to)})`;
     const d: string[] = [
       `define internal void @${sym}(ptr %dst, ptr %src) ${FN_ATTRS} { ; race ${key}`,
       `entry:`,
@@ -62,12 +62,12 @@ export function raceAdapterFor(host: LlvmEmitterContext, from: IrType, to: IrTyp
         host.declare(`declare ptr @scr_str_retain_v(ptr)`);
         host.declare(`declare void @scr_str_release_v(ptr)`);
       } else {
-        const fv = vAdapters(host, from);
+        const fv = vAdapters(host.shapeHost, from);
         host.declare(`declare ptr @scr_promise_payload_ref(ptr)`);
         host.declare(`declare ptr @scr_union_new_ref(i32, ptr, ptr, ptr, ptr)`);
         d.push(
           `  %x = call ptr @scr_promise_payload_ref(ptr %src)`,
-          `  %u = call ptr @scr_union_new_ref(i32 ${tag}, ptr %x, ptr ${fv.retain}, ptr ${fv.release}, ptr ${traceArg(host, from)})`,
+          `  %u = call ptr @scr_union_new_ref(i32 ${tag}, ptr %x, ptr ${fv.retain}, ptr ${fv.release}, ptr ${traceArg(host.shapeHost, from)})`,
         );
       }
       d.push(`  ${fulfill("%u")}`, `  ret void`, `}`, ``);
@@ -111,13 +111,13 @@ export function raceAdapterFor(host: LlvmEmitterContext, from: IrType, to: IrTyp
           `  br label %join`,
         );
       } else {
-        const av = vAdapters(host, arm);
+        const av = vAdapters(host.shapeHost, arm);
         host.declare(`declare ptr @scr_union_new_ref(i32, ptr, ptr, ptr, ptr)`);
         d.push(
           `  %pp${i} = getelementptr inbounds %ScrUnion, ptr %u0, i64 0, i32 5`,
           `  %p${i} = load ptr, ptr %pp${i}`,
           `  %r${i} = call ptr ${av.retain}(ptr %p${i})`,
-          `  %v${i} = call ptr @scr_union_new_ref(i32 ${tag}, ptr %r${i}, ptr ${av.retain}, ptr ${av.release}, ptr ${traceArg(host, arm)})`,
+          `  %v${i} = call ptr @scr_union_new_ref(i32 ${tag}, ptr %r${i}, ptr ${av.retain}, ptr ${av.release}, ptr ${traceArg(host.shapeHost, arm)})`,
           `  store ptr %v${i}, ptr %slot`,
           `  br label %join`,
         );
@@ -242,11 +242,11 @@ export function genResultThunkFor(host: LlvmEmitterContext, genT: IrType & { kin
       }
       host.declare(`declare ptr @scr_gen_take_out_ref(ptr)`);
       if (srcT.kind !== "union") {
-        const v = vAdapters(host, srcT);
+        const v = vAdapters(host.shapeHost, srcT);
         host.declare(`declare ptr @scr_union_new_ref(i32, ptr, ptr, ptr, ptr)`);
         return [
           `  %${px}x = call ptr @scr_gen_take_out_ref(ptr %g)`,
-          `  %${px}u = call ptr @scr_union_new_ref(i32 ${tagOf(srcT)}, ptr %${px}x, ptr ${v.retain}, ptr ${v.release}, ptr ${traceArg(host, srcT)})`,
+          `  %${px}u = call ptr @scr_union_new_ref(i32 ${tagOf(srcT)}, ptr %${px}x, ptr ${v.retain}, ptr ${v.release}, ptr ${traceArg(host.shapeHost, srcT)})`,
           `  store ptr %${px}u, ptr %vslot`,
           `  br label %join`,
         ];
@@ -291,13 +291,13 @@ export function genResultThunkFor(host: LlvmEmitterContext, genT: IrType & { kin
             `  store ptr %${px}v${i}, ptr %vslot`,
           );
         } else {
-          const av = vAdapters(host, arm);
+          const av = vAdapters(host.shapeHost, arm);
           host.declare(`declare ptr @scr_union_new_ref(i32, ptr, ptr, ptr, ptr)`);
           lines.push(
             `  %${px}pp${i} = getelementptr inbounds %ScrUnion, ptr %${px}u0, i64 0, i32 5`,
             `  %${px}p${i} = load ptr, ptr %${px}pp${i}`,
             `  %${px}r${i} = call ptr ${av.retain}(ptr %${px}p${i})`,
-            `  %${px}v${i} = call ptr @scr_union_new_ref(i32 ${tag}, ptr %${px}r${i}, ptr ${av.retain}, ptr ${av.release}, ptr ${traceArg(host, arm)})`,
+            `  %${px}v${i} = call ptr @scr_union_new_ref(i32 ${tag}, ptr %${px}r${i}, ptr ${av.retain}, ptr ${av.release}, ptr ${traceArg(host.shapeHost, arm)})`,
             `  store ptr %${px}v${i}, ptr %vslot`,
           );
         }
@@ -456,7 +456,7 @@ export function execFileThunkFor(host: LlvmEmitterContext, cbT: IrType & { kind:
       if (errorTag < 0 || nullTag < 0 || errorArm === null) {
         throw new InternalCompilerError("llvm emitter bug: execFile error union lacks its arms");
       }
-      errorTrace = traceArg(host, errorArm);
+      errorTrace = traceArg(host.shapeHost, errorArm);
       host.declare(`declare ptr @scr_union_new_ref(i32, ptr, ptr, ptr, ptr)`);
       host.declare(`declare ptr @scr_error_retain_v(ptr)`);
       host.declare(`declare void @scr_error_release_v(ptr)`);
@@ -525,7 +525,7 @@ export function ipcMessageThunkFor(host: LlvmEmitterContext, cbT: IrType & { kin
           `  %bad = call zeroext i1 @scr_exc_pending()`,
           `  br i1 %bad, label %fail, label %invoke`,
           `fail:`,
-          ...(isRefCounted(param) ? [`  call void ${releaseSym(host, param)}(ptr %value)`] : []),
+          ...(isRefCounted(param) ? [`  call void ${releaseSym(host.shapeHost, param)}(ptr %value)`] : []),
           `  ret void`,
           `invoke:`,
         );
@@ -540,7 +540,7 @@ export function ipcMessageThunkFor(host: LlvmEmitterContext, cbT: IrType & { kin
     if (retTy === "void") d.push(`  call void %fn(ptr %cb${passed})`);
     else {
       d.push(`  %result = call ${retTy} %fn(ptr %cb${passed})`);
-      if (isRefCounted(cbT.ret)) d.push(`  call void ${releaseSym(host, cbT.ret)}(ptr %result)`);
+      if (isRefCounted(cbT.ret)) d.push(`  call void ${releaseSym(host.shapeHost, cbT.ret)}(ptr %result)`);
     }
     d.push(`  ret void`, `}`, ``);
     host.resolveThunkDefs.push(...d);
@@ -583,7 +583,7 @@ export function ipcSendThunkFor(host: LlvmEmitterContext, cbT: IrType & { kind: 
         `  %has = icmp ne ptr %error, null`,
         `  br i1 %has, label %some, label %none`,
         `some:`,
-        `  %wrapped = call ptr @scr_union_new_ref(i32 ${errorTag}, ptr %error, ptr @scr_error_retain_v, ptr @scr_error_release_v, ptr ${traceArg(host, errorArm)})`,
+        `  %wrapped = call ptr @scr_union_new_ref(i32 ${errorTag}, ptr %error, ptr @scr_error_retain_v, ptr @scr_error_release_v, ptr ${traceArg(host.shapeHost, errorArm)})`,
         `  store ptr %wrapped, ptr %slot`,
         `  br label %invoke`,
         `none:`,
@@ -662,7 +662,7 @@ export function emitterFixedAdapter(host: LlvmEmitterContext, cbT: IrType & { ki
         d.push(`  %b${i} = load i1, ptr %a${i}`);
         passed.push(`i1 %b${i}`);
       } else if (isRefCounted(p)) {
-        d.push(`  %r${i} = call ptr ${retainSym(host, p)}(ptr %a${i})`);
+        d.push(`  %r${i} = call ptr ${retainSym(host.shapeHost, p)}(ptr %a${i})`);
         passed.push(`ptr %r${i}`);
       } else {
         passed.push(`ptr %a${i}`);
@@ -678,7 +678,7 @@ export function emitterFixedAdapter(host: LlvmEmitterContext, cbT: IrType & { ki
     } else {
       d.push(`  %ret = call ${retTy} %fn(${passed.join(", ")})`);
       if (isRefCounted(cbT.ret)) {
-        d.push(`  call void ${releaseSym(host, cbT.ret)}(ptr %ret) ; discarded listener result`);
+        d.push(`  call void ${releaseSym(host.shapeHost, cbT.ret)}(ptr %ret) ; discarded listener result`);
       }
     }
     d.push(`  call void @scr_closure_release(ptr %orig)`, `  ret void`, `}`, ``);

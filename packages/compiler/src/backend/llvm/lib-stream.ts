@@ -180,10 +180,11 @@ export function emitStreamLibCall(host: LlvmEmitterContext, e: LibCallExpr): LlV
       if (!def) throw new InternalCompilerError(`llvm emitter bug: ${e.fn} union unknown`);
       const args = e.args.map((a) => host.emitExpr(a));
       const pushing = e.fn === "readable.pushU";
-      const entries: Record<string, string> = pushing
+      const entries: Record<"bytes" | "string" | "nullT", string> = pushing
         ? { bytes: "scr_stream_push", string: "scr_stream_push_str", nullT: "scr_stream_push_null" }
         : { bytes: "scr_stream_write", string: "scr_stream_write_str", nullT: "scr_stream_write_null" };
-      const present = (["nullT", "string", "bytes"] as const)
+      const kinds: ("nullT" | "string" | "bytes")[] = ["nullT", "string", "bytes"];
+      const present = kinds
         .map((kind) => ({ kind, tag: def.arms.findIndex((a) => a.kind === kind) }))
         .filter((a) => a.tag >= 0);
       if (present.length === 0) throw new InternalCompilerError(`llvm emitter bug: ${e.fn} union lacks its arms`);
@@ -220,7 +221,7 @@ export function emitStreamLibCall(host: LlvmEmitterContext, e: LibCallExpr): LlV
       // The C shape is a ternary chain ending at the LAST present arm
       // (no default): mirror with a tag switch whose default is that arm.
       const last = present[present.length - 1]!;
-      const labels = present.slice(0, -1).map((a) => ({ ...a, label: B.newLabel(`scu.${a.kind}`) }));
+      const labels = present.slice(0, -1).map((a) => ({ kind: a.kind, tag: a.tag, label: B.newLabel(`scu.${a.kind}`) }));
       const ld = B.newLabel("scu.d");
       if (labels.length > 0) {
         B.terminate(

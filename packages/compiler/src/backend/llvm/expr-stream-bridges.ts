@@ -1,7 +1,7 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
 import { streamTypedRefEligible } from "../../ir/analysis.js";
-import { IrType, isClassOwnEnumerableFieldName, isDynTypedRefType, isRefCounted, typeKey } from "../../ir/ir.js";
+import { type IrType, isClassOwnEnumerableFieldName, isDynTypedRefType, isRefCounted, typeKey } from "../../ir/ir.js";
 import { mangleRecordStruct } from "../mangle.js";
 import { BlockBuilder } from "./blocks.js";
 import { classFieldIndex, classStructSym } from "./classes.js";
@@ -45,10 +45,10 @@ export function dynPromiseAdapter(host: LlvmEmitterContext, inner: IrType): stri
       host.declare(`declare void @scr_promise_fulfill_str(ptr, ptr)`);
       B.line(`call void @scr_promise_fulfill_str(ptr %dst, ptr ${value})`);
     } else {
-      const rc = vAdapters(host, inner);
+      const rc = vAdapters(host.shapeHost, inner);
       host.declare(`declare void @scr_promise_fulfill_ref(ptr, ptr, ptr, ptr, ptr)`);
       B.line(
-        `call void @scr_promise_fulfill_ref(ptr %dst, ptr ${value}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, inner)})`,
+        `call void @scr_promise_fulfill_ref(ptr %dst, ptr ${value}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host.shapeHost, inner)})`,
       );
     }
     B.terminate(`ret void`);
@@ -181,7 +181,7 @@ export function streamTypedRefCommitAdapter(host: LlvmEmitterContext,
           lines.push(`  store ${fieldTy} %${next}, ptr %f${index}_ptr`);
         }
         if (isRefCounted(field.type)) {
-          lines.push(`  call void ${releaseSym(host, field.type)}(ptr %f${index}_old)`);
+          lines.push(`  call void ${releaseSym(host.shapeHost, field.type)}(ptr %f${index}_old)`);
         }
         lines.push(`  br label %${after}`, `${after}:`);
       }
@@ -231,7 +231,7 @@ export function streamTypedRefCommitAdapter(host: LlvmEmitterContext,
       );
     });
     lines.push(
-      `  call void ${releaseSym(host, t)}(ptr %next)`,
+      `  call void ${releaseSym(host.shapeHost, t)}(ptr %next)`,
       `  br label %done`,
       `done:`,
       `  ret void`,
@@ -301,7 +301,7 @@ export function liveDynUnionRefAdapter(host: LlvmEmitterContext,
     );
     mutableArms.forEach(({ arm, tag }, index) => {
       const adapter = adapters.get(tag)!;
-      const rc = vAdapters(host, arm);
+      const rc = vAdapters(host.shapeHost, arm);
       const armKey = typeKey(arm);
       B.startBlock(armLabels[index]!);
       const payloadPtr = B.tmp();
@@ -376,7 +376,8 @@ function nestedTypedRefUnionAdapter(
     ctx: LlStreamTypedRefContext,
   ): string {
     const key = typeKey(t);
-    const unions = (ctx.unions ??= new Map());
+    if (ctx.unions === undefined) ctx.unions = new Map<string, string>();
+    const unions = ctx.unions;
     const existing = unions.get(key);
     if (existing) return existing;
     const def = host.unionsById.get(t.unionId);
@@ -404,7 +405,7 @@ function nestedTypedRefUnionAdapter(
       B.startBlock(labels[index]!);
       if (streamTypedRefEligible(arm) || isDynTypedRefType(arm)) {
         const adapter = host.streamTypedRefMaterializeAdapter(arm, ctx);
-        const rc = vAdapters(host, arm);
+        const rc = vAdapters(host.shapeHost, arm);
         const armKey = typeKey(arm);
         const payloadPtr = B.tmp();
         const payload = B.tmp();
@@ -495,7 +496,7 @@ export function streamTypedRefBoxValue(host: LlvmEmitterContext,
       return boxed;
     }
     const nested = host.streamTypedRefMaterializeAdapter(t, ctx);
-    const rc = vAdapters(host, t);
+    const rc = vAdapters(host.shapeHost, t);
     const key = typeKey(t);
     host.declare(
       `declare ptr @scr_dyn_new_typed_ref(ptr, ptr, ptr, ptr, ${host.sizeType}, ptr, ptr)`,
@@ -651,7 +652,7 @@ export function streamTypedRefMaterializeAdapter(host: LlvmEmitterContext,
         const boxed = host.streamTypedRefBoxValue(B, elem, value, ctx);
         B.line(`call void @scr_dyn_arr_push(ptr ${out}, ptr ${boxed})`);
         if (isRefCounted(elem)) {
-          B.line(`call void ${releaseSym(host, elem)}(ptr ${value})`);
+          B.line(`call void ${releaseSym(host.shapeHost, elem)}(ptr ${value})`);
         }
       });
       B.terminate(`ret ptr ${out}`);
@@ -750,7 +751,7 @@ export function streamFromArrayAdapter(host: LlvmEmitterContext,
             arm,
             armSnapshot,
           );
-          const rc = vAdapters(host, arm);
+          const rc = vAdapters(host.shapeHost, arm);
           B.startBlock(armLabels[i]!);
           const payloadPtr = B.tmp();
           const payload = B.tmp();
@@ -786,7 +787,7 @@ export function streamFromArrayAdapter(host: LlvmEmitterContext,
       }
     } else if (typedRef) {
       boxed = B.tmp();
-      const rc = vAdapters(host, elem);
+      const rc = vAdapters(host.shapeHost, elem);
       const keyPtr = host.cstr(key);
       let commit: string;
       if (streamTypedRefEligible(elem)) {
@@ -819,7 +820,7 @@ export function streamFromArrayAdapter(host: LlvmEmitterContext,
       );
     }
     if (isRefCounted(elem)) {
-      B.line(`call void ${releaseSym(host, elem)}(ptr ${value})`);
+      B.line(`call void ${releaseSym(host.shapeHost, elem)}(ptr ${value})`);
     }
     B.terminate(`ret ptr ${boxed}`);
     host.resolveThunkDefs.push(

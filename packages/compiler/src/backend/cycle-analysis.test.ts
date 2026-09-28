@@ -6,7 +6,7 @@ import { computeTraced as llvmTraced } from "./llvm/shapes.js";
 
 const loc = { file: "cycles.ts", start: 0, end: 1 };
 function module(): IrModule {
-  return { irVersion: 12, sourceFile: loc.file, entry: "main", functions: [{ name: "main", locals: [], params: [], returnType: VOID, body: [], loc }] };
+  return { irVersion: 13, sourceFile: loc.file, entry: "main", functions: [{ name: "main", locals: [], params: [], returnType: VOID, body: [], loc }] };
 }
 const ref = (shapeId: string): IrType => ({ kind: "record", shapeId });
 const shape = (id: string, types: IrType[]): IrRecordShape => ({ id, fields: types.map((type, i) => ({ name: `field${i}`, type })) });

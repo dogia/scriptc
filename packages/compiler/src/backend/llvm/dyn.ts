@@ -1145,13 +1145,14 @@ export class LlDyn {
         const lCache = B.newLabel("dcu.put");
         B.condBr(hasCached, lRefresh, lCache);
         B.startBlock(lRefresh);
-        ([
+        const fields: [number, string, string][] = [
           [1, "i32", "tag"],
           [2, "ptr", "retain"],
           [3, "ptr", "release"],
           [4, "ptr", "trace"],
           [5, "i64", "slot"],
-        ] as const).forEach(([index, fieldType, fieldName]) => {
+        ];
+        fields.forEach(([index, fieldType, fieldName]) => {
           const cachedPtr = B.tmp();
           const checkedPtr = B.tmp();
           const oldValue = B.tmp();
@@ -1755,9 +1756,9 @@ export class LlDyn {
       for (const k of [DYN_KIND.NULL, DYN_KIND.BOOL, DYN_KIND.NUM, DYN_KIND.STR, DYN_KIND.ARR, DYN_KIND.OBJ, DYN_KIND.UNDEF, DYN_KIND.BYTES, DYN_KIND.FUNC, DYN_KIND.HANDLE, DYN_KIND.PROMISE, DYN_KIND.JSVAL, DYN_KIND.TYPED_REF]) {
         labels.set(k, B.newLabel(`ds.k${k}`));
       }
-      B.terminate(
-        `switch i32 ${kd}, label %${done} [ ${[...labels].map(([k, l]) => `i32 ${k}, label %${l}`).join(" ")} ]`,
-      );
+      const branches: string[] = [];
+      for (const [kind, label] of labels) branches.push(`i32 ${kind}, label %${label}`);
+      B.terminate(`switch i32 ${kd}, label %${done} [ ${branches.join(" ")} ]`);
       B.startBlock(labels.get(DYN_KIND.JSVAL)!);
       {
         // Island-held: the engine's own ToString (a bridged failure

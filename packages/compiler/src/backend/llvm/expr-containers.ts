@@ -1,7 +1,7 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
 import { isStableReceiverOperand, undefinedArmTag } from "../../ir/analysis.js";
-import { IrExpr, IrType, isRefCounted, typeEquals, typeKey } from "../../ir/ir.js";
+import { type IrExpr, type IrType, isRefCounted, typeEquals, typeKey } from "../../ir/ir.js";
 import { mangleResolveThunk } from "../mangle.js";
 import { elemAccess, FN_ATTRS, mapKeyAccess, mapKeyKindNum, mapValKindNum, traceArg, vAdapters } from "./shapes.js";
 import type { LlvmEmitterContext, LlValue } from "./expr-context.js";
@@ -13,12 +13,12 @@ export function resolveThunkFor(host: LlvmEmitterContext, inner: IrType): string
     if (!sym) {
       sym = mangleResolveThunk(host.resolveThunks.size);
       host.resolveThunks.set(key, sym);
-      const v = vAdapters(host, inner);
+      const v = vAdapters(host.shapeHost, inner);
       host.declare(`declare void @scr_resolve_ref_impl(ptr, ptr, ptr, ptr, ptr)`);
       host.resolveThunkDefs.push(
         `define internal void @${sym}(ptr %self, ptr %v) ${FN_ATTRS} { ; resolve<${key}>`,
         `entry:`,
-        `  call void @scr_resolve_ref_impl(ptr %self, ptr %v, ptr ${v.retain}, ptr ${v.release}, ptr ${traceArg(host, inner)})`,
+        `  call void @scr_resolve_ref_impl(ptr %self, ptr %v, ptr ${v.retain}, ptr ${v.release}, ptr ${traceArg(host.shapeHost, inner)})`,
         `  ret void`,
         `}`,
         ``,
@@ -506,16 +506,16 @@ export function emitMapNew(host: LlvmEmitterContext, e: IrExpr & { kind: "mapNew
     if (e.type.kind !== "map") throw new InternalCompilerError("llvm emitter bug: mapNew of non-map type");
     const B = host.B;
     const value = e.type.value;
-    const rc = isRefCounted(value) ? vAdapters(host, value) : { retain: "null", release: "null" };
+    const rc = isRefCounted(value) ? vAdapters(host.shapeHost, value) : { retain: "null", release: "null" };
     const m = B.tmp();
     const kAcc = mapKeyAccess(e.type.key);
     if (kAcc === "ref") {
-      const keyRc = vAdapters(host, e.type.key);
+      const keyRc = vAdapters(host.shapeHost, e.type.key);
       host.declare(`declare ptr @scr_map_new_typed(i32, i32, ptr, ptr, ptr, ptr, ptr, ptr)`);
-      B.line(`${m} = call ptr @scr_map_new_typed(i32 ${mapKeyKindNum(e.type.key)}, i32 ${mapValKindNum(value)}, ptr ${keyRc.retain}, ptr ${keyRc.release}, ptr ${traceArg(host, e.type.key)}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, value)})`);
+      B.line(`${m} = call ptr @scr_map_new_typed(i32 ${mapKeyKindNum(e.type.key)}, i32 ${mapValKindNum(value)}, ptr ${keyRc.retain}, ptr ${keyRc.release}, ptr ${traceArg(host.shapeHost, e.type.key)}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host.shapeHost, value)})`);
     } else {
       host.declare(`declare ptr @scr_map_new(i32, i32, ptr, ptr, ptr)`);
-      B.line(`${m} = call ptr @scr_map_new(i32 ${mapKeyKindNum(e.type.key)}, i32 ${mapValKindNum(value)}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, value)})`);
+      B.line(`${m} = call ptr @scr_map_new(i32 ${mapKeyKindNum(e.type.key)}, i32 ${mapValKindNum(value)}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host.shapeHost, value)})`);
     }
     const out = host.own({ name: m, type: e.type });
     // Seeded construction: set() each pair in source order — a repeated
@@ -729,9 +729,9 @@ export function emitSetNew(host: LlvmEmitterContext, e: IrExpr & { kind: "setNew
     const kAcc = mapKeyAccess(e.type.elem);
     const s = B.tmp();
     if (kAcc === "ref") {
-      const rc = vAdapters(host, e.type.elem);
+      const rc = vAdapters(host.shapeHost, e.type.elem);
       host.declare(`declare ptr @scr_map_new_typed(i32, i32, ptr, ptr, ptr, ptr, ptr, ptr)`);
-      B.line(`${s} = call ptr @scr_map_new_typed(i32 ${mapKeyKindNum(e.type.elem)}, i32 0, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, e.type.elem)}, ptr null, ptr null, ptr null)`);
+      B.line(`${s} = call ptr @scr_map_new_typed(i32 ${mapKeyKindNum(e.type.elem)}, i32 0, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host.shapeHost, e.type.elem)}, ptr null, ptr null, ptr null)`);
     } else {
       host.declare(`declare ptr @scr_map_new(i32, i32, ptr, ptr, ptr)`);
       B.line(`${s} = call ptr @scr_map_new(i32 ${mapKeyKindNum(e.type.elem)}, i32 0, ptr null, ptr null, ptr null)`);

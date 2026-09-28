@@ -1,7 +1,7 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
 import { undefinedArmTag, unionWideningTags } from "../../ir/analysis.js";
-import { IrExpr, IrType, isRefCounted, SrcLoc, typeEquals } from "../../ir/ir.js";
+import { type IrExpr, type IrType, isRefCounted, type SrcLoc, typeEquals } from "../../ir/ir.js";
 import { LlvmUnsupportedError } from "./unsupported.js";
 import type { LlvmEmitterContext, LlValue } from "./expr-context.js";
 import { f64Lit, llvmCommentText } from "./common.js";

@@ -441,7 +441,7 @@ export function emitContainerExpr(host: LlvmEmitterContext, e: ExprOf<"arrayLit"
         if (e.type.kind !== "array") throw new InternalCompilerError("llvm emitter bug: arrayLit of non-array type");
         const elem = e.type.elem;
         const arr = B.tmp();
-        B.line(`${arr} = ${arrNewCall(host, elem, String(e.elems.length))}`);
+        B.line(`${arr} = ${arrNewCall(host.shapeHost, elem, String(e.elems.length))}`);
         const out = host.own({ name: arr, type: e.type });
         const acc = elemAccess(elem);
         const spreadSet = new Set(e.spreads ?? []);
@@ -466,7 +466,7 @@ export function emitContainerExpr(host: LlvmEmitterContext, e: ExprOf<"arrayLit"
         const elem = e.type.elem;
         const n = host.emitExpr(e.length);
         const arr = B.tmp();
-        B.line(`${arr} = ${arrNewCall(host, elem, "0")}`);
+        B.line(`${arr} = ${arrNewCall(host.shapeHost, elem, "0")}`);
         const out = host.own({ name: arr, type: e.type });
         const acc = elemAccess(elem);
         let fill = acc === "f64" ? f64Lit(0) : acc === "bool" ? "false" : "null";

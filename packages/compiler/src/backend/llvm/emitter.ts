@@ -118,7 +118,7 @@ import {
   classStructSym,
   type LlClassMeta,
 } from "./classes.js";
-import { LlDyn } from "./dyn.js";
+import { LlDyn, type DynHost } from "./dyn.js";
 import { LlvmUnsupportedError } from "./unsupported.js";
 import { LlWalkers } from "./walkers.js";
 import {
@@ -134,7 +134,7 @@ import {
   traceArg,
   vAdapters,
 } from "./shapes.js";
-import type { ExprOf, LibCallExpr, LlStreamTypedRefAdapter, LlStreamTypedRefContext, LlValue, LlvmEmitterContext } from "./expr-context.js";
+import type { ExprOf, LibCallExpr, LlStreamTypedRefAdapter, LlStreamTypedRefContext, LlValue } from "./expr-context.js";
 
 export { LlvmUnsupportedError } from "./unsupported.js";
 
@@ -202,13 +202,13 @@ function llStrBytes(text: string): string {
   return llBytes(Buffer.from(text, "utf8"));
 }
 
-class LlEmitter {
+export class LlEmitter {
   private readonly debug: LlvmDebugInfo | null;
   private debugScope: string | null = null;
   readonly sizeType: "i32" | "i64";
   readonly ffiExtendNarrowIntegers: boolean;
   readonly cycleColorOffset: number;
-  private readonly wasi: boolean;
+  readonly wasi: boolean;
   private readonly emitLibraryIdentity: boolean;
   private readonly runtimeAbiMarker: boolean;
   /** Interned string literals: UTF-8 text → { symbol, byte length } —
@@ -223,35 +223,37 @@ class LlEmitter {
    * (pattern, flags) pair; the bytecode slot starts null and the runtime
    * compiles it lazily on first use. The source/flags strings intern at
    * REGISTRATION (bodies emit before the literal table flushes). */
-  private readonly regexInstances = new Map<string, { sym: string; src: string; fl: string }>();
+  readonly regexInstances = new Map<string, { sym: string; src: string; fl: string }>();
   /** Interned tagged-template strings objects: per-site key → { symbol,
    * interned cooked-literal refs }. One immortal ScrArr of string slots
    * per template SITE (the spec's per-occurrence identity — the C
    * emitter's templateStringsInstances discipline). */
-  private readonly templateStringsInstances = new Map<string, { sym: string; slots: string[] }>();
+  readonly templateStringsInstances = new Map<string, { sym: string; slots: string[] }>();
   /** Interned NUL-terminated C-string constants (scr_jb_puts labels, the
    * stringify indent text): UTF-8 text → { symbol, byte length }. */
   private readonly cstrs = new Map<string, { sym: string; len: number }>();
   /** Type-directed walker functions (JSON serializers, the indent
    * rewriter, union ToString/join) — interned per typeKey/unionId, defs
    * flushed with the shape helpers. */
-  private readonly walkers = new LlWalkers(this);
+  readonly walkers: LlWalkers;
   /** The dyn (ScrDyn dyn) helper registry — dyn.ts's interned ports of
    * walkers.ts's dyn slice. */
-  private readonly dyn = new LlDyn(this);
+  readonly dyn: LlDyn;
+  /** Explicit callback boundary for standalone layout and walker stages. */
+  readonly shapeHost: DynHost;
   /** External declarations, in first-use order. */
   private readonly decls = new Set<string>();
   /** Declared functions referenced as values: each needs an env-signature
    * wrapper + an interned immortal closure (so `f === f` holds). */
-  private readonly fnValues = new Set<string>();
+  readonly fnValues = new Set<string>();
   private needsOom = false;
-  private needsBadTag = false;
-  private needsBadKey = false;
+  needsBadTag = false;
+  needsBadKey = false;
   private needsRetainBox = false;
 
-  private readonly fnByName = new Map<string, IrFunction>();
+  readonly fnByName = new Map<string, IrFunction>();
   /** Manifest-bound native imports, used by ffiCall emission. */
-  private readonly ffiByName = new Map<string, IrFfiImport>();
+  readonly ffiByName = new Map<string, IrFfiImport>();
   /** C-ABI callback trampolines and (for raw/no-userdata callbacks) their
    * distinct call-scoped TLS closure slots. */
   private readonly ffiCallbackAdapters: Map<string, FfiCallbackAdapter>;
@@ -259,37 +261,37 @@ class LlEmitter {
    * descriptor anywhere in the manifest, every native call is a
    * pending-exception checkpoint (may-throw derives the same fact from
    * the same helper). */
-  private readonly ffiHasRetainedCallback: boolean;
+  readonly ffiHasRetainedCallback: boolean;
   private readonly ffiHasForeignCallback: boolean;
   private readonly globalTypes = new Map<string, IrType>();
   private readonly tdzGlobals = new Map<string, string>();
-  private readonly constantNumericTables: ReadonlyMap<string, ConstantNumericTable>;
+  readonly constantNumericTables: ReadonlyMap<string, ConstantNumericTable>;
   /** May-throw analysis (the C emitter's computeMayThrow, shared): pending
    * checks are emitted only after calls that can actually raise. */
-  private readonly mayThrow: Set<string>;
-  private readonly indirectMayThrow: boolean;
+  readonly mayThrow: Set<string>;
+  readonly indirectMayThrow: boolean;
   /** Method names with at least one may-throw implementation — the
    * virtualCall pending check's key (CEmitter.mayThrowMethods). */
-  private readonly mayThrowMethods = new Set<string>();
+  readonly mayThrowMethods = new Set<string>();
   /** setTimeout and friends appeared somewhere: main must run the event
    * loop even in programs with no async functions (CEmitter.usesTimers). */
-  private usesTimers = false;
+  usesTimers = false;
   /** Emitted ref-kind resolve thunks for new Promise, interned per inner
    * typeKey → thunk symbol (CEmitter.resolveThunks). */
-  private readonly resolveThunks = new Map<string, string>();
-  private readonly resolveThunkDefs: string[] = [];
+  readonly resolveThunks = new Map<string, string>();
+  readonly resolveThunkDefs: string[] = [];
   /** ReadableStream.from adapters keep typed arrays by reference and box
    * one current element per pull. */
-  private readonly streamFromArrayAdapters = new Map<string, string>();
+  readonly streamFromArrayAdapters = new Map<string, string>();
   /** Identity-preserving static→dyn capsules for program classes and Web
    * APIs whose values remain directly observable. */
-  private readonly liveDynRefAdapters = new Map<
+  readonly liveDynRefAdapters = new Map<
     string,
     LlStreamTypedRefAdapter
   >();
   /** Runtime-arm dispatchers for live union values. */
-  private readonly liveDynUnionRefAdapters = new Map<string, string>();
-  private readonly dynPromiseAdapters = new Map<string, string>();
+  readonly liveDynUnionRefAdapters = new Map<string, string>();
+  readonly dynPromiseAdapters = new Map<string, string>();
   readonly unionsById = new Map<string, IrUnionDef>();
   readonly recordsById = new Map<string, IrRecordShape>();
   readonly recordCloneShapes = new Set<string>();
@@ -297,7 +299,7 @@ class LlEmitter {
   readonly tracedUnions: Set<string>;
   /** The class graph (buildClassGraph): preorder numbering, hierarchy
    * membership, virtual slot lists — the CEmitter classMeta, ported. */
-  private readonly classMeta: Map<string, LlClassMeta>;
+  readonly classMeta: Map<string, LlClassMeta>;
   /** Class objects (classes as first-class values): className → the
    * interned .name literal ref — registered during body emission, the
    * statics and construct thunks assemble around the bodies. */
@@ -317,8 +319,8 @@ class LlEmitter {
   private readonly streamIntervals: { vt: string; pre: number; post: number; lib: string }[] = [];
 
   // ── per-function state (reset in emitFunction) ─────────────────────────
-  private B = new BlockBuilder();
-  private frames: LlValue[][] = [];
+  B = new BlockBuilder();
+  frames: LlValue[][] = [];
   private scopes: LlScopeEntry[][] = [];
   /** Enclosing break/continue targets. `kind` separates loops from
    * switches and labeled blocks: an unlabeled break binds to the innermost
@@ -331,7 +333,7 @@ class LlEmitter {
     kind: "loop" | "block" | "switch";
     brkLabel: string;
     contLabel: string | null;
-    labels?: string[];
+    labels?: string[] | undefined;
     frameDepth: number;
     scopeDepth: number;
     finallyDepth: number;
@@ -339,8 +341,8 @@ class LlEmitter {
   private currentLocals = new Map<string, IrLocal>();
   private captureIds = new Set<string>();
   /** Active canonical byte-loop induction bindings: local id → size_t slot. */
-  private integerLoopBindings = new Map<string, string>();
-  private integerRanges: IntegerRanges = new Map();
+  integerLoopBindings = new Map<string, string>();
+  integerRanges: IntegerRanges = new Map();
   /** Enclosing try-with-FINALLY regions, innermost last: a `return`
    * inside one runs every crossed finally (innermost first) before the
    * actual ret — the C emitter's pending-return path, with the finally
@@ -362,7 +364,7 @@ class LlEmitter {
   private currentReturnType: IrType = VOID;
   /** Active only while emitting a wasm32 async body lowered with LLVM's
    * switched-coroutine intrinsics. */
-  private currentWasiCoro: {
+  currentWasiCoro: {
     kind: "async" | "generator";
     id: string;
     handle: string;
@@ -374,12 +376,12 @@ class LlEmitter {
   /** The generator channels of the function being emitted (null outside
    * generator bodies): yieldExpr emission reads them, and emitTryCatch's
    * catch prologue emits the GENRET sentinel re-unwind exactly here. */
-  private currentGenerator: { yieldT: IrType; nextT: IrType } | null = null;
+  currentGenerator: { yieldT: IrType; nextT: IrType } | null = null;
   /** Active optional-chain bind slots, by chain id (chainRecv reads). */
-  private readonly chainSlots = new Map<string, LlValue>();
-  private logArgSlots = 0;
+  readonly chainSlots = new Map<string, LlValue>();
+  logArgSlots = 0;
 
-  constructor(private readonly mod: IrModule, options: LlvmTargetOptions) {
+  constructor(readonly mod: IrModule, options: LlvmTargetOptions) {
     this.debug = options.debugSources === undefined ? null : new LlvmDebugInfo(mod.sourceFile, options.debugSources, options.pointerBits, mod.unions);
     this.constantNumericTables = findConstantNumericTables(mod);
     this.sizeType = options.pointerBits === 32 ? "i32" : "i64";
@@ -411,6 +413,24 @@ class LlEmitter {
     const traced = computeTraced(mod);
     this.tracedShapes = traced.shapes;
     this.tracedUnions = traced.unions;
+    this.shapeHost = {
+      sizeType: this.sizeType,
+      cycleColorOffset: this.cycleColorOffset,
+      tracedShapes: this.tracedShapes,
+      tracedUnions: this.tracedUnions,
+      recordsById: this.recordsById,
+      recordCloneShapes: this.recordCloneShapes,
+      unionsById: this.unionsById,
+      declare: (decl) => this.declare(decl),
+      needOom: () => this.needOom(),
+      needBadTag: () => this.needBadTag(),
+      internLiteral: (text) => this.internLiteral(text),
+      cstr: (text) => this.cstr(text),
+      unitInstanceRef: (unionId, tag) => this.unitInstanceRef(unionId, tag),
+      liveDynRefAdapter: (type) => this.liveDynRefAdapter(type),
+    };
+    this.walkers = new LlWalkers(this.shapeHost);
+    this.dyn = new LlDyn(this.shapeHost);
     for (const g of mod.globals ?? []) {
       // Module globals: scalar (f64/bool) storage is a zero-initialized
       // LLVM global, ref-kind storage a null-initialized ptr — load/store
@@ -466,13 +486,13 @@ class LlEmitter {
     }
   }
 
-  private abiOffset(native64: number, wasm32: number): number {
+  abiOffset(native64: number, wasm32: number): number {
     return this.sizeType === "i32" ? wasm32 : native64;
   }
 
   // ── types ───────────────────────────────────────────────────────────────
 
-  private llType(t: IrType): string {
+  llType(t: IrType): string {
     if (POINTER_KINDS.has(t.kind) && t.kind !== "http2Session" && t.kind !== "http2Stream") return "ptr";
     switch (t.kind) {
       case "f64":
@@ -493,7 +513,7 @@ class LlEmitter {
 
   // ── module assembly ─────────────────────────────────────────────────────
 
-  private ffiCallbackAdapter(binding: string, id: string): FfiCallbackAdapter {
+  ffiCallbackAdapter(binding: string, id: string): FfiCallbackAdapter {
     const adapter = this.ffiCallbackAdapters.get(`${binding}:${id}`);
     if (!adapter) throw new InternalCompilerError(`llvm emitter bug: no callback adapter for ${binding}:${id}`);
     return adapter;
@@ -802,7 +822,7 @@ class LlEmitter {
     // emit), then the file assembles around them — the C emitter's order.
     const fnDefs: string[] = [];
     for (const fn of this.mod.functions) fnDefs.push(this.emitFunction(fn));
-    const layouts = emitLlvmLayouts(this, this.mod, this.classMeta, this.classObjs, this.fnByName, (t) => this.llType(t));
+    const layouts = emitLlvmLayouts(this.shapeHost, this.mod, this.classMeta, this.classObjs, this.fnByName, (t) => this.llType(t));
     const shapes = layouts.records;
     const classShapes = layouts.classes;
     const classObjDefs = layouts.classObjects;
@@ -858,7 +878,7 @@ class LlEmitter {
         if (!isRefCounted(g.type)) return;
         lines.push(
           `  %${prefix}${i} = load ptr, ptr @${mangleGlobal(g.id)}`,
-          `  call void ${releaseSym(this, g.type)}(ptr %${prefix}${i}) ; ${g.name}`,
+          `  call void ${releaseSym(this.shapeHost, g.type)}(ptr %${prefix}${i}) ; ${g.name}`,
         );
       });
       fnValueProps.forEach((name, i) => {
@@ -1264,7 +1284,8 @@ class LlEmitter {
         `@sc_npm_modules = internal constant [${moduleRows.length} x %ScrIslandModule] [ ${moduleRows.join(", ")} ]`,
       );
       embedded.edges.forEach((edge, i) => {
-        for (const [part, text] of [["from", edge.from], ["spec", edge.specifier], ["to", edge.to]] as const) {
+        const parts: [string, string][] = [["from", edge.from], ["spec", edge.specifier], ["to", edge.to]];
+        for (const [part, text] of parts) {
           const bytes = Buffer.from(text, "utf8");
           out.push(`@sc_npm_edge_${i}_${part} = internal constant [${bytes.length + 1} x i8] c"${llBytes(bytes)}"`);
         }
@@ -1306,7 +1327,8 @@ class LlEmitter {
     // No event loop yet: timers/async still refuse (phase 5).
     const stamps: string[] = [];
     for (const iv of this.errorIntervals) {
-      for (const [field, value] of [[0, iv.pre], [1, iv.post]] as const) {
+      const fields: [number, number][] = [[0, iv.pre], [1, iv.post]];
+      for (const [field, value] of fields) {
         stamps.push(
           `  store ${this.sizeType} ${value}, ptr getelementptr inbounds ([${RUNTIME_ERROR_CLASSES.size} x %ScrVt], ptr @scr_error_vts, i64 0, i64 ${iv.kind}, i32 ${field})${field === 1 ? ` ; ${iv.lib}` : ""}`,
         );
@@ -2004,17 +2026,17 @@ class LlEmitter {
             tr.push(`  call void @scr_promise_fulfill_str(ptr %pr, ptr %r) ; moves in`);
             break;
           default: {
-            const v = vAdapters(this, ret);
+            const v = vAdapters(this.shapeHost, ret);
             this.declare(`declare void @scr_promise_fulfill_ref(ptr, ptr, ptr, ptr, ptr)`);
             tr.push(
-              `  call void @scr_promise_fulfill_ref(ptr %pr, ptr %r, ptr ${v.retain}, ptr ${v.release}, ptr ${traceArg(this, ret)})`,
+              `  call void @scr_promise_fulfill_ref(ptr %pr, ptr %r, ptr ${v.retain}, ptr ${v.release}, ptr ${traceArg(this.shapeHost, ret)})`,
             );
           }
         }
         tr.push(`  ret void`, `thrown:`);
         if (ret.kind !== "void" && isRefCounted(ret)) {
           // An escaping throw means %r is the never-read dummy (NULL).
-          tr.push(`  call void ${releaseSym(this, ret)}(ptr %r)`);
+          tr.push(`  call void ${releaseSym(this.shapeHost, ret)}(ptr %r)`);
         }
         tr.push(`  ret void`, `}`, ``);
       }
@@ -2151,7 +2173,7 @@ class LlEmitter {
           tr.push(`  call void @scr_gen_out_bool(ptr %g, i1 %r)`, `  br label %done`);
           break;
         default: {
-          const v = vAdapters(this, ret);
+          const v = vAdapters(this.shapeHost, ret);
           this.declare(`declare void @scr_gen_out_ref(ptr, ptr, ptr)`);
           tr.push(`  call void @scr_gen_out_ref(ptr %g, ptr %r, ptr ${v.release})`, `  br label %done`);
         }
@@ -2167,7 +2189,7 @@ class LlEmitter {
         `dropdummy:`,
       );
       if (ret.kind !== "void" && isRefCounted(ret)) {
-        tr.push(`  call void ${releaseSym(this, ret)}(ptr %r) ; unwound: the never-read dummy`);
+        tr.push(`  call void ${releaseSym(this.shapeHost, ret)}(ptr %r) ; unwound: the never-read dummy`);
       }
       tr.push(`  br label %done`, `done:`, `  ret void`, `}`, ``);
       }
@@ -2189,12 +2211,12 @@ class LlEmitter {
         const settleKey = `ags:${typeKey(genT)}`;
         if (!this.resolveThunks.has(settleKey)) {
           this.resolveThunks.set(settleKey, settleAsync);
-          const adapters = vAdapters(this, resultT);
+          const adapters = vAdapters(this.shapeHost, resultT);
           this.resolveThunkDefs.push(
             `define internal void @${settleAsync}(ptr %g, ptr %p) ${FN_ATTRS} {`,
             `entry:`,
             `  %r = call ptr @${build}(ptr %g)`,
-            `  call void @scr_promise_fulfill_ref(ptr %p, ptr %r, ptr ${adapters.retain}, ptr ${adapters.release}, ptr ${traceArg(this, resultT)})`,
+            `  call void @scr_promise_fulfill_ref(ptr %p, ptr %r, ptr ${adapters.retain}, ptr ${adapters.release}, ptr ${traceArg(this.shapeHost, resultT)})`,
             `  ret void`,
             `}`,
             ``,
@@ -2220,7 +2242,7 @@ class LlEmitter {
           this.declare(`declare void @scr_closure_release(ptr)`);
           dr.push(`  call void @scr_closure_release(ptr %dv${i})`);
         } else {
-          dr.push(`  call void ${releaseSym(this, pType)}(ptr %dv${i})`);
+          dr.push(`  call void ${releaseSym(this.shapeHost, pType)}(ptr %dv${i})`);
         }
       });
       dr.push(`  call void @free(ptr %ap)`, `  ret void`, `}`, ``);
@@ -2308,19 +2330,19 @@ class LlEmitter {
   }
 
   /** Registers an owned refcounted value on the current statement frame. */
-  private own(v: LlValue): LlValue {
+  own(v: LlValue): LlValue {
     if (isRefCounted(v.type)) this.currentFrame().push(v);
     return v;
   }
 
   /** Registers a SLOT whose current contents the frame owns (conditional
    * results: optional chains, branch joins that park ownership). */
-  private ownSlot(slot: string, type: IrType): void {
+  ownSlot(slot: string, type: IrType): void {
     if (isRefCounted(type)) this.currentFrame().push({ name: slot, type, slot: true });
   }
 
   /** Strike a refcounted temp from its frame: ownership is being moved. */
-  private moveTemp(v: LlValue): void {
+  moveTemp(v: LlValue): void {
     if (!isRefCounted(v.type)) return;
     for (let i = this.frames.length - 1; i >= 0; i--) {
       const idx = this.frames[i]!.findIndex((e) => e.name === v.name);
@@ -2334,19 +2356,19 @@ class LlEmitter {
 
   /** The retained (+1) read of a refcounted value — type-directed through
    * the `_v` table (immortals skip, exactly the C retain calls). */
-  private retainValue(name: string, type: IrType): string {
+  retainValue(name: string, type: IrType): string {
     const t = this.B.tmp();
-    this.B.line(`${t} = call ptr ${retainSym(this, type)}(ptr ${name})`);
+    this.B.line(`${t} = call ptr ${retainSym(this.shapeHost, type)}(ptr ${name})`);
     return t;
   }
 
   /** The release call for one owned refcounted value — type-directed like
    * releaseCallC (all runtime releases are NULL-tolerant). */
-  private releaseValue(name: string, type: IrType): void {
-    this.B.line(`call void ${releaseSym(this, type)}(ptr ${name})`);
+  releaseValue(name: string, type: IrType): void {
+    this.B.line(`call void ${releaseSym(this.shapeHost, type)}(ptr ${name})`);
   }
 
-  private releaseFrame(frame: LlValue[]): void {
+  releaseFrame(frame: LlValue[]): void {
     for (const v of frame) {
       if (v.slot) {
         const t = this.B.tmp();
@@ -2443,7 +2465,7 @@ class LlEmitter {
    * (per the may-throw analysis), test the pending flag and unwind. The
    * call's result temp must join its frame BEFORE this runs so the unwind
    * releases the dummy (NULL for refcounted kinds) harmlessly. */
-  private emitPendingCheck(): void {
+  emitPendingCheck(): void {
     const B = this.B;
     if (B.isTerminated()) return;
     this.declare(`declare zeroext i1 @scr_exc_pending()`);
@@ -2461,7 +2483,7 @@ class LlEmitter {
    * the `throw` statement's kind dispatch (stmts.ts's), shared with
    * every synthetic thrower. Ownership of a refcounted payload must have
    * been moved off its frame by the caller. */
-  private emitThrowValue(v: LlValue): void {
+  emitThrowValue(v: LlValue): void {
     const B = this.B;
     const t = v.type;
     if (t.kind === "date") {
@@ -2479,25 +2501,25 @@ class LlEmitter {
       // Hierarchy instances carry a vtable word: the OBJ kind keeps the
       // dynamic class inspectable (catch-binding instanceof, the uncaught
       // printer's "name: message" for Error instances).
-      const rc = vAdapters(this, t);
+      const rc = vAdapters(this.shapeHost, t);
       this.declare(`declare void @scr_throw_obj(ptr, ptr, ptr, ptr)`);
-      B.line(`call void @scr_throw_obj(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this, t)})`);
+      B.line(`call void @scr_throw_obj(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this.shapeHost, t)})`);
     } else if (t.kind === "symbol" || t.kind === "bigint" || t.kind === "func" || t.kind === "classval") {
-      const rc = vAdapters(this, t);
+      const rc = vAdapters(this.shapeHost, t);
       this.declare(`declare void @scr_throw_primitive_ref(ptr, ptr, ptr, ptr)`);
       B.line(`call void @scr_throw_primitive_ref(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr null)`);
     } else if (t.kind === "dyn" || t.kind === "jsval") {
-      const rc = vAdapters(this, t);
+      const rc = vAdapters(this.shapeHost, t);
       const test = t.kind === "dyn" ? "scr_dyn_is_object" : "scr_jsval_is_object";
       this.declare(`declare zeroext i1 @${test}(ptr)`);
       this.declare(`declare void @scr_throw_ref_classified(ptr, ptr, ptr, ptr, i1 zeroext)`);
       const object = B.tmp();
       B.line(`${object} = call zeroext i1 @${test}(ptr ${v.name})`);
-      B.line(`call void @scr_throw_ref_classified(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this, t)}, i1 zeroext ${object})`);
+      B.line(`call void @scr_throw_ref_classified(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this.shapeHost, t)}, i1 zeroext ${object})`);
     } else {
-      const rc = vAdapters(this, t);
+      const rc = vAdapters(this.shapeHost, t);
       this.declare(`declare void @scr_throw_ref(ptr, ptr, ptr, ptr)`);
-      B.line(`call void @scr_throw_ref(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this, t)})`);
+      B.line(`call void @scr_throw_ref(ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this.shapeHost, t)})`);
     }
   }
 
@@ -2505,7 +2527,7 @@ class LlEmitter {
    * union arms): one fcmp for f64 (NaN and both zeros compare !one), a
    * length load for strings, an inline tag switch for unions, `!= null`
    * for the always-truthy object kinds (JS: [] and {} are truthy). */
-  private truthy(v: LlValue): string {
+  truthy(v: LlValue): string {
     const B = this.B;
     if (v.type.kind === "union") {
       // The ARM value's ToBoolean: an inline tag switch (the C emitter's
@@ -2611,7 +2633,7 @@ class LlEmitter {
   // ── union plumbing ──────────────────────────────────────────────────────
 
   /** Loads a union box's tag (i32). */
-  private unionTag(uName: string): string {
+  unionTag(uName: string): string {
     const p = this.B.tmp();
     const t = this.B.tmp();
     this.B.line(`${p} = getelementptr inbounds %ScrUnion, ptr ${uName}, i64 0, i32 1`);
@@ -2621,7 +2643,7 @@ class LlEmitter {
 
   /** The BORROWED payload pointer of a ref arm (scr_union_peek inlined —
    * the runtime's is a static inline). */
-  private unionPeek(uName: string): string {
+  unionPeek(uName: string): string {
     const p = this.B.tmp();
     const t = this.B.tmp();
     this.B.line(`${p} = getelementptr inbounds %ScrUnion, ptr ${uName}, i64 0, i32 5`);
@@ -2632,7 +2654,7 @@ class LlEmitter {
   /** Emits `switch` over a union's tag with one block per arm; each arm
    * body must TERMINATE its block (the callers branch to a join). The
    * default block is the C emitter's invalid-tag abort. */
-  private unionTagSwitch(uName: string, def: IrUnionDef, arm: (armType: IrType, tag: number) => void): void {
+  unionTagSwitch(uName: string, def: IrUnionDef, arm: (armType: IrType, tag: number) => void): void {
     const B = this.B;
     const tag = this.unionTag(uName);
     const bad = B.newLabel("u.bad");
@@ -2653,7 +2675,7 @@ class LlEmitter {
   /** The +1 extraction of a union's single narrowed arm (unionNarrow /
    * the nullish-family reads): scalars via the runtime getters, ref arms
    * a retained peek. */
-  private unionExtract(uName: string, arm: IrType): string {
+  unionExtract(uName: string, arm: IrType): string {
     const B = this.B;
     if (arm.kind === "f64") {
       const t = B.tmp();
@@ -2673,7 +2695,7 @@ class LlEmitter {
   /** Constructs a union box around an OWNED (+1, already moved) value —
    * the scr_union_new_* dispatch of unionWrap and the wrap-into-join
    * sites (shift). */
-  private unionNewOwned(tag: number, v: LlValue): string {
+  unionNewOwned(tag: number, v: LlValue): string {
     const B = this.B;
     const t = B.tmp();
     if (v.type.kind === "f64") {
@@ -2686,17 +2708,17 @@ class LlEmitter {
       B.line(`${t} = call ptr @scr_union_new_bool(i32 ${tag}, i1 ${v.name})`);
       return t;
     }
-    const rc = vAdapters(this, v.type);
+    const rc = vAdapters(this.shapeHost, v.type);
     this.declare(`declare ptr @scr_union_new_ref(i32, ptr, ptr, ptr, ptr)`);
     B.line(
-      `${t} = call ptr @scr_union_new_ref(i32 ${tag}, ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this, v.type)})`,
+      `${t} = call ptr @scr_union_new_ref(i32 ${tag}, ptr ${v.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this.shapeHost, v.type)})`,
     );
     return t;
   }
 
   // ── class plumbing ──────────────────────────────────────────────────────
 
-  private classMetaOf(className: string): LlClassMeta {
+  classMetaOf(className: string): LlClassMeta {
     const meta = this.classMeta.get(className);
     if (!meta) throw new InternalCompilerError(`llvm emitter bug: unknown class ${className}`);
     return meta;
@@ -2706,7 +2728,7 @@ class LlEmitter {
    * 1 on hierarchy members, then the flattened field list. Runtime error
    * classes GEP through %ScrError (their structs live in the runtime; the
    * def's [name, message, %code, %cause] order matches the layout). */
-  private classFieldPtr(objName: string, className: string, field: string): { ptr: string; type: IrType } {
+  classFieldPtr(objName: string, className: string, field: string): { ptr: string; type: IrType } {
     const meta = this.classMetaOf(className);
     const { index, type } = classFieldIndex(meta, field);
     const p = this.B.tmp();
@@ -2718,7 +2740,7 @@ class LlEmitter {
 
   /** `o->vt->pre` — the dynamic class's preorder number (borrowed object;
    * the static class names which struct spelling carries the vt word). */
-  private loadVtPre(objName: string, staticClassName: string): string {
+  loadVtPre(objName: string, staticClassName: string): string {
     const B = this.B;
     const vtp = B.tmp();
     const vt = B.tmp();
@@ -2734,7 +2756,7 @@ class LlEmitter {
   /** The class object's static symbol (classes as values), registering it
    * for assembly on first use and interning the .name literal while the
    * table is still open (the regex-literal discipline). */
-  private classObjSym(className: string): string {
+  classObjSym(className: string): string {
     if (!this.classObjs.has(className)) {
       const meta = this.classMetaOf(className);
       this.classObjs.set(className, { nameSym: this.internLiteral(meta.def.jsName ?? "") });
@@ -2744,14 +2766,14 @@ class LlEmitter {
 
   // ── record plumbing ─────────────────────────────────────────────────────
 
-  private recordShape(shapeId: string): IrRecordShape {
+  recordShape(shapeId: string): IrRecordShape {
     const shape = this.recordsById.get(shapeId);
     if (!shape) throw new InternalCompilerError(`llvm emitter bug: unknown record shape ${shapeId}`);
     return shape;
   }
 
   /** The field-slot pointer of a record member (rc header at index 0). */
-  private recordFieldPtr(objName: string, shapeId: string, field: string): { ptr: string; type: IrType } {
+  recordFieldPtr(objName: string, shapeId: string, field: string): { ptr: string; type: IrType } {
     const shape = this.recordShape(shapeId);
     const idx = shape.fields.findIndex((f) => f.name === field);
     if (idx < 0) throw new InternalCompilerError(`llvm emitter bug: unknown field ${field} on shape ${shapeId}`);
@@ -2763,7 +2785,7 @@ class LlEmitter {
   }
 
   /** The overflow map's slot pointer on an index-signature shape. */
-  private recordOvfPtr(objName: string, shapeId: string): string {
+  recordOvfPtr(objName: string, shapeId: string): string {
     const shape = this.recordShape(shapeId);
     if (!shape.indexValue) throw new InternalCompilerError(`llvm emitter bug: shape ${shapeId} has no overflow map`);
     const p = this.B.tmp();
@@ -2776,7 +2798,7 @@ class LlEmitter {
   }
 
   /** Loads a record field (i8-stored bools trunc to i1). */
-  private loadField(ptr: string, t: IrType): string {
+  loadField(ptr: string, t: IrType): string {
     const B = this.B;
     const fieldTy = llFieldType(t);
     const raw = B.tmp();
@@ -2788,7 +2810,7 @@ class LlEmitter {
   }
 
   /** Stores a record field (i1 zext to the i8 storage). */
-  private storeField(ptr: string, t: IrType, value: string): void {
+  storeField(ptr: string, t: IrType, value: string): void {
     const B = this.B;
     const fieldTy = llFieldType(t);
     if (fieldTy !== "i8") {
@@ -2804,7 +2826,7 @@ class LlEmitter {
 
   /** A binding's storage: a module global, a plain local slot, or a boxed
    * local (the slot holds the capture BOX; access goes through it). */
-  private binding(id: string): { kind: "global" | "local" | "boxed"; slot: string; type: IrType; local?: IrLocal } {
+  binding(id: string): { kind: "global" | "local" | "boxed"; slot: string; type: IrType; local?: IrLocal } {
     const local = this.currentLocals.get(id);
     if (local) {
       return {
@@ -2827,13 +2849,13 @@ class LlEmitter {
   }
 
   /** Loads a boxed binding's box pointer out of its slot. */
-  private loadBox(slot: string): string {
+  loadBox(slot: string): string {
     const b = this.B.tmp();
     this.B.line(`${b} = load ptr, ptr ${slot}`);
     return b;
   }
 
-  private boxGet(box: string, t: IrType): string {
+  boxGet(box: string, t: IrType): string {
     const B = this.B;
     const acc = boxAccess(t);
     const r = B.tmp();
@@ -2851,7 +2873,7 @@ class LlEmitter {
   }
 
   /** scr_box_set_* — the ref form takes ownership of the passed value. */
-  private boxSet(box: string, t: IrType, value: string): void {
+  boxSet(box: string, t: IrType, value: string): void {
     const B = this.B;
     const acc = boxAccess(t);
     if (acc === "f64") {
@@ -2866,7 +2888,7 @@ class LlEmitter {
     }
   }
 
-  private retainBox(box: string): string {
+  retainBox(box: string): string {
     this.needsRetainBox = true;
     const t = this.B.tmp();
     this.B.line(`${t} = call ptr @sc_retain_box(ptr ${box})`);
@@ -2880,7 +2902,7 @@ class LlEmitter {
     const B = this.B;
     const acc = boxAccess(t);
     const cell = B.tmp();
-    B.line(`${cell} = ${arrNewCall(this, t, "1")} ; TDZ cell`);
+    B.line(`${cell} = ${arrNewCall(this.shapeHost, t, "1")} ; TDZ cell`);
     this.arrPush(cell, acc === "bool" ? "bool" : "f64", value);
     this.declare(`declare void @scr_box_set_ref(ptr, ptr)`);
     B.line(`call void @scr_box_set_ref(ptr ${box}, ptr ${cell})`);
@@ -2902,7 +2924,7 @@ class LlEmitter {
     return slotv;
   }
 
-  private checkGlobalTdz(id: string): void {
+  checkGlobalTdz(id: string): void {
     const name = this.tdzGlobals.get(id);
     if (name === undefined) return;
     const B = this.B;
@@ -2929,7 +2951,7 @@ class LlEmitter {
     B.startBlock(lk);
   }
 
-  private tdzBoxRead(box: string, t: IrType, name: string): string {
+  tdzBoxRead(box: string, t: IrType, name: string): string {
     const slotv = this.checkTdz(box, name);
     const B = this.B;
     const acc = boxAccess(t);
@@ -2947,7 +2969,7 @@ class LlEmitter {
 
   /** Declaration stores initialize an empty TDZ box. Later stores check
    * it after the RHS and update scalar cells in place. References move in. */
-  private writeBindingBox(box: string, local: IrLocal, value: string, initializes = false, borrowed = false): void {
+  writeBindingBox(box: string, local: IrLocal, value: string, initializes = false, borrowed = false): void {
     if (local.tdz) {
       const first = initializes || !local.mutable;
       const slotv = first ? null : this.checkTdz(box, local.name);
@@ -2974,7 +2996,7 @@ class LlEmitter {
    * the fiber eagerly to its first suspension and returns the promise);
    * generator bodies via theirs (which only ALLOCATES the suspended
    * fiber and returns the generator object) — CEmitter.callTargetC. */
-  private callTarget(fnName: string): string {
+  callTarget(fnName: string): string {
     const fn = this.fnByName.get(fnName);
     if (fn?.generator !== undefined) return mangleGenSpawn(fnName);
     if (fn?.async === true) return mangleAsyncSpawn(fnName);
@@ -2984,7 +3006,7 @@ class LlEmitter {
   /** Queue the current wasm coroutine and suspend it. The runtime decides
    * whether the promise waiter list or the ready FIFO owns the continuation;
    * LLVM keeps all live locals in the coroutine frame. */
-  private emitWasiSuspend(promise: string | null): void {
+  emitWasiSuspend(promise: string | null): void {
     const coro = this.currentWasiCoro;
     if (coro === null) throw new InternalCompilerError("llvm emitter bug: wasm suspension outside async body");
     if (promise === null) {
@@ -2999,7 +3021,7 @@ class LlEmitter {
 
   /** Suspend after a target-specific runtime helper already queued the
    * continuation (used by module awaits, which skip the hop when settled). */
-  private emitWasiSuspendPrepared(): void {
+  emitWasiSuspendPrepared(): void {
     const coro = this.currentWasiCoro;
     if (coro === null) throw new InternalCompilerError("llvm emitter bug: wasm suspension outside async body");
     const save = this.B.tmp();
@@ -3036,7 +3058,7 @@ class LlEmitter {
           return;
         default:
           this.declare(`declare void @scr_gen_out_ref(ptr, ptr, ptr)`);
-          this.B.line(`call void @scr_gen_out_ref(ptr ${gen}, ptr ${v!.name}, ptr ${vAdapters(this, ret).release})`);
+          this.B.line(`call void @scr_gen_out_ref(ptr ${gen}, ptr ${v!.name}, ptr ${vAdapters(this.shapeHost, ret).release})`);
           return;
       }
     }
@@ -3062,10 +3084,10 @@ class LlEmitter {
         this.B.line(`call void @scr_promise_fulfill_str(ptr ${pr}, ptr ${v!.name}) ; moves in`);
         break;
       default: {
-        const rc = vAdapters(this, ret);
+        const rc = vAdapters(this.shapeHost, ret);
         this.declare(`declare void @scr_promise_fulfill_ref(ptr, ptr, ptr, ptr, ptr)`);
         this.B.line(
-          `call void @scr_promise_fulfill_ref(ptr ${pr}, ptr ${v!.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this, ret)})`,
+          `call void @scr_promise_fulfill_ref(ptr ${pr}, ptr ${v!.name}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(this.shapeHost, ret)})`,
         );
       }
     }
@@ -3164,7 +3186,7 @@ class LlEmitter {
       const slot = `%${mangleLocal(p.localId)}`;
       if (local.boxed) {
         const box = B.tmp();
-        B.line(`${box} = ${boxNewCall(this, p.type)} ; ${p.name} (boxed param)`);
+        B.line(`${box} = ${boxNewCall(this.shapeHost, p.type)} ; ${p.name} (boxed param)`);
         this.boxSet(box, p.type, `%p_${mangleLocal(p.localId)}`);
         B.line(`store ptr ${box}, ptr ${slot}`);
         fnScope.push({ slot, type: p.type, boxed: true });
@@ -3262,7 +3284,7 @@ class LlEmitter {
     if (!ended) this.releaseScope(scope);
   }
 
-  private emitStmt(s: IrStmt): void {
+  emitStmt(s: IrStmt): void {
     const previous = this.B.debugLocation;
     this.B.debugLocation = this.debug?.location(s.loc, this.debugScope) ?? null;
     try {
@@ -3288,7 +3310,7 @@ class LlEmitter {
           const boxNew =
             b.local!.tdz === true && boxAccess(b.type) !== "ref"
               ? (this.declare(`declare ptr @scr_box_new(i32)`), `call ptr @scr_box_new(i32 3)`)
-              : boxNewCall(this, b.type);
+              : boxNewCall(this.shapeHost, b.type);
           const box = B.tmp();
           B.line(`${box} = ${boxNew} ; let ${b.local!.name} (boxed)`);
           B.line(`store ptr ${box}, ptr ${b.slot}`);
@@ -3611,7 +3633,7 @@ class LlEmitter {
           kind: "loop",
           brkLabel: le,
           contLabel: lc,
-          ...(s.labels !== undefined && { labels: s.labels }),
+          labels: s.labels,
           frameDepth: this.frames.length,
           scopeDepth: this.scopes.length,
           finallyDepth: this.finallyStack.length,
@@ -3633,7 +3655,7 @@ class LlEmitter {
           kind: "loop",
           brkLabel: le,
           contLabel: lc,
-          ...(s.labels !== undefined && { labels: s.labels }),
+          labels: s.labels,
           frameDepth: this.frames.length,
           scopeDepth: this.scopes.length,
           finallyDepth: this.finallyStack.length,
@@ -3691,7 +3713,7 @@ class LlEmitter {
           kind: "loop",
           brkLabel: le,
           contLabel: lu,
-          ...(s.labels !== undefined && { labels: s.labels }),
+          labels: s.labels,
           frameDepth: this.frames.length,
           scopeDepth: this.scopes.length,
           finallyDepth: this.finallyStack.length,
@@ -3705,7 +3727,7 @@ class LlEmitter {
             const slot = `%${mangleLocal(initLocal.id)}`;
             const fresh = B.tmp();
             const old = B.tmp();
-            B.line(`${fresh} = ${boxNewCall(this, initLocal.type)} ; per-iteration ${initLocal.name}`);
+            B.line(`${fresh} = ${boxNewCall(this.shapeHost, initLocal.type)} ; per-iteration ${initLocal.name}`);
             B.line(`${old} = load ptr, ptr ${slot}`);
             const val = this.boxGet(old, initLocal.type); // ref: +1 out
             this.boxSet(fresh, initLocal.type, val); // takes ownership
@@ -3759,7 +3781,7 @@ class LlEmitter {
           kind: "loop",
           brkLabel: le,
           contLabel: lu,
-          ...(s.labels !== undefined && { labels: s.labels }),
+          labels: s.labels,
           frameDepth: this.frames.length,
           scopeDepth: this.scopes.length,
           finallyDepth: this.finallyStack.length,
@@ -3782,7 +3804,7 @@ class LlEmitter {
           // fresh const binding. The box takes ownership of a ref element's
           // +1 and is released with the iteration's scope.
           const box = B.tmp();
-          B.line(`${box} = ${boxNewCall(this, elem)} ; per-iteration ${localInfo.name}`);
+          B.line(`${box} = ${boxNewCall(this.shapeHost, elem)} ; per-iteration ${localInfo.name}`);
           this.boxSet(box, elem, cur);
           B.line(`store ptr ${box}, ptr ${slot}`);
           this.scopes[this.scopes.length - 1]!.push({ slot, type: elem, boxed: true });
@@ -4155,7 +4177,7 @@ class LlEmitter {
       kind: "switch",
       brkLabel: end,
       contLabel: null,
-      ...(s.labels !== undefined && { labels: s.labels }),
+      labels: s.labels,
       frameDepth: this.frames.length,
       scopeDepth: this.scopes.length,
       finallyDepth: this.finallyStack.length,
@@ -4193,7 +4215,7 @@ class LlEmitter {
    * branch and moves the result into `slot`: the chosen value's ownership
    * transfers, every other temp the arm allocated releases inside the
    * branch. The shared core of ternary/logical. CEmitter.emitBranchInto. */
-  private emitBranchInto(slot: string, expr: IrExpr): void {
+  emitBranchInto(slot: string, expr: IrExpr): void {
     this.frames.push([]);
     const v = this.emitExpr(expr);
     this.moveTemp(v);
@@ -4203,39 +4225,31 @@ class LlEmitter {
 
   // ── expressions ─────────────────────────────────────────────────────────
 
-  /** One audited escape hatch for the type-only boundary used by the
-   * extracted expression modules. LlEmitter remains the sole owner of the
-   * mutable emission state; the context exposes only the operations those
-   * modules require. */
-  private expressionContext(): LlvmEmitterContext {
-    return this as unknown as LlvmEmitterContext;
+  emitLiteralExpr(e: ExprOf<"numLit" | "boolLit" | "strLit" | "moduleNsRef" | "unitLit" | "varRef">): LlValue {
+    return emitLiteralExpr(this, e);
   }
 
-  private emitLiteralExpr(e: ExprOf<"numLit" | "boolLit" | "strLit" | "moduleNsRef" | "unitLit" | "varRef">): LlValue {
-    return emitLiteralExpr(this.expressionContext(), e);
-  }
-
-  private emitOperatorExpr(e: ExprOf<"bin" | "unary" | "incDec" | "fieldIncDec" | "assignExpr" | "seqExpr">): LlValue {
+  emitOperatorExpr(e: ExprOf<"bin" | "unary" | "incDec" | "fieldIncDec" | "assignExpr" | "seqExpr">): LlValue {
     if (e.kind === "seqExpr") {
       // Saved operands can feed later call arguments. Transfer ownership
       // to this expression's frame so they survive those reads and still
       // die on the path that created them, including inside lazy branches.
       this.scopes.push([]);
-      const result = emitOperatorExpr(this.expressionContext(), e);
+      const result = emitOperatorExpr(this, e);
       for (const local of this.scopes.pop()!) {
         this.currentFrame().push({ name: local.slot, type: local.type, slot: true, ...(local.boxed ? { boxed: true } : {}) });
       }
       return result;
     }
-    return emitOperatorExpr(this.expressionContext(), e);
+    return emitOperatorExpr(this, e);
   }
 
-  private emitControlExpr(e: ExprOf<"dynDestrCheck" | "dynIterN" | "toBool" | "logical" | "ternary" | "optChain" | "chainRecv" | "orDefault" | "nullish">): LlValue {
-    return emitControlExpr(this.expressionContext(), e);
+  emitControlExpr(e: ExprOf<"dynDestrCheck" | "dynIterN" | "toBool" | "logical" | "ternary" | "optChain" | "chainRecv" | "orDefault" | "nullish">): LlValue {
+    return emitControlExpr(this, e);
   }
 
-  private emitStringExpr(e: ExprOf<"strConcat" | "strEq" | "strCmp" | "toString" | "strIntrinsic" | "regexLit" | "templateStrings" | "regexIntrinsic">): LlValue {
-    return emitStringExpr(this.expressionContext(), e);
+  emitStringExpr(e: ExprOf<"strConcat" | "strEq" | "strCmp" | "toString" | "strIntrinsic" | "regexLit" | "templateStrings" | "regexIntrinsic">): LlValue {
+    return emitStringExpr(this, e);
   }
 
   /**
@@ -4244,7 +4258,7 @@ class LlEmitter {
    * the statement frame while the destination relinquishes its CURRENT
    * value, making the snapshot unique unless a real observable alias exists.
    */
-  private emitStringSelfConcatAssign(
+  emitStringSelfConcatAssign(
     localId: string,
     left: IrExpr,
     suffix: IrExpr,
@@ -4279,233 +4293,233 @@ class LlEmitter {
     return result;
   }
 
-  private emitContainerExpr(e: ExprOf<"arrayLit" | "arrayNewLen" | "arrayGet" | "arrayHas" | "arrayState" | "arrIntrinsic" | "bytesNew" | "bytesIntrinsic" | "mapNew" | "mapIntrinsic" | "setIntrinsic" | "setNew">): LlValue {
-    return emitContainerExpr(this.expressionContext(), e);
+  emitContainerExpr(e: ExprOf<"arrayLit" | "arrayNewLen" | "arrayGet" | "arrayHas" | "arrayState" | "arrIntrinsic" | "bytesNew" | "bytesIntrinsic" | "mapNew" | "mapIntrinsic" | "setIntrinsic" | "setNew">): LlValue {
+    return emitContainerExpr(this, e);
   }
 
-  private emitCallExpr(e: ExprOf<"call" | "ffiCall" | "closure" | "callValue" | "selfRef" | "new" | "classRef" | "newValue" | "instanceOfValue" | "promiseVoidWiden" | "upcast" | "downcast" | "instanceOf" | "virtualCall">): LlValue {
-    return emitCallExpr(this.expressionContext(), e);
+  emitCallExpr(e: ExprOf<"call" | "ffiCall" | "closure" | "callValue" | "selfRef" | "new" | "classRef" | "newValue" | "instanceOfValue" | "promiseVoidWiden" | "upcast" | "downcast" | "instanceOf" | "virtualCall">): LlValue {
+    return emitCallExpr(this, e);
   }
 
-  private emitRecordExpr(e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys" | "recordOvfHas">): LlValue {
-    return emitRecordExpr(this.expressionContext(), e);
+  emitRecordExpr(e: ExprOf<"fieldGet" | "recordGet" | "recordLit" | "recordClone" | "recordKeyGet" | "recordOvfKeys" | "recordOvfHas">): LlValue {
+    return emitRecordExpr(this, e);
   }
 
-  private emitDynamicExpr(e: ExprOf<"dynFrom" | "dynFromJsval" | "dynCall" | "dynInvoke" | "dynArrLit" | "dynObjLit" | "unionWrap" | "unionNarrow" | "unionDisc" | "unionKeyGet" | "unionIsTag" | "dynKeyGet" | "dynHasKey" | "dynScalarEq" | "dynTest" | "unionEq" | "unionFuncEq" | "caughtTest" | "caughtCheck" | "caughtNarrow" | "caughtToDyn">): LlValue {
-    return emitDynamicExpr(this.expressionContext(), e);
+  emitDynamicExpr(e: ExprOf<"dynFrom" | "dynFromJsval" | "dynCall" | "dynInvoke" | "dynArrLit" | "dynObjLit" | "unionWrap" | "unionNarrow" | "unionDisc" | "unionKeyGet" | "unionIsTag" | "dynKeyGet" | "dynHasKey" | "dynScalarEq" | "dynTest" | "unionEq" | "unionFuncEq" | "caughtTest" | "caughtCheck" | "caughtNarrow" | "caughtToDyn">): LlValue {
+    return emitDynamicExpr(this, e);
   }
 
-  private emitIntrinsicExpr(e: ExprOf<"intrinsic">): LlValue {
-    return emitIntrinsicExpr(this.expressionContext(), e);
+  emitIntrinsicExpr(e: ExprOf<"intrinsic">): LlValue {
+    return emitIntrinsicExpr(this, e);
   }
 
-  private emitSerializationExpr(e: ExprOf<"jsonStringify" | "dynCheck">): LlValue {
-    return emitSerializationExpr(this.expressionContext(), e);
+  emitSerializationExpr(e: ExprOf<"jsonStringify" | "dynCheck">): LlValue {
+    return emitSerializationExpr(this, e);
   }
 
-  private emitAsyncExpr(e: ExprOf<"yieldExpr" | "genResume" | "awaitExpr" | "awaitUnionExpr" | "newPromise" | "promiseWithResolvers">): LlValue {
-    return emitAsyncExpr(this.expressionContext(), e);
+  emitAsyncExpr(e: ExprOf<"yieldExpr" | "genResume" | "awaitExpr" | "awaitUnionExpr" | "newPromise" | "promiseWithResolvers">): LlValue {
+    return emitAsyncExpr(this, e);
   }
 
-  private emitJsInteropExpr(e: ExprOf<"jsMarshal" | "jsOp" | "jsExit" | "jsBridgePromise">): LlValue {
-    return emitJsInteropExpr(this.expressionContext(), e);
+  emitJsInteropExpr(e: ExprOf<"jsMarshal" | "jsOp" | "jsExit" | "jsBridgePromise">): LlValue {
+    return emitJsInteropExpr(this, e);
   }
 
-  private emitExpr(e: IrExpr): LlValue {
-    return emitExpr(this.expressionContext(), e);
+  emitExpr(e: IrExpr): LlValue {
+    return emitExpr(this, e);
   }
 
-  private emitJsMarshal(e: IrExpr & { kind: "jsMarshal" }): LlValue {
-    return emitJsMarshal(this.expressionContext(), e);
+  emitJsMarshal(e: IrExpr & { kind: "jsMarshal" }): LlValue {
+    return emitJsMarshal(this, e);
   }
 
-  private emitJsOp(e: IrExpr & { kind: "jsOp" }): LlValue {
-    return emitJsOp(this.expressionContext(), e);
+  emitJsOp(e: IrExpr & { kind: "jsOp" }): LlValue {
+    return emitJsOp(this, e);
   }
 
-  private emitJsExit(e: IrExpr & { kind: "jsExit" }): LlValue {
-    return emitJsExit(this.expressionContext(), e);
+  emitJsExit(e: IrExpr & { kind: "jsExit" }): LlValue {
+    return emitJsExit(this, e);
   }
 
-  private islandAdapter(arity: number, retKind: "void" | "jsval" | "f64" | "bool" | "string"): string {
-    return islandAdapter(this.expressionContext(), arity, retKind);
+  islandAdapter(arity: number, retKind: "void" | "jsval" | "f64" | "bool" | "string"): string {
+    return islandAdapter(this, arity, retKind);
   }
 
-  private islandTypedAdapter(fn: IrType & { kind: "func" }): string {
-    return islandTypedAdapter(this.expressionContext(), fn);
+  islandTypedAdapter(fn: IrType & { kind: "func" }): string {
+    return islandTypedAdapter(this, fn);
   }
 
-  private dynKind(d: string): string {
-    return dynKind(this.expressionContext(), d);
+  dynKind(d: string): string {
+    return dynKind(this, d);
   }
 
-  private raceAdapterFor(from: IrType, to: IrType): string {
-    return raceAdapterFor(this.expressionContext(), from, to);
+  raceAdapterFor(from: IrType, to: IrType): string {
+    return raceAdapterFor(this, from, to);
   }
 
-  private genResultThunkFor(genT: IrType & { kind: "generator" }, recT: IrType & { kind: "record" }): string {
-    return genResultThunkFor(this.expressionContext(), genT, recT);
+  genResultThunkFor(genT: IrType & { kind: "generator" }, recT: IrType & { kind: "record" }): string {
+    return genResultThunkFor(this, genT, recT);
   }
 
-  private childExitThunkFor(param: IrType): string {
-    return childExitThunkFor(this.expressionContext(), param);
+  childExitThunkFor(param: IrType): string {
+    return childExitThunkFor(this, param);
   }
 
-  private execFileThunkFor(cbT: IrType & { kind: "func" }): string {
-    return execFileThunkFor(this.expressionContext(), cbT);
+  execFileThunkFor(cbT: IrType & { kind: "func" }): string {
+    return execFileThunkFor(this, cbT);
   }
 
-  private ipcMessageThunkFor(cbT: IrType & { kind: "func" }): string {
-    return ipcMessageThunkFor(this.expressionContext(), cbT);
+  ipcMessageThunkFor(cbT: IrType & { kind: "func" }): string {
+    return ipcMessageThunkFor(this, cbT);
   }
 
-  private ipcSendThunkFor(cbT: IrType & { kind: "func" }): string {
-    return ipcSendThunkFor(this.expressionContext(), cbT);
+  ipcSendThunkFor(cbT: IrType & { kind: "func" }): string {
+    return ipcSendThunkFor(this, cbT);
   }
 
-  private childExitSignalThunkFor(codeParam: IrType, sigParam: IrType): string {
-    return childExitSignalThunkFor(this.expressionContext(), codeParam, sigParam);
+  childExitSignalThunkFor(codeParam: IrType, sigParam: IrType): string {
+    return childExitSignalThunkFor(this, codeParam, sigParam);
   }
 
-  private childDataThunkFor(param: IrType): string {
-    return childDataThunkFor(this.expressionContext(), param);
+  childDataThunkFor(param: IrType): string {
+    return childDataThunkFor(this, param);
   }
 
-  private emitterFixedAdapter(cbT: IrType & { kind: "func" }): { fn: string; shim: string } {
-    return emitterFixedAdapter(this.expressionContext(), cbT);
+  emitterFixedAdapter(cbT: IrType & { kind: "func" }): { fn: string; shim: string } {
+    return emitterFixedAdapter(this, cbT);
   }
 
-  private wrapEmitterListener(target: string, adapterFn: string): string {
-    return wrapEmitterListener(this.expressionContext(), target, adapterFn);
+  wrapEmitterListener(target: string, adapterFn: string): string {
+    return wrapEmitterListener(this, target, adapterFn);
   }
 
-  private unwrapNullableClosure(u: string, funcTag: number): string {
-    return unwrapNullableClosure(this.expressionContext(), u, funcTag);
+  unwrapNullableClosure(u: string, funcTag: number): string {
+    return unwrapNullableClosure(this, u, funcTag);
   }
 
-  private closeBindThunkFor(cbUnion: IrType, retServer: boolean): string {
-    return closeBindThunkFor(this.expressionContext(), cbUnion, retServer);
+  closeBindThunkFor(cbUnion: IrType, retServer: boolean): string {
+    return closeBindThunkFor(this, cbUnion, retServer);
   }
 
-  private closeOverrideWrapFor(cbUnion: IrType, retServer: boolean): string {
-    return closeOverrideWrapFor(this.expressionContext(), cbUnion, retServer);
+  closeOverrideWrapFor(cbUnion: IrType, retServer: boolean): string {
+    return closeOverrideWrapFor(this, cbUnion, retServer);
   }
 
-  private streamDataAdapter(cbT: IrType & { kind: "func" }): string {
-    return streamDataAdapter(this.expressionContext(), cbT);
+  streamDataAdapter(cbT: IrType & { kind: "func" }): string {
+    return streamDataAdapter(this, cbT);
   }
 
-  private streamDoneFnFor(kind: "w" | "f" | "d" | "t" | "l", doneT: IrType & { kind: "func" }): string {
-    return streamDoneFnFor(this.expressionContext(), kind, doneT);
+  streamDoneFnFor(kind: "w" | "f" | "d" | "t" | "l", doneT: IrType & { kind: "func" }): string {
+    return streamDoneFnFor(this, kind, doneT);
   }
 
-  private fsRenameThunkFor(cbT: IrType & { kind: "func" }): string {
-    return fsRenameThunkFor(this.expressionContext(), cbT);
+  fsRenameThunkFor(cbT: IrType & { kind: "func" }): string {
+    return fsRenameThunkFor(this, cbT);
   }
 
-  private cryptoBytesThunkFor(cbT: IrType & { kind: "func" }): string {
-    return cryptoBytesThunkFor(this.expressionContext(), cbT);
+  cryptoBytesThunkFor(cbT: IrType & { kind: "func" }): string {
+    return cryptoBytesThunkFor(this, cbT);
   }
 
-  private zlibBytesThunkFor(cbT: IrType & { kind: "func" }): string {
-    return zlibBytesThunkFor(this.expressionContext(), cbT);
+  zlibBytesThunkFor(cbT: IrType & { kind: "func" }): string {
+    return zlibBytesThunkFor(this, cbT);
   }
 
-  private streamCbThunkFor(kind: "r" | "w" | "f" | "d" | "t" | "l" | "e", cbT: IrType): string {
-    return streamCbThunkFor(this.expressionContext(), kind, cbT);
+  streamCbThunkFor(kind: "r" | "w" | "f" | "d" | "t" | "l" | "e", cbT: IrType): string {
+    return streamCbThunkFor(this, kind, cbT);
   }
 
-  private resolveThunkFor(inner: IrType): string {
-    return resolveThunkFor(this.expressionContext(), inner);
+  resolveThunkFor(inner: IrType): string {
+    return resolveThunkFor(this, inner);
   }
 
-  private tagInSet(uName: string, tags: number[]): string {
-    return tagInSet(this.expressionContext(), uName, tags);
+  tagInSet(uName: string, tags: number[]): string {
+    return tagInSet(this, uName, tags);
   }
 
-  private arrPush(arr: string, acc: "f64" | "bool" | "ref", value: string): string {
-    return arrPush(this.expressionContext(), arr, acc, value);
+  arrPush(arr: string, acc: "f64" | "bool" | "ref", value: string): string {
+    return arrPush(this, arr, acc, value);
   }
 
-  private emitArrayCopyLoop(dst: string, src: string, acc: "f64" | "bool" | "ref"): void {
-    return emitArrayCopyLoop(this.expressionContext(), dst, src, acc);
+  emitArrayCopyLoop(dst: string, src: string, acc: "f64" | "bool" | "ref"): void {
+    return emitArrayCopyLoop(this, dst, src, acc);
   }
 
-  private emitStrIntrinsic(e: IrExpr & { kind: "strIntrinsic" }): LlValue {
-    return emitStrIntrinsic(this.expressionContext(), e);
+  emitStrIntrinsic(e: IrExpr & { kind: "strIntrinsic" }): LlValue {
+    return emitStrIntrinsic(this, e);
   }
 
-  private emitArrIntrinsic(e: IrExpr & { kind: "arrIntrinsic" }): LlValue {
-    return emitArrIntrinsic(this.expressionContext(), e);
+  emitArrIntrinsic(e: IrExpr & { kind: "arrIntrinsic" }): LlValue {
+    return emitArrIntrinsic(this, e);
   }
 
-  private wrapNullable(raw: string, present: string, valueType: IrType, valueTag: number, resultType: IrType & { kind: "union" }, absentTag: number): LlValue {
-    return wrapNullable(this.expressionContext(), raw, present, valueType, valueTag, resultType, absentTag);
+  wrapNullable(raw: string, present: string, valueType: IrType, valueTag: number, resultType: IrType & { kind: "union" }, absentTag: number): LlValue {
+    return wrapNullable(this, raw, present, valueType, valueTag, resultType, absentTag);
   }
 
-  private emitMapNew(e: IrExpr & { kind: "mapNew" }): LlValue {
-    return emitMapNew(this.expressionContext(), e);
+  emitMapNew(e: IrExpr & { kind: "mapNew" }): LlValue {
+    return emitMapNew(this, e);
   }
 
-  private mapSet(m: string, kAcc: "f64" | "str" | "ref", vAcc: "f64" | "bool" | "ref", key: string, value: string): void {
-    return mapSet(this.expressionContext(), m, kAcc, vAcc, key, value);
+  mapSet(m: string, kAcc: "f64" | "str" | "ref", vAcc: "f64" | "bool" | "ref", key: string, value: string): void {
+    return mapSet(this, m, kAcc, vAcc, key, value);
   }
 
-  private emitMapLikeIntrinsic(
+  emitMapLikeIntrinsic(
     e: Extract<IrExpr, { kind: "mapIntrinsic" | "setIntrinsic" }>,
   ): LlValue {
-    return emitMapLikeIntrinsic(this.expressionContext(), e);
+    return emitMapLikeIntrinsic(this, e);
   }
 
-  private emitSetNew(e: IrExpr & { kind: "setNew" }): LlValue {
-    return emitSetNew(this.expressionContext(), e);
+  emitSetNew(e: IrExpr & { kind: "setNew" }): LlValue {
+    return emitSetNew(this, e);
   }
 
-  private emitStableReceiver(receiver: IrExpr, following: IrExpr[]): LlValue {
-    return emitStableReceiver(this.expressionContext(), receiver, following);
+  emitStableReceiver(receiver: IrExpr, following: IrExpr[]): LlValue {
+    return emitStableReceiver(this, receiver, following);
   }
 
-  private emitIntegerLoopIndex(expr: IrExpr): string | null {
-    return emitIntegerLoopIndex(this.expressionContext(), expr);
+  emitIntegerLoopIndex(expr: IrExpr): string | null {
+    return emitIntegerLoopIndex(this, expr);
   }
 
-  private emitBytesIndex(receiver: string, index: string, integerIndex = false): string {
-    return emitBytesIndex(this.expressionContext(), receiver, index, integerIndex);
+  emitBytesIndex(receiver: string, index: string, integerIndex = false): string {
+    return emitBytesIndex(this, receiver, index, integerIndex);
   }
 
-  private emitBytesData(receiver: string): string {
-    return emitBytesData(this.expressionContext(), receiver);
+  emitBytesData(receiver: string): string {
+    return emitBytesData(this, receiver);
   }
 
-  private emitBytesLength(elem: IrBytesElem, receiver: string, bytes: boolean): LlValue {
-    return emitBytesLength(this.expressionContext(), elem, receiver, bytes);
+  emitBytesLength(elem: IrBytesElem, receiver: string, bytes: boolean): LlValue {
+    return emitBytesLength(this, elem, receiver, bytes);
   }
 
-  private emitBytesGet(elem: IrBytesElem, receiver: string, index: string, integerIndex = false): LlValue {
-    return emitBytesGet(this.expressionContext(), elem, receiver, index, integerIndex);
+  emitBytesGet(elem: IrBytesElem, receiver: string, index: string, integerIndex = false): LlValue {
+    return emitBytesGet(this, elem, receiver, index, integerIndex);
   }
 
-  private emitToUint32(value: string, expr?: IrExpr): string {
-    return emitToUint32(this.expressionContext(), value, expr);
+  emitToUint32(value: string, expr?: IrExpr): string {
+    return emitToUint32(this, value, expr);
   }
 
   private emitBytesSet(elem: IrBytesElem, receiver: string, index: string, value: string, integerIndex = false): void {
-    return emitBytesSet(this.expressionContext(), elem, receiver, index, value, integerIndex);
+    return emitBytesSet(this, elem, receiver, index, value, integerIndex);
   }
 
-  private emitBytesIntrinsic(e: IrExpr & { kind: "bytesIntrinsic" }): LlValue {
-    return emitBytesIntrinsic(this.expressionContext(), e);
+  emitBytesIntrinsic(e: IrExpr & { kind: "bytesIntrinsic" }): LlValue {
+    return emitBytesIntrinsic(this, e);
   }
 
-  private emitRegexIntrinsic(e: IrExpr & { kind: "regexIntrinsic" }): LlValue {
-    return emitRegexIntrinsic(this.expressionContext(), e);
+  emitRegexIntrinsic(e: IrExpr & { kind: "regexIntrinsic" }): LlValue {
+    return emitRegexIntrinsic(this, e);
   }
 
-  private emitRecordKeyGet(e: IrExpr & { kind: "recordKeyGet" }): LlValue {
-    return emitRecordKeyGet(this.expressionContext(), e);
+  emitRecordKeyGet(e: IrExpr & { kind: "recordKeyGet" }): LlValue {
+    return emitRecordKeyGet(this, e);
   }
 
-  private keyedRecordReadInto(
+  keyedRecordReadInto(
     slot: string,
     join: string,
     objName: string,
@@ -4515,18 +4529,18 @@ class LlEmitter {
     overflowOnly: boolean,
     loc?: SrcLoc,
   ): void {
-    return keyedRecordReadInto(this.expressionContext(), slot, join, objName, keyName, shapeId, resultType, overflowOnly, loc);
+    return keyedRecordReadInto(this, slot, join, objName, keyName, shapeId, resultType, overflowOnly, loc);
   }
 
-  private dynPromiseAdapter(inner: IrType): string {
-    return dynPromiseAdapter(this.expressionContext(), inner);
+  dynPromiseAdapter(inner: IrType): string {
+    return dynPromiseAdapter(this, inner);
   }
 
-  private streamTypedRefCommitAdapter(
+  streamTypedRefCommitAdapter(
     t: IrType,
     snapshot: string,
   ): string {
-    return streamTypedRefCommitAdapter(this.expressionContext(), t, snapshot);
+    return streamTypedRefCommitAdapter(this, t, snapshot);
   }
 
   liveDynRefAdapter(t: IrType): LlStreamTypedRefAdapter {
@@ -4538,7 +4552,7 @@ class LlEmitter {
     }
     const prefix = `sc_ldr_${this.liveDynRefAdapters.size}`;
     const adapter = streamTypedRefMaterializeAdapter(
-      this.expressionContext(),
+      this,
       t,
       { prefix, adapters: new Map() },
       `${prefix}_materialize`,
@@ -4547,92 +4561,92 @@ class LlEmitter {
     return adapter;
   }
 
-  private liveDynUnionRefAdapter(
+  liveDynUnionRefAdapter(
     t: IrType & { kind: "union" },
   ): string {
-    return liveDynUnionRefAdapter(this.expressionContext(), t);
+    return liveDynUnionRefAdapter(this, t);
   }
 
-  private streamTypedRefBoxValue(
+  streamTypedRefBoxValue(
     B: BlockBuilder,
     t: IrType,
     value: string,
     ctx: LlStreamTypedRefContext,
   ): string {
-    return streamTypedRefBoxValue(this.expressionContext(), B, t, value, ctx);
+    return streamTypedRefBoxValue(this, B, t, value, ctx);
   }
 
-  private streamTypedRefMaterializeAdapter(
+  streamTypedRefMaterializeAdapter(
     t: IrType,
     ctx: LlStreamTypedRefContext,
     preferredSnapshot?: string,
   ): LlStreamTypedRefAdapter {
-    return streamTypedRefMaterializeAdapter(this.expressionContext(), t, ctx, preferredSnapshot);
+    return streamTypedRefMaterializeAdapter(this, t, ctx, preferredSnapshot);
   }
 
-  private streamFromArrayAdapter(
+  streamFromArrayAdapter(
     t: IrType & { kind: "array" },
   ): string {
-    return streamFromArrayAdapter(this.expressionContext(), t);
+    return streamFromArrayAdapter(this, t);
   }
 
-  private emitWebLibCall(e: LibCallExpr): LlValue {
-    return emitWebLibCall(this.expressionContext(), e);
+  emitWebLibCall(e: LibCallExpr): LlValue {
+    return emitWebLibCall(this, e);
   }
 
-  private emitDynamicLibCall(e: LibCallExpr): LlValue {
-    return emitDynamicLibCall(this.expressionContext(), e);
+  emitDynamicLibCall(e: LibCallExpr): LlValue {
+    return emitDynamicLibCall(this, e);
   }
 
-  private emitFilesystemLibCall(e: LibCallExpr): LlValue {
-    return emitFilesystemLibCall(this.expressionContext(), e);
+  emitFilesystemLibCall(e: LibCallExpr): LlValue {
+    return emitFilesystemLibCall(this, e);
   }
 
-  private emitPathUrlLibCall(e: LibCallExpr): LlValue {
-    return emitPathUrlLibCall(this.expressionContext(), e);
+  emitPathUrlLibCall(e: LibCallExpr): LlValue {
+    return emitPathUrlLibCall(this, e);
   }
 
-  private emitPrimitiveLibCall(e: LibCallExpr): LlValue {
-    return emitPrimitiveLibCall(this.expressionContext(), e);
+  emitPrimitiveLibCall(e: LibCallExpr): LlValue {
+    return emitPrimitiveLibCall(this, e);
   }
 
-  private emitChildProcessLibCall(e: LibCallExpr): LlValue {
-    return emitChildProcessLibCall(this.expressionContext(), e);
+  emitChildProcessLibCall(e: LibCallExpr): LlValue {
+    return emitChildProcessLibCall(this, e);
   }
 
-  private emitAsyncContextLibCall(e: LibCallExpr): LlValue {
-    return emitAsyncContextLibCall(this.expressionContext(), e);
+  emitAsyncContextLibCall(e: LibCallExpr): LlValue {
+    return emitAsyncContextLibCall(this, e);
   }
 
-  private emitProcessLibCall(e: LibCallExpr): LlValue {
-    return emitProcessLibCall(this.expressionContext(), e);
+  emitProcessLibCall(e: LibCallExpr): LlValue {
+    return emitProcessLibCall(this, e);
   }
 
-  private emitErrorsEventsLibCall(e: LibCallExpr): LlValue {
-    return emitErrorsEventsLibCall(this.expressionContext(), e);
+  emitErrorsEventsLibCall(e: LibCallExpr): LlValue {
+    return emitErrorsEventsLibCall(this, e);
   }
 
-  private emitStreamLibCall(e: LibCallExpr): LlValue {
-    return emitStreamLibCall(this.expressionContext(), e);
+  emitStreamLibCall(e: LibCallExpr): LlValue {
+    return emitStreamLibCall(this, e);
   }
 
-  private emitNetworkHttpLibCall(e: LibCallExpr): LlValue {
-    return emitNetworkHttpLibCall(this.expressionContext(), e);
+  emitNetworkHttpLibCall(e: LibCallExpr): LlValue {
+    return emitNetworkHttpLibCall(this, e);
   }
 
-  private emitAssertInspectLibCall(e: LibCallExpr): LlValue {
-    return emitAssertInspectLibCall(this.expressionContext(), e);
+  emitAssertInspectLibCall(e: LibCallExpr): LlValue {
+    return emitAssertInspectLibCall(this, e);
   }
 
-  private emitIoLibCall(e: LibCallExpr): LlValue {
-    return emitIoLibCall(this.expressionContext(), e);
+  emitIoLibCall(e: LibCallExpr): LlValue {
+    return emitIoLibCall(this, e);
   }
 
-  private emitGenericLibCall(e: LibCallExpr): LlValue {
-    return emitGenericLibCall(this.expressionContext(), e);
+  emitGenericLibCall(e: LibCallExpr): LlValue {
+    return emitGenericLibCall(this, e);
   }
 
-  private emitLibCall(e: LibCallExpr): LlValue {
-    return emitLibCall(this.expressionContext(), e);
+  emitLibCall(e: LibCallExpr): LlValue {
+    return emitLibCall(this, e);
   }
 }
