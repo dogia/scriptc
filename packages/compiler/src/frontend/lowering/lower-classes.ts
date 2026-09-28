@@ -15,7 +15,7 @@ import { lowerArrayConstructor, lowerMapSeedArrayNew, strCharsCall } from "./low
 import { bufEncoding } from "./containers/bytes.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
 import { lowerSearchParamsNew, lowerTextCodecNew } from "./lower-builtins.js";
-import { requiresDynamicPackageDiag, unsupportedDiag } from "../../diagnostics/diagnostic.js";
+import { requiresDynamicPackageDiag, unsupportedDiag, type ScrDiagnostic } from "../../diagnostics/diagnostic.js";
 import { STREAM_API_MEMBERS, STREAM_PROP_MEMBERS, UNDERSCORE_METHODS, lowerStreamNew, lowerStreamSuperCall, streamCtorShape } from "./lower-stream.js";
 import { emitOverrideShapeReason, emitSpecSuperForward, emitterRooted, lowerEmitterSuperCall, type EmitOverrideRec } from "./lower-event-emitter.js";
 import { declSymbolOf } from "./lower-modules.js";
@@ -58,6 +58,9 @@ export interface ClassInfo {
    * no-dynamic-dispatch semantics by construction). A `gen` entry has a
    * generator body whose direct calls enter through its spawn wrapper. */
   methods: Map<string, { params: ParamShape[]; ret: IrType; abstract?: true; async?: true; gen?: NonNullable<IrFunction["generator"]> }>;
+  /** Own JS overrides whose return cannot use the inherited ABI. The slot
+   * retains that ABI, but its implementation throws before executing. */
+  methodEntryFences?: Map<string, ScrDiagnostic>;
   /** OWN GENERIC instance methods (own type parameters — `m<T>(x: T)`),
    * monomorphized per call site like top-level generic functions: instance
    * `n` is the module function `%C.m%n` taking `this` as param 0. They
@@ -1184,6 +1187,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
       const symbolFields = new Map<ts.Symbol | string, string>(base?.symbolFields ?? []);
       const fieldOrder: ClassInfo["fieldOrder"] = [];
       const methods = new Map<string, { params: ParamShape[]; ret: IrType; abstract?: true; async?: true; gen?: NonNullable<IrFunction["generator"]> }>();
+      const methodEntryFences = new Map<string, ScrDiagnostic>();
       // Own accessor declarations ("get:x"/"set:x" → node), for the
       // partial-override analysis below (diagnostics need the node).
       const accessorNodes = new Map<string, ts.AccessorDeclaration>();
@@ -1890,11 +1894,31 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               !overridden.sig.params.every((p, i) => typeEquals(p.type, shapes[i]!.type)) ||
               !typeEquals(overridden.sig.ret, ft.ret))
           ) {
-            lowerer.unsupported(
-              "SC1090",
-              member.name,
-              "overriding a method with a different signature (parameter and return types must match the base declaration exactly)",
-            );
+            const returnOnlyJsOverride =
+              isJsSourceFile(member.getSourceFile()) &&
+              overridden.declarer.decl !== null && isJsSourceFile(overridden.declarer.decl.getSourceFile()) &&
+              overridden.sig.params.length === shapes.length &&
+              overridden.sig.params.every((p, i) => typeEquals(p.type, shapes[i]!.type)) &&
+              member.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) !== true &&
+              overridden.sig.async !== true &&
+              member.asteriskToken === undefined && overridden.sig.gen === undefined;
+            if (returnOnlyJsOverride) {
+              // A dormant JS method must not poison the whole class. Keep
+              // the inherited call/dispatch ABI and refuse at method entry;
+              // lowering this body with the base return would change JS.
+              methodEntryFences.set(mName, unsupportedDiag(
+                "SC1090",
+                locOf(member.name),
+                `overriding method '${mName}' with a different return type (the native return type must match the base declaration exactly)`,
+              ));
+              ft.ret = overridden.sig.ret;
+            } else {
+              lowerer.unsupported(
+                "SC1090",
+                member.name,
+                "overriding a method with a different signature (parameter and return types must match the base declaration exactly)",
+              );
+            }
           }
           const asyncMember =
             member.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
@@ -2383,6 +2407,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
         fields,
         fieldOrder,
         methods,
+        ...(methodEntryFences.size > 0 ? { methodEntryFences } : {}),
         decl,
         ...(emitOverride !== undefined ? { emitOverride } : {}),
         ctor,
@@ -4269,6 +4294,21 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
       : `${ts.isGetAccessor(fnLike) ? "get" : "set"}:${memberName}`;
     const sig = info.methods.get(mName);
     if (!sig || !fnLike.body) return null;
+    const entryFence = info.methodEntryFences?.get(mName);
+    if (entryFence) {
+      lowerer.runtimeFences.push(entryFence);
+      return lowerer.deferToRuntimeFence(lowerer.diags.length, fnLike.name, {
+        kind: "function",
+        name: `%${className}.${mName}`,
+        params: [
+          { localId: "this.0", name: "this", type: thisType },
+          ...sig.params.map((p, i) => ({ localId: `p.${i}`, name: `p${i}`, type: p.type })),
+        ],
+        returnType: sig.ret,
+        fallback: entryFence,
+        allowDiagSink: true,
+      });
+    }
     const prevClass = lowerer.currentClass;
     lowerer.currentClass = info;
     // ASYNC methods: the module function is an async IrFunction — its

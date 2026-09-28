@@ -46,3 +46,33 @@ const r = new Rect(2, 6);
 r.describe();
 r.describe();
 console.log("hits:", r.hits, "square?", shapes[2] instanceof Square, shapes[1] instanceof Square);
+
+// An unused incompatible JS override must not prevent construction or
+// unrelated methods. A deeper compatible override still dispatches normally.
+class ReturnBase {
+  value = 10;
+  insert(value, anchor) { return 1; }
+  selected() { return "base"; }
+  read() { return this.value; }
+  dispatch(value) { return this.insert(value, undefined); }
+}
+class DormantReturns extends ReturnBase {
+  constructor() { super(); this.value = 20; }
+  // @ts-expect-error Exercise a valid JS override with a different return.
+  insert(value, anchor) { console.log("unused", value, anchor); }
+  // @ts-expect-error Exercise a valid JS override with a different return.
+  selected() { return 42; }
+}
+class RepairedReturns extends DormantReturns {
+  insert(value, anchor) { console.log("repaired", value, anchor); return 3; }
+  // @ts-expect-error The deeper override matches the original base ABI.
+  selected() { return "repaired"; }
+}
+class ShortDormantReturn extends ReturnBase {
+  // @ts-expect-error Both the return type and the unused tail differ.
+  insert(value) { console.log("unused short", value); }
+}
+const dormant = new DormantReturns();
+console.log("dormant", dormant.read(), new ShortDormantReturn().read());
+const repaired = new RepairedReturns();
+console.log("repaired", repaired.dispatch("item"), repaired.selected());
