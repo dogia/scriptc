@@ -384,6 +384,9 @@ export function unionWidenHelper(emitter: CEmitter, fromId: string, toId: string
       `    scr_dyn_release(sc_materialized);`,
       `    break;`,
       `  }`,
+      `  case SCR_DYN_PROXY:`,
+      `    scr_dyn_proxy_unsupported("string conversion");`,
+      `    break;`,
       `  }`,
       `}`,
       `static ScrStr *${name}(const ScrDyn *d) { /* String(unknown) -> owned (+1) */`,
@@ -1068,6 +1071,7 @@ export function jsonWriteHelper(emitter: CEmitter, t: IrType): string {
     d.push(`  if (d->kind == SCR_DYN_OBJ) {`);
     d.push(`    return scr_dyn_obj_read(d, k->data, k->len);`);
     d.push(`  }`);
+    d.push(`  if (d->kind == SCR_DYN_PROXY) return scr_dyn_proxy_get(d, k);`);
     d.push(`  if (d->kind == SCR_DYN_JSVAL) {`);
     d.push(`    /* Island-held: o[k] reads the REAL engine property (getters`);
     d.push(`     * included, throws bridged catchably) and the result wraps`);

@@ -3332,9 +3332,10 @@ typedef enum {
    * contract must expose the exact input reference again. The capsule
    * retains the original value so an exact checked cast preserves identity;
    * `materialize` supplies the ordinary own-field/data view to generic dyn
-   * consumers. Enum position: LAST — LLVM hardcodes every preceding kind
-   * number. */
+   * consumers. LLVM hardcodes these kind numbers; append new kinds. */
   SCR_DYN_TYPED_REF,
+  /* Native Proxy over a checked plain object; keep new tags at the end. */
+  SCR_DYN_PROXY,
 } ScrDynKind;
 
 /* The handle-type tags the checked-dynamic tree can carry. The set is deliberately the
@@ -3480,6 +3481,7 @@ struct ScrDyn {
      * comment). Released through the installed ops so this always-linked
      * core never references the gated island unit. */
     struct { ScrJsval *cell; } jsval;
+    struct { ScrDyn *target; ScrDyn *handler; } proxy; /* both owned */
   } v;
 };
 
@@ -3570,6 +3572,13 @@ bool scr_dyn_obj_same_source(const ScrDyn *a, const ScrDyn *b);
 /* Object.create(null): the fresh null-prototype dictionary (see the
  * null_proto flavor flag above). */
 ScrDyn *scr_dyn_new_obj_null_proto(void);
+ScrDyn *scr_dyn_proxy_new(const ScrDyn *target, const ScrDyn *handler);
+ScrDyn *scr_dyn_proxy_get(const ScrDyn *proxy, const ScrStr *key);
+bool scr_dyn_proxy_has(const ScrDyn *proxy, const ScrStr *key);
+ScrDyn *scr_dyn_own_descriptor(const ScrDyn *value, const ScrStr *key);
+void scr_dyn_proxy_set(ScrDyn *proxy, ScrStr *key, ScrDyn *value);
+void scr_dyn_proxy_delete(ScrDyn *proxy, const ScrStr *key);
+void scr_dyn_proxy_unsupported(const char *operation);
 /* Wraps a fresh COPY of the u8 payload (the static→dyn boundary copies —
  * DataView-backed sources copy their aliased window). Borrows b. */
 ScrDyn *scr_dyn_new_bytes_copy(const ScrBytes *b);
@@ -3588,6 +3597,7 @@ ScrDyn *scr_dyn_new_typed_ref(
     void (*commit)(void *, const ScrDyn *));
 bool scr_dyn_typed_ref_is(
     const ScrDyn *d, const char *type_key, size_t type_key_len);
+bool scr_dyn_typed_ref_is_key(const ScrDyn *d, const ScrStr *type_key);
 void *scr_dyn_typed_ref_unbox(const ScrDyn *d); /* +1 */
 ScrDyn *scr_dyn_class_view_unavailable(void *ptr);
 ScrDyn *scr_dyn_typed_ref_materialize(const ScrDyn *d); /* +1 */
@@ -3635,8 +3645,8 @@ ScrDyn *scr_dyn_global_symbol_get(ScrSym *key); /* borrowed key; +1 value */
 void scr_dyn_global_symbol_set(ScrSym *key, ScrDyn *value); /* both borrowed */
 bool scr_dyn_global_symbol_has(ScrSym *key);
 void scr_dyn_global_symbol_delete(ScrSym *key);
-/* `key in v` with a runtime key — the dynHasKey fold per value (OBJ own
- * members, ARR length/valid indices, false elsewhere). Never throws. */
+/* `key in v` with a runtime key (OBJ own members, ARR length/valid indices,
+ * Proxy has traps). Traps and unsupported representations may throw. */
 bool scr_dyn_has_key(const ScrDyn *v, const ScrStr *key);
 /* Bare `typeof v` on a dyn value: the dyn kind's JS answer (+1 string;
  * null answers "object"). Never throws. */
@@ -3662,6 +3672,7 @@ bool scr_dyn_number_coerce_js(const ScrDyn *d, double *out);
 /* Direct-return ABI wrapper for compiler libCalls: JS ToNumber, or NaN
  * with the exception pending when an object hook throws/refuses. */
 double scr_dyn_number_coerce(const ScrDyn *d);
+ScrDyn *scr_dyn_add(const ScrDyn *left, const ScrDyn *right); /* borrowed; +1 or NULL/pending */
 
 /* `d instanceof TypeError` (and the other builtin error classes) on a
  * checked-dynamic value: the from_error cache resolves the dyn encoding

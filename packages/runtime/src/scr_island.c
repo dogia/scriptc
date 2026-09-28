@@ -998,6 +998,8 @@ static const char *isl_dyn_unmarshalable(const ScrDyn *d) {
     return "a runtime handle";
   case SCR_DYN_PROMISE:
     return "a promise";
+  case SCR_DYN_PROXY:
+    return "a native Proxy";
   case SCR_DYN_ARR:
     for (size_t i = 0; i < d->v.arr.len; i++) {
       const char *r = isl_dyn_unmarshalable(d->v.arr.items[i]);

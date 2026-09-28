@@ -19,7 +19,8 @@ import { InternalCompilerError } from "../../errors.js";
  *            v.arr { len +16, cap +24, items +32 };
  *            v.obj { len +16, cap +24, entries +32 };
  *            v.fn  { clo +16, thunk +24, sig +32, name +40, arity +48 }.
- *   ScrDynEntry { char *key; size_t key_len; ScrDyn *value; } — 24 bytes.
+ *   ScrDynEntry { char *key; size_t key_len; ScrDyn *value; bool writable,
+ *                 enumerable, configurable; } — 32 bytes on 64-bit.
  *   ScrDynKind: NULL=0 BOOL=1 NUM=2 STR=3 ARR=4 OBJ=5 UNDEF=6 BYTES=7
  *               FUNC=8 HANDLE=9.
  *   ScrBytes { rc +0; len +8; elem +16; data +24 }.
@@ -61,6 +62,7 @@ export const DYN_KIND = {
   PROMISE: 10,
   JSVAL: 11, /* SCR_DYN_JSVAL — island values held by reference */
   TYPED_REF: 12, /* SCR_DYN_TYPED_REF — static Web-stream transit capsule */
+  PROXY: 13,
 } as const;
 
 /** What the dyn helpers need beyond the walker host: interned immortal
@@ -189,7 +191,7 @@ export class LlDyn {
   private entryAt(B: BlockBuilder, entries: string, i: string): { key: string; keyLen: string; value: string } {
     const off = B.tmp();
     const base = B.tmp();
-    B.line(`${off} = mul ${this.S} ${i}, ${this.abiOffset(24, 12)} ; sizeof(ScrDynEntry)`);
+    B.line(`${off} = mul ${this.S} ${i}, ${this.abiOffset(32, 16)} ; sizeof(ScrDynEntry)`);
     B.line(`${base} = getelementptr inbounds i8, ptr ${entries}, ${this.S} ${off}`);
     const key = B.tmp();
     B.line(`${key} = load ptr, ptr ${base}`);
@@ -1753,12 +1755,16 @@ export class LlDyn {
       const kd = this.kindOf(B, "%d");
       const done = B.newLabel("ds.d");
       const labels = new Map<number, string>();
-      for (const k of [DYN_KIND.NULL, DYN_KIND.BOOL, DYN_KIND.NUM, DYN_KIND.STR, DYN_KIND.ARR, DYN_KIND.OBJ, DYN_KIND.UNDEF, DYN_KIND.BYTES, DYN_KIND.FUNC, DYN_KIND.HANDLE, DYN_KIND.PROMISE, DYN_KIND.JSVAL, DYN_KIND.TYPED_REF]) {
+      for (const k of [DYN_KIND.NULL, DYN_KIND.BOOL, DYN_KIND.NUM, DYN_KIND.STR, DYN_KIND.ARR, DYN_KIND.OBJ, DYN_KIND.UNDEF, DYN_KIND.BYTES, DYN_KIND.FUNC, DYN_KIND.HANDLE, DYN_KIND.PROMISE, DYN_KIND.JSVAL, DYN_KIND.TYPED_REF, DYN_KIND.PROXY]) {
         labels.set(k, B.newLabel(`ds.k${k}`));
       }
       const branches: string[] = [];
       for (const [kind, label] of labels) branches.push(`i32 ${kind}, label %${label}`);
       B.terminate(`switch i32 ${kd}, label %${done} [ ${branches.join(" ")} ]`);
+      B.startBlock(labels.get(DYN_KIND.PROXY)!);
+      host.declare(`declare void @scr_dyn_proxy_unsupported(ptr)`);
+      B.line(`call void @scr_dyn_proxy_unsupported(ptr ${host.cstr("string conversion")})`);
+      B.br(done);
       B.startBlock(labels.get(DYN_KIND.JSVAL)!);
       {
         // Island-held: the engine's own ToString (a bridged failure
@@ -2259,6 +2265,19 @@ export class LlDyn {
     // ISLAND-held receivers: o[k] reads the REAL engine property (getters
     // included, throws bridged catchably) and the result wraps back
     // scalar-normalized — the routed keyed read that retired the fence.
+    {
+      const isProxy = B.tmp();
+      B.line(`${isProxy} = icmp eq i32 ${kd}, ${DYN_KIND.PROXY}`);
+      const lProxy = B.newLabel("kg.proxy");
+      const lNext = B.newLabel("kg.n");
+      B.condBr(isProxy, lProxy, lNext);
+      B.startBlock(lProxy);
+      host.declare(`declare ptr @scr_dyn_proxy_get(ptr, ptr)`);
+      const r = B.tmp();
+      B.line(`${r} = call ptr @scr_dyn_proxy_get(ptr %d, ptr %k)`);
+      B.terminate(`ret ptr ${r}`);
+      B.startBlock(lNext);
+    }
     {
       const isJv = B.tmp();
       B.line(`${isJv} = icmp eq i32 ${kd}, ${DYN_KIND.JSVAL}`);

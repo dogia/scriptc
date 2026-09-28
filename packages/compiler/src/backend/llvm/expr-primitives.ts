@@ -350,7 +350,9 @@ export function emitStringExpr(host: LlvmEmitterContext, e: ExprOf<"strConcat" |
           B.startBlock(join);
           const t = B.tmp();
           B.line(`${t} = load ptr, ptr ${slot}`);
-          return host.own({ name: t, type: e.type });
+          const result = host.own({ name: t, type: e.type });
+          host.emitPendingCheck();
+          return result;
         }
         if (v.type.kind === "record") {
           // String(record) / `${record}`: Object.prototype.toString's
@@ -364,7 +366,9 @@ export function emitStringExpr(host: LlvmEmitterContext, e: ExprOf<"strConcat" |
           host.declare(`declare ptr @scr_caught_to_string(ptr)`);
           const t = B.tmp();
           B.line(`${t} = call ptr @scr_caught_to_string(ptr ${v.name})`);
-          return host.own({ name: t, type: e.type });
+          const result = host.own({ name: t, type: e.type });
+          host.emitPendingCheck();
+          return result;
         }
         if (v.type.kind === "dyn") {
           // String(unknown): dispatch over the dyn kind (dyn.ts's sc_ds —
@@ -372,7 +376,9 @@ export function emitStringExpr(host: LlvmEmitterContext, e: ExprOf<"strConcat" |
           const helper = host.dyn.dynToStrHelper();
           const t = B.tmp();
           B.line(`${t} = call ptr @${helper}(ptr ${v.name})`);
-          return host.own({ name: t, type: e.type });
+          const result = host.own({ name: t, type: e.type });
+          host.emitPendingCheck();
+          return result;
         }
         const t = B.tmp();
         if (v.type.kind === "f64") {

@@ -102,3 +102,18 @@ Object.defineProperty(shifted, 'hidden', { enumerable: false });
 const assigned = JSON.parse('{}');
 Object.assign(assigned, shifted);
 console.log(Object.keys(assigned), JSON.stringify(assigned));
+const proxyTarget = JSON.parse('{}');
+Object.defineProperty(proxyTarget, 'fixed', { get: getStored, enumerable: true });
+const proxy = new Proxy(proxyTarget, {});
+console.log(proxy.fixed, Object.getOwnPropertyDescriptor(proxy, 'fixed').get === getStored);
+const trappedProxy = new Proxy(proxyTarget, {
+  get() { return 91; },
+  getOwnPropertyDescriptor(target, key) { return Object.getOwnPropertyDescriptor(target, key); }
+});
+console.log(trappedProxy.fixed, Object.getOwnPropertyDescriptor(trappedProxy, 'fixed').get === getStored);
+const noGetter = JSON.parse('{}');
+Object.defineProperty(noGetter, 'fixed', { set: setStored });
+const invalidGet = new Proxy(noGetter, { get() { return 91; } });
+try { console.log(invalidGet.fixed); } catch (error) { console.log(error.name); }
+const invalidSet = new Proxy(proxyTarget, { set() { return true; } });
+try { invalidSet.fixed = 91; } catch (error) { console.log(error.name); }

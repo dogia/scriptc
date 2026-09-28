@@ -254,6 +254,8 @@ export const LIB_FN_SYMS: Record<string, string> = {
   // Node's argument ladders throw catchably (MAY_THROW_LIB_FNS).
   "dyn.toStringCoerce": "scr_dyn_string_coerce_js",
   "dyn.toNumberCoerce": "scr_dyn_number_coerce",
+  "dyn.add": "scr_dyn_add",
+  "dyn.proxyNew": "scr_dyn_proxy_new",
   "buffer.compareChk": "scr_buffer_compare_chk",
   "bytes.equalsChk": "scr_bytes_equals_chk",
   "bytes.compareChk": "scr_bytes_compare_chk",
@@ -512,6 +514,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "dyn.globalSymbolSet": "scr_dyn_global_symbol_set",
   "dyn.globalSymbolHas": "scr_dyn_global_symbol_has",
   "dyn.globalSymbolDelete": "scr_dyn_global_symbol_delete",
+  "dyn.typedRefIs": "scr_dyn_typed_ref_is_key",
   "dyn.iterPack": "scr_dyn_iter_pack",
   "dyn.arrLen": "scr_dyn_arr_len",
   "dyn.arrAt": "scr_dyn_arr_at",

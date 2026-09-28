@@ -1,4 +1,5 @@
 import { InternalCompilerError } from "../../errors.js";
+import { ClassDynamicDispatch } from "./class-dynamic-dispatch.js";
 /* AST + checker → IR.
  *
  * Invariants:
@@ -1744,6 +1745,7 @@ export class Lowerer {
    * engine handle (a dynamic import's namespace object) — paramShape's
    * early-out. */
   readonly jsvalParamOverrides = new Set<ts.ParameterDeclaration>();
+  readonly checkedCallbackParams = new Set<ts.ParameterDeclaration>();
   /** Inline Promise.then parameters whose contextual type is a builtin
    * module namespace anonymous object. The settled native token is the
    * ABI truth even when the checker type has no stable module symbol. */
@@ -3603,7 +3605,10 @@ export class Lowerer {
       let gc = 0;
       let gi = 0;
       let es = 0;
+      const classDispatch = new ClassDynamicDispatch();
+      let dispatchChanged = !this.remainder;
       while (
+        dispatchChanged ||
         ec < this.exprClasses.length ||
         gc < this.genericClassInstances.length ||
         gi < this.instantiationQueue.length ||
@@ -3638,6 +3643,9 @@ export class Lowerer {
             if (!(e instanceof PoisonError)) throw e;
           }
         }
+        dispatchChanged = !this.remainder && classDispatch.process(this, [
+          ...functions, ...this.liftedFns, ...this.implicitFns,
+        ]);
       }
     }
     // Lambdas lifted while lowering any of the above (plus synthetic
@@ -4218,9 +4226,13 @@ export class Lowerer {
     // turn queue more instances. Continue to the joint fixpoint; the initial
     // queue above is the only portion whose discovery order differed from
     // historical emit order.
+    const classDispatch = new ClassDynamicDispatch();
     for (;;) {
       drainInstances();
-      if (queue.length === 0) break;
+      const dispatchChanged = classDispatch.process(this, [
+        ...loweredUnits.values(), ...initFunctions, ...instanceFunctions, ...this.liftedFns, ...this.implicitFns,
+      ]);
+      if (queue.length === 0 && !dispatchChanged) break;
       drainUnits();
       this.restoreGenericInstanceOrder(instLowered);
       this.restoreGenericClassInstanceOrder(clsInstLowered);
@@ -8092,6 +8104,15 @@ export class Lowerer {
    * nothing evaluates; unit-typed non-literals keep the fences. */
   lowerReturnValue(node: ts.Expression): IrExpr | null {
     const expected = this.ctx.returnType;
+    // Fresh JS objects returned through a checked-native ABI use that
+    // storage directly, just like arguments and variable initializers.
+    // Contextual types (such as Proxy descriptors' symbol-valued fields)
+    // must not force an intermediate record with incompatible field slots.
+    let literal = node;
+    while (ts.isParenthesizedExpression(literal)) literal = literal.expression;
+    if (expected.kind === "dyn" && isJsSourceFile(node.getSourceFile()) && ts.isObjectLiteralExpression(literal)) {
+      return this.lowerExprExpecting(node, expected);
+    }
     const e = this.lowerExpr(node);
     if (expected.kind === "void" && e.kind === "unitLit") return null;
     if (this.ctx.isAsync && e.type.kind === "promise" && expected.kind !== "promise") {

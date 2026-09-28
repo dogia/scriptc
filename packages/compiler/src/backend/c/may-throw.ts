@@ -101,10 +101,11 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           f.throws = true;
           break;
         case "dynKeyGet":
+        case "dynHasKey":
           // The keyed read throws JS's TypeError on an undefined/null
           // receiver (the `?.` form answers undefined instead), and
           // HANDLE receivers can throw the loud unmodeled-property
-          // ladder on either form — seed both.
+          // ladder; Proxy get/has traps can throw too.
           f.throws = true;
           break;
         case "dynDestrCheck":
@@ -160,6 +161,9 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
           if (vt === "dyn" || vt === "record" || vt === "array" || vt === "union") f.throws = true;
           break;
         }
+        case "toString":
+          if (rec.operand.type.kind === "dyn" || rec.operand.type.kind === "union" || rec.operand.type.kind === "caught") f.throws = true;
+          break;
         case "jsOp":
         case "jsExit":
         case "jsMarshal":

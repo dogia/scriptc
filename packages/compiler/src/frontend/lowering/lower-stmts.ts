@@ -30,6 +30,8 @@ import { abstractPropertyDeclOf, aliasTypeofNarrows, isMatchSliceType, lowerAbse
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
 import { globalSymbolKey } from "./expressions/global-symbols.js";
 import { lowerNullishAssignment } from "./expressions/nullish-assignment.js";
+import { lowerEnvironmentKey } from "./lower-exprs.js";
+import { isNativeProxyInitializer } from "./expressions/native-proxy.js";
 import { tryLowerExpression } from "./expressions/try-lower-expression.js";
 import { lowerUnionFieldWrite } from "./expressions/union-field-write.js";
 import { UNSUPPORTED, checkerPanicDiag, isCheckerPanic, requiresDynamicDiag } from "../../diagnostics/diagnostic.js";
@@ -677,6 +679,7 @@ export function provenanceElidedConstDecl(lowerer: Lowerer, decl: ts.VariableDec
    * file rides the dyn fallback). Null when no static type can hold the
    * binding. */
   function varBindingType(lowerer: Lowerer, nameNode: ts.Identifier): IrType | null {
+    if (ts.isVariableDeclaration(nameNode.parent) && isNativeProxyInitializer(lowerer, nameNode.parent.initializer)) return DYN;
     let type = lowerer.mapTypeOf(lowerer.typeOf(nameNode));
     if (type?.kind === "record" && isJsSourceFile(nameNode.getSourceFile())) {
       const shape = lowerer.shapes.get(type.shapeId);
@@ -4391,7 +4394,10 @@ function lowerBranchSwitch(
         return { kind: "strLit", value: target.name.text, type: STRING, loc: locOf(target.name) };
       }
       const keyNode = (target as ts.ElementAccessExpression).argumentExpression;
-      let key = lowerer.lowerExpr(keyNode);
+      let key = lowerer.isProcessEnv(target.expression) ? lowerEnvironmentKey(lowerer, keyNode) : lowerer.lowerExpr(keyNode);
+      if (key.type.kind === "dyn") {
+        key = { kind: "libCall", fn: "dyn.toStringCoerce", args: [key], type: STRING, loc: key.loc };
+      }
       if (lowerer.runtimeOptionalWidening(key.type, STRING) !== null) {
         key = lowerer.ensureString(key, keyNode);
       }

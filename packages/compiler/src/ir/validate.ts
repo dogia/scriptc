@@ -117,6 +117,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "dyn.globalSymbolSet": { argTypes: [SYMBOL_T, DYN], result: VOID },
   "dyn.globalSymbolHas": { argTypes: [SYMBOL_T], result: BOOL },
   "dyn.globalSymbolDelete": { argTypes: [SYMBOL_T], result: VOID },
+  "dyn.typedRefIs": { argTypes: [DYN, STRING], result: BOOL },
   "dyn.iterPack": { argTypes: [DYN, STRING], result: DYN },
   "dyn.arrLen": { argTypes: [DYN], result: F64 },
   "dyn.arrAt": { argTypes: [DYN, F64], result: DYN },
@@ -1070,6 +1071,8 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "error.nodeThrow": { argTypes: [F64, STRING, STRING], result: VOID },
   "dyn.toStringCoerce": { argTypes: [DYN], result: STRING },
   "dyn.toNumberCoerce": { argTypes: [DYN], result: F64 },
+  "dyn.add": { argTypes: [DYN, DYN], result: DYN },
+  "dyn.proxyNew": { argTypes: [DYN, DYN], result: DYN },
   // Always throws; the result is the READ's declared type (a typed dummy
   // the unwind abandons) — the libCall case skips the result check.
   "global.undefRead": { argTypes: [STRING], result: VOID },

@@ -57,7 +57,7 @@ import { isPrunedNpmReexport, planNpmStaticReexports } from "./npm-static-prune.
 import { npmStaticDeclarationReexports, npmStaticRuntimeClassTargets, parseNpmStaticDeclarationOverloads, parseNpmStaticDeclarationProperties } from "./npm-static-declarations.js";
 import type { NpmStaticDeclarationOverloads, NpmStaticDeclarationProperties, NpmStaticOverloadSignature } from "./npm-static-declarations.js";
 import { provenanceEntryFor, provenancePaths } from "./provenance-registry.js";
-import { cjsLexerVisibleNames } from "./cjs-lexer.js";
+import { cjsLexedExportsOfFile, cjsVisibleNames } from "./cjs-syntax.js";
 import {
   ambientDtsPath,
   fallbackDtsPath,
@@ -3147,9 +3147,9 @@ function cjsNamedImportLinkCheck(
   };
   const visible = (dep: ts.SourceFile, name: string): boolean =>
     // `default` is the module.exports binding itself — always provided.
-    // (cjs-lexer.ts lexes SOURCE TEXT — only strings cross into the
-    // typescript5 island; the SourceFile is just the memo/resolve handle.)
-    name === "default" || cjsLexerVisibleNames(dep, (d) => d.text, resolveCjsDep, lexMemo).has(name);
+    // The program already owns native source ASTs; reuse them without
+    // starting another syntax session or reparsing their source text.
+    name === "default" || cjsVisibleNames(dep, cjsLexedExportsOfFile, resolveCjsDep, lexMemo).has(name);
 
   /** The statement's resolved LOCAL CommonJS dependency, when it is an
    * import/re-export from one. */

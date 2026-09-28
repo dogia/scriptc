@@ -29,6 +29,7 @@ import { collectVirtualJsMethods, decoratorNodesOf, genericIfaceBindingKeepsClas
 import { isMixinFnBinding, mixinResultBindingClassOf } from "./lower-mixins.js";
 import { cjsModuleRef, cjsModuleRegistryPrelude } from "./lower-node-module.js";
 import { forkTargetPaths } from "../fork-target.js";
+import { isNativeProxyInitializer } from "./expressions/native-proxy.js";
 
 /** One file's declarations, split for collection and init-body lowering. */
 export interface FileParts {
@@ -814,6 +815,7 @@ function cjsScalarLiteral(e: ts.Expression): boolean {
  * typed-but-unmappable initializers keep the %init-local adoption). */
 function jsDynHoldableInitializer(lowerer: Lowerer, init: ts.Expression | undefined): boolean {
   if (init === undefined) return true;
+  if (isNativeProxyInitializer(lowerer, init)) return true;
   let e: ts.Expression = init;
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   if (e.kind === ts.SyntaxKind.NullKeyword) return true;
@@ -1545,7 +1547,8 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             // it).
             const handleT =
               ts.isIdentifier(decl.name) && nameNode === decl.name
-                ? (lowerer.dynamic ? importCallHandleType(decl.initializer) : staticImportNamespaceType(lowerer, decl.initializer)) ??
+                ? (isNativeProxyInitializer(lowerer, decl.initializer) ? DYN : null) ??
+                  (lowerer.dynamic ? importCallHandleType(decl.initializer) : staticImportNamespaceType(lowerer, decl.initializer)) ??
                   (lowerer.dynamic ?
                   // An unchecked-overload call result stores the handle,
                   // exactly the local rule (uncheckedOverloadHandleCall).
@@ -1632,13 +1635,15 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               const shape = lowerer.shapes.get(type.shapeId);
               if (shape && shape.fields.length === 0 && !shape.indexValue && !shape.tuple) type = DYN;
             }
-            // A module var starts as undefined, even when its declared type
-            // excludes it. Do not silently treat a NULL codec as a usable
-            // receiver during a closure's pre-initialization read.
+            // Module vars hold real undefined until their declaration runs.
+            // Codec records keep that state in the ordinary optional union;
+            // lexical codec declarations retain their separate TDZ guard.
             const codec = type.kind === "record" && recordTextCodecClass(lowerer.shapes.get(type.shapeId)!) !== null;
-            if (codec && (isVarDeclared(decl) || !decl.initializer)) {
-              lowerer.noLowering("module-scope codec bindings that can hold undefined before initialization", decl,
-                "use let or const with an initializer for TextEncoder/TextDecoder instances");
+            if (codec && isVarDeclared(decl)) {
+              type = { kind: "union", unionId: lowerer.unions.intern([type, { kind: "undefinedT" }]) };
+            } else if (codec && !decl.initializer) {
+              lowerer.noLowering("uninitialized lexical codec bindings", decl,
+                "initialize let or const TextEncoder/TextDecoder bindings at their declaration");
             }
             const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
             // Merged `var` redeclarations (`var y = 1; ...; var y = 2;` —
@@ -1654,7 +1659,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               // A function pointer must not be dereferenced before a lexical
               // declaration assigns it. The shared pointer TDZ guard handles
               // these bindings like stored codec records.
-              ...((codec || (type.kind === "func" && !isVarDeclared(decl))) ? { tdz: true as const } : {}),
+              ...(((codec || type.kind === "func") && !isVarDeclared(decl)) ? { tdz: true as const } : {}),
             };
             lowerer.globalsBySymbol.set(symbol, g);
             lowerer.globalsList.push(g);
@@ -1774,6 +1779,9 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             if (type.kind === "record" && isJsSourceFile(sf)) {
               const shape = lowerer.shapes.get(type.shapeId);
               if (shape && shape.fields.length === 0 && !shape.indexValue && !shape.tuple) type = DYN;
+            }
+            if (type.kind === "record" && recordTextCodecClass(lowerer.shapes.get(type.shapeId)!) !== null) {
+              type = { kind: "union", unionId: lowerer.unions.intern([type, { kind: "undefinedT" }]) };
             }
             const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
             if (!symbol || lowerer.globalsBySymbol.has(symbol)) continue;

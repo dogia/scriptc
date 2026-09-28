@@ -1,4 +1,4 @@
-import { Base, FactoryInput, Input, Metrics, View, describeOptions } from "bundled-methods";
+import { Base, FactoryInput, Input, Metrics, View, describeOptions, exerciseCachedStore, exerciseEnvironmentProxy } from "bundled-methods";
 
 const view = new View("selected");
 const base: Base = view;
@@ -53,3 +53,5 @@ factory.open("replacement");
 console.log(factory.read(), factory.save() === saved);
 console.log(describeOptions({ name: "omitted" }));
 console.log(describeOptions({ name: "present", required: false, default: 0, type: "number" }));
+console.log(exerciseCachedStore());
+console.log(exerciseEnvironmentProxy());

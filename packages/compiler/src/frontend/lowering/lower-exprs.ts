@@ -17,6 +17,7 @@ import { UNSUPPORTED, blockedBindingUseDiag, requiresDynamicPackageDiag, unsuppo
 import { PoisonError, dynUndefinedExpr, jsFuncNameOf, neverTaintedJsType, nodeThrowExpr, own } from "./lowerer.js";
 import { lowerNpmStaticSafeIndexRead, lowerSafeIndexRead, strCharsCall, tryLowerNumericIndexRead } from "./lower-containers.js";
 import { arrayValueRead, arrayValueStore } from "./array-values.js";
+import { lowerOptionalStringIndex } from "./string-index.js";
 import { tryLowerIndexedComparison } from "./indexed-comparison.js";
 import { npmStaticPackageOfPath } from "../npm-static.js";
 import { unsupportedModuleFeatureOf } from "../builtin-modules.js";
@@ -864,6 +865,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
           if (
             !arithmeticUnion && g.type.kind === "union" && narrowed && narrowed.kind !== "union" &&
             !isUnitType(narrowed) &&
+            !(narrowed.kind === "record" && recordTextCodecClass(lowerer.shapes.get(narrowed.shapeId)!) !== null) &&
             narrowed.kind !== "f64" && narrowed.kind !== "string" && narrowed.kind !== "bool" &&
             lowerer.armTag(g.type.unionId, narrowed) >= 0
           ) {
@@ -1121,7 +1123,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
           // The families with a WHY: each hint states what makes the
           // surface genuinely non-static (or what to use instead).
           const globalHints: Record<string, string | undefined> = {
-            Proxy: "property-access metaprogramming has no static lowering (every property read must resolve at compile time)",
+            Proxy: "Proxy constructor values have no native lowering; use a direct new Proxy with checked-native plain objects",
             Reflect: "reflective property access has no static lowering — read and call members directly",
             Intl: "locale- and ICU-backed behavior lives outside the static runtime (the localeCompare stance: code-unit order, no collation/locale data) — what lowers: the composed new Intl.NumberFormat(\"en-US\").format(x) and x.toLocaleString(\"en-US\") with default options",
             SharedArrayBuffer: "no shared-memory threads exist in a compiled program — Uint8Array is the byte storage",
@@ -4330,7 +4332,7 @@ export function lowerOptionalNumber(
     // lower to the ONE process.envGet intrinsic. The read narrows like any
     // union-typed expression when the checker narrowed this occurrence.
     if (lowerer.isProcessEnv(expr.expression)) {
-      const key = lowerer.lowerExpr(expr.argumentExpression);
+      const key = lowerEnvironmentKey(lowerer, expr.argumentExpression);
       if (key.type.kind !== "string") {
         lowerer.unsupported(
           "SC1090",
@@ -4580,19 +4582,26 @@ export function lowerOptionalNumber(
         // and charAt's "" is the only string-typed answer for an
         // out-of-range or fractional index where JS reads `undefined` —
         // SEMANTICS.md documents the divergence; in-range integer reads
-        // (the loop pattern) are JS-exact. Under noUncheckedIndexedAccess
-        // the read types `string | undefined`, which charAt cannot honor —
-        // fenced.
+        // (the loop pattern) are JS-exact. Optional results instead retain
+        // undefined for missing string properties.
+        const recv = lowerer.lowerExpr(expr.expression);
         const index = lowerer.lowerExpr(expr.argumentExpression);
-        if (index.type.kind === "f64" && lowerer.mapTypeOf(lowerer.typeOf(expr))?.kind === "string") {
-          const recv = lowerer.lowerExpr(expr.expression);
-          return { kind: "strIntrinsic", method: "charAt", receiver: recv, args: [index], type: STRING, loc: locOf(expr) };
+        const resultType = lowerer.mapTypeOf(lowerer.typeOf(expr));
+        if (index.type.kind === "f64" && recv.type.kind === "string") {
+          if (resultType?.kind === "string") {
+            return { kind: "strIntrinsic", method: "charAt", receiver: recv, args: [index], type: STRING, loc: locOf(expr) };
+          }
+          if (resultType?.kind === "union") {
+            const arms = lowerer.unions.get(resultType.unionId)?.arms;
+            if (arms?.length === 2 && lowerer.armTag(resultType.unionId, STRING) >= 0 && lowerer.armTag(resultType.unionId, UNDEFINED_T) >= 0) {
+              return lowerOptionalStringIndex(lowerer, recv, index, resultType, locOf(expr));
+            }
+          }
         }
         lowerer.unsupported(
           "SC1090",
           expr,
-          "string indexing with this index/result shape (a number index typed 'string' lowers to charAt; " +
-            "use .charAt(i) under noUncheckedIndexedAccess)",
+          "string indexing with this index/result shape (expected a number index and a string or string | undefined result)",
         );
       }
       lowerer.unsupported("SC1090", expr, "element access on non-array values");
@@ -5161,7 +5170,7 @@ export function lowerElementCompound(lowerer: Lowerer, expr: ts.BinaryExpression
     // setenv(3), string keys and string values only.
     if (lowerer.isProcessEnv(target.expression) && !target.questionDotToken) {
       const loc = locOf(expr);
-      const key = lowerer.lowerExpr(target.argumentExpression);
+      const key = lowerEnvironmentKey(lowerer, target.argumentExpression);
       if (key.type.kind !== "string") {
         lowerer.unsupported("SC1090", target.argumentExpression, "indexing process.env with non-string keys");
       }
@@ -5516,6 +5525,14 @@ export function lowerElementCompound(lowerer: Lowerer, expr: ts.BinaryExpression
     const value = lowerer.lowerExpr(expr.right);
     return arrayValueStore(lowerer, arr, index, value, receiverIr.elem, locOf(expr));
   }
+
+/** Environment property names use ToPrimitive with the string hint, so
+ * checked objects must execute their own conversion hooks. */
+export function lowerEnvironmentKey(lowerer: Lowerer, node: ts.Expression): IrExpr {
+  const key = lowerer.lowerExpr(node);
+  if (key.type.kind === "dyn") return { kind: "libCall", fn: "dyn.toStringCoerce", args: [key], type: STRING, loc: key.loc };
+  return lowerRecordPropertyKey(lowerer, key, node);
+}
 
 export function ensureString(lowerer: Lowerer, e: IrExpr, node: ts.Node): IrExpr {
     if (e.type.kind === "string") return e;
@@ -6749,20 +6766,15 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
           if (arith) return { kind: "bin", op: arith, left: l, right: r, type: F64, loc };
           return { kind: "bin", op: cmp!, left: l, right: r, type: BOOL, loc };
         }
-        // `+`: number when the OTHER side is a number, string concat when
-        // it is a string — the two static homes; dyn+dyn stays a number.
+        // Untyped addition chooses concatenation or numeric addition only
+        // after both operands have undergone ToPrimitive at runtime.
         if (op === ts.SyntaxKind.PlusToken) {
-          if (other.type.kind === "f64" || other.type.kind === "dyn") {
-            return { kind: "bin", op: "+", left: checkNum(left), right: checkNum(right), type: F64, loc };
-          }
-          if (other.type.kind === "string") {
-            // String-context `+`: JS's answer is String(unknown) — the
-            // JS-exact dyn walker (numbers format, arrays join, objects
-            // print [object Object], handles the same) — never a checked
-            // cast: `'status ' + res.statusCode` concatenates like Node.
-            const strOf = (e: IrExpr): IrExpr =>
-              e.type.kind === "dyn" ? { kind: "toString", operand: e, type: STRING, loc: e.loc } : e;
-            return { kind: "strConcat", left: strOf(left), right: strOf(right), type: STRING, loc };
+          const l = lowerer.coerceToExpected(left, DYN);
+          const r = lowerer.coerceToExpected(right, DYN);
+          if (l.type.kind === "dyn" && r.type.kind === "dyn") {
+            const value: IrExpr = { kind: "libCall", fn: "dyn.add", args: [l, r], type: DYN, loc };
+            // A statically known string operand guarantees a string result.
+            return other.type.kind === "string" ? { kind: "dynCheck", value, type: STRING, loc } : value;
           }
         }
       }

@@ -36,12 +36,24 @@ test("keeps shared helper dependencies live", () => {
   expect(run(result)).toEqual(run(source));
 });
 
+test("matches comments and equivalent string escapes without changing bundle behavior", () => {
+  const source = fixture.replaceAll('"default"', "'de\\u0066ault'")
+    .replace("var __create =", "var /* binding */ __create =")
+    + '\nconsole.log(same(), matches("aa"));';
+  expect(run(rewritten(source))).toEqual(run(source));
+});
+
 test.each([
   ["factory effects", (s: string) => s.replace("module.exports = () =>", 'console.log("initializing"); module.exports = () =>')],
   ["factory capture", (s: string) => s.replace("() => /a+/g", "() => module.exports")],
   ["receiver", (s: string) => s.replace("() => /a+/g", "function () { return this; }")],
   ["arguments", (s: string) => s.replace("() => /a+/g", "() => arguments")],
   ["helper drift", (s: string) => s.replace("return to;", 'console.log("effect"); return to;')],
+  ["return line terminator", (s: string) => s.replace("return to;", "return\nto;")],
+  ["return comment terminator", (s: string) => s.replace("return to;", "return/*\n*/to;")],
+  ["arrow line terminator", (s: string) => s.replace("(mod, isNodeMode, target) =>", "(mod, isNodeMode, target)\n=>")],
+  ["helper operator drift", (s: string) => s.replace("mod != null", "mod !== null")],
+  ["helper dependency drift", (s: string) => s.replace("Object.create", "Object.freeze")],
   ["namespace escape", (s: string) => s + "\nconsole.log(first === second);"],
   ["named property", (s: string) => s + "\nconsole.log(first.name);"],
   ["default assignment", (s: string) => s + "\n(first.default) = () => /b/;"],

@@ -2040,6 +2040,8 @@ export type IrLibFn =
   | "dyn.globalSymbolSet"
   | "dyn.globalSymbolHas"
   | "dyn.globalSymbolDelete"
+  /** Exact native class capsule identity, without materializing its fields. */
+  | "dyn.typedRefIs"
   /** Destructuring pack over a dyn source — `const [a, b] = d`, a
    * destructured dyn callback param (args: the source and the STATIC
    * TypeError spelling, "" when the source has none — both borrowed;
@@ -2060,7 +2062,7 @@ export type IrLibFn =
   /** `key in v` with a RUNTIME (string) key on a checked-dynamic
    * receiver (args: value dyn, key string; result bool): OBJ answers
    * own-member presence, ARR answers 'length'/a valid index — exactly
-   * the compile-time dynHasKey fold, per value. Never throws. */
+   * the literal-key dynHasKey path. Proxy has traps may throw. */
   | "dyn.hasKey"
   /** Object.defineProperties over dyn values (args: target, descriptors —
    * both borrowed dyn; result: the target, +1 — JS's return value).
@@ -3803,6 +3805,8 @@ export type IrLibFn =
    * f64 result, or a throw. Used by statically lowered numeric coercions
    * whose checker type remained any. */
   | "dyn.toNumberCoerce"
+  | "dyn.add"
+  | "dyn.proxyNew"
   /** A read of a `declare`d const NOTHING defines (the bundler-define
    * pattern — __VERSION__): always throws the catchable ReferenceError
    * Node raises at the access ("<name> is not defined"). args[0] is the
@@ -7728,6 +7732,9 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "dyn.objectTag",
   // Numeric coercion runs user valueOf/toString — throws propagate.
   "dyn.toNumberCoerce",
+  "dyn.add",
+  "dyn.proxyNew",
+  "dyn.hasKey",
   "child.kill",
   // The caller's lookup runs synchronously inside the connect call — a
   // throw there propagates like Node's.

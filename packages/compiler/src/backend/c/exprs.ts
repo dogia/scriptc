@@ -1425,16 +1425,16 @@ function emitStringExpr(
           // The ARM value's ToString via the per-union interned helper
           // (unit arms are interned literals, string arms retain the
           // payload, f64/bool arms format). Box borrowed; result +1.
-          return emitter.newTemp(e.type, `${emitter.unionToStrHelper(v.type.unionId)}(${v.name})`);
+          return emitter.fallibleTemp(e.type, `${emitter.unionToStrHelper(v.type.unionId)}(${v.name})`);
         }
         if (v.type.kind === "caught") {
           // String(e) over the exception snapshot. Box borrowed; result +1.
-          return emitter.newTemp(e.type, `scr_caught_to_string(${v.name})`);
+          return emitter.fallibleTemp(e.type, `scr_caught_to_string(${v.name})`);
         }
         if (v.type.kind === "dyn") {
           // String(unknown): dispatch over the dyn kind (dynToStrHelper —
           // Node's String() incl. arrays-join and "[object Object]").
-          return emitter.newTemp(e.type, `${emitter.dynToStrHelper()}(${v.name})`);
+          return emitter.fallibleTemp(e.type, `${emitter.dynToStrHelper()}(${v.name})`);
         }
         if (v.type.kind === "record") {
           // String(record) / `${record}`: Object.prototype.toString's
@@ -3199,22 +3199,9 @@ function emitDynamicExpr(
         return emitter.fallibleTemp(e.type, call);
       }
       case "dynHasKey": {
-        // `"k" in pkg`: a kind-guarded presence answer, computed against
-        // the literal key at compile time — no allocation, borrowed box.
-        // An ISLAND-held receiver fences loudly (Node asks the real
-        // engine object — `false` would be a silent wrong answer), so
-        // the temp rides the fallible path.
-        const d = emitter.emitExpr(e.value);
-        const keyBytes = Buffer.from(e.key, "utf8");
-        const keyLit = cStringLiteral(keyBytes);
-        const objTest = `scr_dyn_obj_get(${d.name}, ${keyLit}, ${keyBytes.length}) != NULL`;
-        const arrTest =
-          e.key === "length"
-            ? "true"
-            : /^(0|[1-9][0-9]*)$/.test(e.key) && Number(e.key) <= Number.MAX_SAFE_INTEGER
-              ? `${d.name}->v.arr.len > ${e.key}`
-              : "false";
-        const test = `(${d.name}->kind == SCR_DYN_OBJ ? (${objTest}) : ${d.name}->kind == SCR_DYN_ARR ? (${arrTest}) : scr_dyn_isl_fence(${d.name}, "'in'"))`;
+        const value = emitter.emitExpr(e.value);
+        const key = emitter.emitExpr({ kind: "strLit", value: e.key, type: STRING, loc: e.loc });
+        const test = `scr_dyn_has_key(${value.name}, ${key.name})`;
         return emitter.fallibleTemp(e.type, e.negated ? `!${test}` : test);
       }
       case "dynScalarEq": {
@@ -3256,7 +3243,7 @@ function emitDynamicExpr(
               ? // `typeof v === "object"`: objects, arrays, bytes, native
                 // handles, promises, AND null — engine-held objects by the
                 // engine's own typeof.
-                `(${d.name}->kind == SCR_DYN_OBJ || ${d.name}->kind == SCR_DYN_ARR || ${d.name}->kind == SCR_DYN_BYTES || ${d.name}->kind == SCR_DYN_HANDLE || ${d.name}->kind == SCR_DYN_PROMISE || ${d.name}->kind == SCR_DYN_NULL || scr_dyn_isl_typeof_is(${d.name}, "object"))`
+                `(${d.name}->kind == SCR_DYN_OBJ || ${d.name}->kind == SCR_DYN_ARR || ${d.name}->kind == SCR_DYN_BYTES || ${d.name}->kind == SCR_DYN_HANDLE || ${d.name}->kind == SCR_DYN_PROMISE || ${d.name}->kind == SCR_DYN_PROXY || ${d.name}->kind == SCR_DYN_NULL || scr_dyn_isl_typeof_is(${d.name}, "object"))`
               : e.test === "truthy"
                 ? // Runtime ToBoolean includes typed-reference capsules and
                   // keeps this backend in lockstep with LLVM.
@@ -4460,6 +4447,8 @@ function emitDynamicLibCall(state: LibCallState): Temp {
             return finish(`scr_dyn_global_symbol_has(${arg(0)})`);
           case "dyn.globalSymbolDelete":
             return finish(`scr_dyn_global_symbol_delete(${arg(0)})`);
+          case "dyn.typedRefIs":
+            return finish(`scr_dyn_typed_ref_is_key(${arg(0)}, ${arg(1)})`);
           case "dyn.iterPack":
             // Destructuring/for-of pack over a dyn source: both borrowed,
             // fresh array +1; throws V8's not-iterable TypeError on
@@ -4493,6 +4482,10 @@ function emitDynamicLibCall(state: LibCallState): Temp {
             // thrown hook leaves the exception pending; the may-throw
             // epilogue abandons the NaN dummy.
             return finish(`scr_dyn_number_coerce(${arg(0)})`);
+          case "dyn.add":
+            return finish(`scr_dyn_add(${arg(0)}, ${arg(1)})`);
+          case "dyn.proxyNew":
+            return finish(`scr_dyn_proxy_new(${arg(0)}, ${arg(1)})`);
           case "global.undefRead":
             // A declare-d const nothing defines: Node's catchable
             // ReferenceError at the access (always throws — the typed

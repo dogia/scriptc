@@ -2022,11 +2022,10 @@ export function lowerShorthandValue(lowerer: Lowerer, prop: ts.ShorthandProperty
   );
 }
 
-/** Rejects any `this` inside an object-literal method body — including in
- * nested arrows, which inherit the method's `this` (nested function
- * expressions reset it, but their bare `this` is already a tsc error
- * under noImplicitThis, so over-rejecting them here changes nothing). */
+/** Rejects the method's own receiver, including lexical captures in
+ * arrows. Nested ordinary functions bind their own ambient receiver. */
 export function rejectThisInObjectMethod(lowerer: Lowerer, node: ts.Node): void {
+  if (ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isAccessor(node)) return;
   if (node.kind === ts.SyntaxKind.ThisKeyword) {
     lowerer.unsupported("SC1090", node, "references to 'this' in object literal methods");
   }

@@ -737,6 +737,7 @@ ScrStr *scr_insp_key(ScrStr *k) {
  * synthesized helper. Same engine, same defaults. dyn-boxed bytes render
  * in the checked-dynamic tree's documented Uint8Array identity (SEMANTICS.md). */
 ScrStr *scr_insp_dyn(ScrDyn *d, double recurse, double depth) {
+  if (d->kind == SCR_DYN_PROXY) return scr_insp_dyn(d->v.proxy.target, recurse, depth);
   switch (d->kind) {
     case SCR_DYN_NULL:
       return scr_str_new("null", 4);
