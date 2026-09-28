@@ -10,14 +10,12 @@ const TS5_ISLANDS = [
   "packages/compiler/src/frontend/cjs-lexer.ts",
   "packages/compiler/src/frontend/lowering/lower-comptime.ts",
   "packages/compiler/src/frontend/ts7/world-check.ts",
-  // The provenance prescan parses files BEFORE any program world exists
-  // (the bare-import walk that decides what to fetch) — a parser island
-  // exactly like npm.ts's specifier scan.
-  "packages/compiler/src/frontend/provenance.ts",
+  // The standalone native parser compares source spans against TS5 as
+  // a test oracle; no oracle node crosses into the native syntax passes.
+  "packages/compiler/src/frontend/ts7/source-parser.test.ts",
   // The bundler-emitted-CJS export rewrite runs inside the fs shadow,
   // BEFORE the 7.0.2 program reads the file — a text→text parser island
   // beside cjs-lexer.ts (only strings cross its boundary).
-  "packages/compiler/src/frontend/npm-static-declarations.ts",
   "packages/compiler/src/frontend/npm-static-rewrite.ts",
   "packages/compiler/src/frontend/npm-static-bundled-cjs.ts",
   // Semantic cache validation parses source text only to identify exact

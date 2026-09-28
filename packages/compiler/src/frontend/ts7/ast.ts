@@ -170,7 +170,7 @@ export function canHaveModifiers(node: Node): boolean {
 
 /** The node's modifier tokens, decorators excluded (5.9.3's getModifiers). */
 export function getModifiers(node: Node): readonly Modifier[] | undefined {
-  const modifiers = (node as { modifiers?: NodeArray<Node> }).modifiers;
+  const modifiers = node.modifiers;
   if (modifiers === undefined) return undefined;
   return modifiers.filter((m): m is Modifier => m.kind !== SyntaxKind.Decorator);
 }
@@ -199,7 +199,7 @@ function modifierToFlag(kind: number): number {
 }
 
 function modifierFlagsOfNode(node: Node): number {
-  const modifiers = (node as { modifiers?: NodeArray<Node> }).modifiers;
+  const modifiers = node.modifiers;
   let flags = ModifierFlags.None as number;
   if (modifiers !== undefined) {
     for (const m of modifiers) flags |= modifierToFlag(m.kind);

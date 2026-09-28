@@ -1510,9 +1510,19 @@ export function genericFnOf(lowerer: Lowerer, ident: ts.Identifier): GenericFnIn
       // unbound type parameter surfaces as a mapping diagnostic later).
       if (declared.isUnionType()) {
         const unitFlags = ts.TypeFlags.Undefined | ts.TypeFlags.Null;
-        const dParts = ts.constituentTypes(declared).filter((t) => !(t.flags & unitFlags));
-        const iParts: readonly ts.Type[] = inst.isUnionType() ? ts.constituentTypes(inst).filter((t) => !(t.flags & unitFlags)) : [inst];
+        const declaredParts = ts.constituentTypes(declared);
+        const declaredUnits = declaredParts.reduce((flags, t) => flags | (t.flags & unitFlags), 0);
+        const dParts = declaredParts.filter((t) => !(t.flags & unitFlags));
+        const iParts: readonly ts.Type[] = inst.isUnionType() ? ts.constituentTypes(inst).filter((t) => !(t.flags & declaredUnits)) : [inst];
         if (dParts.length === 1 && iParts.length === 1) unify(dParts[0]!, iParts[0]!, depth + 1);
+        else if (dParts.length === 1 && iParts.length > 1 &&
+                 iParts.every((t) => (t.flags & unitFlags) === 0)) {
+          // T | undefined can receive boolean | undefined: boolean itself
+          // has two literal arms. There is still one declared data slot,
+          // so match it against the whole remaining union. Removing null
+          // too is safe only when no undeclared null arm remains.
+          unify(dParts[0]!, lowerer.checker.getNonNullableType(inst), depth + 1);
+        }
         return;
       }
       // Instantiations of the SAME generic ALIAS (Partial<T> vs

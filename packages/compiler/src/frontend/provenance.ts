@@ -29,13 +29,14 @@
  * this); unlisted packages still take the live pipeline. */
 
 import { execFile } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import ts from "typescript5";
+import { sourceImportsOfFile } from "./module-syntax.js";
+import { parseSourceFile } from "./ts7/source-parser-node.js";
 import { resolveExports, resolveRelativeModule } from "./resolve.js";
 import { packageNameOfSpecifier as packageNameOf } from "./workspace-registry.js";
 import type { ProvenancePackageSource, ProvenanceSources } from "./provenance-registry.js";
@@ -77,37 +78,11 @@ function readJson(path: string): Record<string, unknown> | null {
  * The provenance pipeline runs BEFORE the program loads (tsgo needs the
  * "paths" mapping at creation), so the bare specifiers come from a light
  * parse walk of the entry's RELATIVE import closure — the same specifier
- * collection shapes npm.ts scans embedded modules with, over the same
- * sanctioned typescript5 island. */
+ * collection shapes npm.ts scans embedded modules with, over the shared
+ * native TypeScript syntax service. */
 
 function moduleSpecifiersLite(source: string, fileName: string): { spec: string; typeOnly: boolean }[] {
-  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
-  const out: { spec: string; typeOnly: boolean }[] = [];
-  const visit = (n: ts.Node): void => {
-    if (
-      (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) &&
-      n.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(n.moduleSpecifier)
-    ) {
-      const typeOnly = ts.isImportDeclaration(n)
-        ? (n.importClause?.isTypeOnly ?? false)
-        : n.isTypeOnly;
-      out.push({ spec: n.moduleSpecifier.text, typeOnly });
-    } else if (ts.isCallExpression(n)) {
-      const arg = n.arguments[0];
-      if (
-        arg !== undefined &&
-        ts.isStringLiteralLike(arg) &&
-        (n.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(n.expression) && n.expression.text === "require" && n.arguments.length === 1))
-      ) {
-        out.push({ spec: arg.text, typeOnly: false });
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
+  return sourceImportsOfFile(parseSourceFile(fileName, source, "ts"));
 }
 
 /** Every bare (non-relative, non-builtin, non-"#") VALUE specifier the
@@ -272,7 +247,7 @@ function locatePackageDir(tree: string, name: string): string | null {
     if (depth >= 3) continue;
     let entries: string[];
     try {
-      entries = ts.sys.getDirectories(dir);
+      entries = readdirSync(dir).filter((entry) => isDirectory(join(dir, entry))).sort();
     } catch {
       continue;
     }

@@ -1102,9 +1102,16 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
   // Generic visitors can instantiate `T | undefined` as `void | undefined`.
   // It has the same return convention as standalone void; value positions
   // still substitute the unit-only slot through isUnitOnlyTsType below.
-  if (widened.isUnionType() && ts.constituentTypes(widened).every(
-    (part) => (part.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0,
-  )) return VOID;
+  if (widened.isUnionType() && ts.constituentTypes(widened).every((part) => {
+    if ((part.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0) return true;
+    // A forwarding generic call keeps its caller's symbolic T in the
+    // resolved signature. Its current instantiation can still be void.
+    if ((part.flags & ts.TypeFlags.TypeParameter) !== 0 && resolveTypeParam?.(part)?.kind === "void") {
+      contextResolutions++;
+      return true;
+    }
+    return false;
+  })) return VOID;
   // Standalone `null` (a `const x = null` binding, a `{ value: null }`
   // field, a `(): null` return): the unit-only union — the value is always
   // THE interned null instance, comparisons are tag tests, JSON serializes
@@ -1225,7 +1232,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     // `undefined[]` (sparse literals — `[,]` — and explicit annotations):
     // the element rides the unit-only union like a record field would; the
     // VOID mapping is a return-position artifact, not a value.
-    if (elem?.kind === "void" && isUnitOnlyTsType(elemTs)) elem = unitOnlyUnion(unions);
+    if (elem?.kind === "void" && isUnitOnlyTsType(elemTs, ctx.resolveTypeParam)) elem = unitOnlyUnion(unions);
     // A jsval element ABSORBS the array — with one carve-out. An array
     // type entangled with package-declared ('npm-jsval') elements
     // (`GeneratedFile[]`, `ModelMessage[]`) describes ISLAND values: the
@@ -1301,7 +1308,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
       let et = mapType(args[i]!, ctx);
       // A unit-only element (`[number, undefined]`) rides the unit-only
       // union, the record-field rule.
-      if (et?.kind === "void" && isUnitOnlyTsType(args[i]!)) et = unitOnlyUnion(unions);
+      if (et?.kind === "void" && isUnitOnlyTsType(args[i]!, ctx.resolveTypeParam)) et = unitOnlyUnion(unions);
       // dyn ELEMENTS map now — `[string, unknown]`, the Object.entries
       // tuple over an `unknown`-valued index signature (the pricing-table
       // normalizer shape): the slot has the overflow map's RC/JSON/dyn
@@ -2881,6 +2888,10 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
           }
           return null;
         }
+        if (mapped.kind === "void") {
+          byKey.set(typeKey(UNDEFINED_T), UNDEFINED_T);
+          continue;
+        }
         byKey.set(typeKey(mapped), mapped);
         if (mapped.kind === "record") recordParts.push({ source: part, mapped });
       }
@@ -3506,10 +3517,11 @@ export function genResultRecord(
  * fields, tuple/array elements, variable slots) substitute unitOnlyUnion
  * for these; RETURN positions keep the VOID mapping (a void return is not
  * a value). */
-export function isUnitOnlyTsType(t: ts.Type): boolean {
+export function isUnitOnlyTsType(t: ts.Type, resolveTypeParam?: TypeParamResolver): boolean {
   const UNIT = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
   const parts: readonly ts.Type[] = t.isUnionType() ? ts.constituentTypes(t) : [t];
-  return parts.every((p) => (p.flags & UNIT) !== 0);
+  return parts.every((p) => (p.flags & UNIT) !== 0 ||
+    ((p.flags & ts.TypeFlags.TypeParameter) !== 0 && resolveTypeParam?.(p)?.kind === "void"));
 }
 
 /** IR-level `t | undefined`, canonicalized and fenced exactly like the
@@ -4054,7 +4066,7 @@ function mapRecordTypeInner(widened: ts.Type, ctx: TypeMapperCtx): IrType | Reco
       // absent-field idiom — and `{ p: undefined }` spellings): the
       // unit-only union. The runtime value is the interned unit, JSON
       // omits the undefined arm exactly like an omitted optional.
-      if (pt?.kind === "void" && isUnitOnlyTsType(fieldTs)) pt = unitOnlyUnion(ctx.unions);
+      if (pt?.kind === "void" && isUnitOnlyTsType(fieldTs, ctx.resolveTypeParam)) pt = unitOnlyUnion(ctx.unions);
       // dyn FIELDS map now (`{ v: unknown }`, `[string, unknown]` tuples):
       // the slot carries a dyn value exactly like an `unknown`-valued
       // overflow entry — same RC adapters, same dynFrom conversion on the
@@ -4224,7 +4236,7 @@ export function describeComponentBlocker(widened: ts.Type, ctx: TypeMapperCtx): 
   if (checker.isTupleType(widened)) {
     for (const arg of checker.getTypeArguments(widened as ts.TypeReference)) {
       const et = mapType(arg, ctx);
-      if (et?.kind === "void" && isUnitOnlyTsType(arg)) continue;
+      if (et?.kind === "void" && isUnitOnlyTsType(arg, ctx.resolveTypeParam)) continue;
       if (!et || et.kind === "void") {
         return `the tuple shape is supported, but its element type '${text(arg)}' does not compile`;
       }
@@ -4337,7 +4349,7 @@ export function describeRecordMemberBlocker(widened: ts.Type, ctx: TypeMapperCtx
     const fieldTs = checker.getTypeOfSymbol(p);
     if (isGenericCallableMemberType(fieldTs, checker)) continue;
     let pt = mapType(fieldTs, ctx);
-    if (pt?.kind === "void" && isUnitOnlyTsType(fieldTs)) pt = unitOnlyUnion(ctx.unions);
+    if (pt?.kind === "void" && isUnitOnlyTsType(fieldTs, ctx.resolveTypeParam)) pt = unitOnlyUnion(ctx.unions);
     if (!pt || pt.kind === "void") {
       return `the record shape is supported, but its member '${p.name}' has type '${checker.typeToString(fieldTs)}', which does not compile`;
     }

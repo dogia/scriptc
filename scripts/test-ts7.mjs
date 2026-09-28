@@ -12,11 +12,10 @@ const ALLOWED_TYPESCRIPT5_IMPORTS = new Set([
   "packages/compiler/src/frontend/lowering/lower-comptime.ts",
   // Bundled factory normalization shares npm-static-rewrite's syntactic TS5 island.
   "packages/compiler/src/frontend/npm-static-bundled-cjs.ts",
-  "packages/compiler/src/frontend/npm-static-declarations.ts",
   "packages/compiler/src/frontend/npm-static-rewrite.ts",
   "packages/compiler/src/frontend/npm.ts",
-  "packages/compiler/src/frontend/provenance.ts",
   "packages/compiler/src/frontend/ts7/world-check.ts",
+  "packages/compiler/src/frontend/ts7/source-parser.test.ts",
   "packages/compiler/src/library/semantic-source.ts",
   "packages/compiler/test/ts7/harness.ts",
   "packages/compiler/test/ts7/resolver-parity.test.ts",

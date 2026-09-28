@@ -87,8 +87,12 @@ export class Ts7Session {
     const snapshot = new Ts7SessionSnapshot(data, this, paths);
     const previous = this.latest;
     if (previous !== undefined) {
-      this.cache.retain(snapshot.id, previous.id, data.changes);
+      // Releasing the latest server snapshot also drops its change-tracking
+      // baseline. A later response may omit changes even when the same
+      // project's source changed, so its old cache references are not proof
+      // that the new source is identical.
       if (previous.isDisposed()) this.cache.release(previous.id);
+      else this.cache.retain(snapshot.id, previous.id, data.changes);
     }
     this.latest = snapshot;
     this.snapshots.add(snapshot);

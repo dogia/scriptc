@@ -87,6 +87,8 @@
  */
 import { dirname, extname, join, resolve } from "node:path";
 import ts from "typescript5";
+import { moduleSpecifiersOfFile, type ModuleSpecifiers } from "./module-syntax.js";
+import { parseSourceFile } from "./ts7/source-parser-node.js";
 import { packageNameOfSpecifier as packageNameOf } from "./workspace-registry.js";
 import { cjsLexedExportsOf } from "./cjs-lexer.js";
 import { trackedDirectoryExists, trackedFileExists, trackedReadFile, trackedRealpath } from "./input-tracker.js";
@@ -593,150 +595,11 @@ const KNOWN_BUILTINS = new Set([
   "util", "v8", "vm", "wasi", "worker_threads", "zlib",
 ]);
 
-/** One specifier's call-site kinds within a module — the edge-kind record
- * the walk's per-kind semantics act on. A specifier can appear under
- * several forms in one file; any STATIC occurrence makes the edge eager
- * (Node refuses the whole static graph at link time regardless of what the
- * lazy sites would have done). */
-export interface SpecifierUse {
-  specifier: string;
-  /** import/export declaration — eager, link-time. */
-  static: boolean;
-  /** require("x") — or an esbuild bundle's `__require("x")` helper call,
-   * the shape published dists route external requires through — call-time.
-   * The union of the two attribution flags below. */
-  require: boolean;
-  /** require sites whose require function lives in THIS file's scope: a
-   * direct `require(…)` call (the chunk banner's createRequire), or a
-   * `__require(…)` call when the helper is defined locally. */
-  requireLocal: boolean;
-  /** `__require(…)` sites whose helper is an IMPORTED binding — esbuild
-   * splits it into a shared chunk, so the closed-over require was created
-   * with THAT chunk's import.meta.url and Node resolves from there. The
-   * edge must attribute to the defining chunk or the runtime lookup
-   * misses. */
-  requireViaHelper: boolean;
-  /** import("x") — evaluation-time. */
-  dynamicImport: boolean;
-  /** import.meta.resolve("x") — resolves synchronously without loading.
-   * It still needs an emitted edge for bare package names so the island can
-   * answer from its fixed graph; relative and URL-like names need no edge. */
-  importMetaResolve: boolean;
-}
+export type { SpecifierUse, ModuleSpecifiers } from "./module-syntax.js";
 
-/** moduleSpecifiersOf's full answer: the per-specifier call-site kinds
- * plus where the file's `__require` binding comes from, when it is not
- * its own. */
-export interface ModuleSpecifiers {
-  uses: SpecifierUse[];
-  /** The specifier `__require` is IMPORTED from (`import { __require }
-   * from "./chunk-X.js"` — esbuild's shared-helper chunk shape), else
-   * null (locally defined or absent). */
-  requireHelperImport: string | null;
-  /** The specifier `__require` is re-EXPORTED from (`export { __require }
-   * from "./x"`) — the chain hop for bundles routing the helper through
-   * an intermediate chunk. */
-  requireHelperReexport: string | null;
-}
-
-/** Every module specifier `source` can load at runtime, in encounter
- * order with its call-site kinds merged per specifier: import/export
- * declarations (INCLUDING `export * as ns from "x"`, which
- * ts.preProcessFile silently drops — zod v4 re-exports its util namespace
- * that way), dynamic import("literal"), and require("literal") /
- * __require("literal") (esbuild's external-require helper — collecting its
- * literal call sites gives bundled dists an honest build-time inventory).
- * A real parse, never a regex. */
+/** Collect runtime edges with the shared native parser and syntax walk. */
 export function moduleSpecifiersOf(source: string, fileName: string): ModuleSpecifiers {
-  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.JS);
-  const uses: SpecifierUse[] = [];
-  const bySpec = new Map<string, SpecifierUse>();
-  let requireHelperImport: string | null = null;
-  let requireHelperReexport: string | null = null;
-  /** Uses with `__require(…)` sites — attributed local vs helper AFTER the
-   * walk, once the (hoisted) import declarations have all been seen. */
-  const viaHelperIdent = new Set<SpecifierUse>();
-  const push = (spec: string, kind: "static" | "requireLocal" | "dynamicImport" | null): SpecifierUse => {
-    let use = bySpec.get(spec);
-    if (!use) {
-      use = {
-        specifier: spec,
-        static: false,
-        require: false,
-        requireLocal: false,
-        requireViaHelper: false,
-        dynamicImport: false,
-        importMetaResolve: false,
-      };
-      bySpec.set(spec, use);
-      uses.push(use);
-    }
-    if (kind !== null) use[kind] = true;
-    return use;
-  };
-  const visit = (n: ts.Node): void => {
-    if (
-      (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) &&
-      n.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(n.moduleSpecifier)
-    ) {
-      push(n.moduleSpecifier.text, "static");
-      if (
-        ts.isImportDeclaration(n) &&
-        n.importClause?.namedBindings !== undefined &&
-        ts.isNamedImports(n.importClause.namedBindings) &&
-        n.importClause.namedBindings.elements.some((el) => el.name.text === "__require")
-      ) {
-        requireHelperImport = n.moduleSpecifier.text;
-      }
-      if (
-        ts.isExportDeclaration(n) &&
-        n.exportClause !== undefined &&
-        ts.isNamedExports(n.exportClause) &&
-        n.exportClause.elements.some((el) => (el.propertyName ?? el.name).text === "__require")
-      ) {
-        requireHelperReexport = n.moduleSpecifier.text;
-      }
-    } else if (ts.isCallExpression(n)) {
-      const arg = n.arguments[0];
-      if (
-        n.expression.kind === ts.SyntaxKind.ImportKeyword &&
-        arg !== undefined &&
-        ts.isStringLiteralLike(arg)
-      ) {
-        push(arg.text, "dynamicImport");
-      } else if (
-        ts.isPropertyAccessExpression(n.expression) &&
-        n.expression.name.text === "resolve" &&
-        ts.isMetaProperty(n.expression.expression) &&
-        n.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
-        n.arguments.length >= 1 && arg !== undefined && ts.isStringLiteralLike(arg)
-      ) {
-        push(arg.text, null).importMetaResolve = true;
-      } else if (
-        ts.isIdentifier(n.expression) &&
-        (n.expression.text === "require" || n.expression.text === "__require") &&
-        n.arguments.length === 1 &&
-        arg !== undefined &&
-        ts.isStringLiteralLike(arg)
-      ) {
-        if (n.expression.text === "__require") {
-          // local vs imported-helper attribution is decided after the walk
-          viaHelperIdent.add(push(arg.text, null));
-        } else {
-          push(arg.text, "requireLocal");
-        }
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  for (const use of viaHelperIdent) {
-    if (requireHelperImport !== null) use.requireViaHelper = true;
-    else use.requireLocal = true;
-  }
-  for (const use of uses) use.require = use.requireLocal || use.requireViaHelper;
-  return { uses, requireHelperImport, requireHelperReexport };
+  return moduleSpecifiersOfFile(parseSourceFile(fileName, source, "js"));
 }
 
 function builtinKeyOf(specifier: string): string | null {

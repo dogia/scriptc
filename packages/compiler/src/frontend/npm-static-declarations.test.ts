@@ -134,6 +134,32 @@ class Input {
 });
 
 describe("npm-static declaration overload projection", () => {
+  test("find widening honors the final JSDoc block and callable type annotations", () => {
+    const source = `class Choices {
+      constructor() { this.items = []; }
+      /** @returns {OldItem} */
+      /** @returns {Item} */
+      latest() { return this.items.find((item) => true); }
+      /** @returns {Ignored} */
+      /** A plain description supersedes the earlier annotation. */
+      untyped() { return this.items.find((item) => true); }
+      /** @type {() => Item} */
+      callable() { return this.items.find((item) => true); }
+      /** @type {{ (): Item }} */
+      signature() { return this.items.find((item) => true); }
+      /** @returns {Item | undefined} */
+      already() { return this.items.find((item) => true); }
+    }`;
+    const result = applyNpmStaticFindReturnWidening("index.js", source);
+    expect(result?.insertions).toHaveLength(3);
+    expect(result?.text).toContain("@returns {OldItem}");
+    expect(result?.text).toContain("@returns {Item | undefined}");
+    expect(result?.text).toContain("@returns {Ignored}");
+    expect(result?.text).toContain("@type {() => Item | undefined}");
+    expect(result?.text).toContain("@type {{ (): Item | undefined }}");
+    expect(applyNpmStaticFindReturnWidening("index.js", result!.text)).toBeNull();
+  });
+
   test("widens an array find result when JavaScript JSDoc omits undefined", () => {
     const source = `
 class Choices {

@@ -42,3 +42,17 @@ console.log("explicit store", visitor.store<void>(() => { console.log("stored ex
 console.log("value store", visitor.store(() => 42));
 once(() => { console.log("once void"); });
 console.log("once value", once(() => 42));
+
+// A generic wrapper forwards the symbolic return type to a generic method.
+function forwarded<T>(visit: (value: number) => T | undefined): T | undefined {
+  return visitor.each(visit);
+}
+function forwardedAgain<T>(visit: (value: number) => T | undefined): T | undefined {
+  return forwarded(visit);
+}
+forwarded((value) => { console.log("forward visit", value); });
+forwardedAgain((value) => { console.log("forward again visit", value); });
+console.log("forwarded bool", forwarded((value) => value === 2 ? true : undefined));
+console.log("forwarded false", forwardedAgain((value) => value === 2 ? false : undefined));
+console.log("forwarded number", forwardedAgain((value) => value === 2 ? 17 : undefined));
+console.log("forwarded string", forwardedAgain((value) => value === 2 ? "found" : undefined));

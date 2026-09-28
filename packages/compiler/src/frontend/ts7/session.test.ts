@@ -71,7 +71,7 @@ test("owned snapshots preserve SDK options, diagnostics, metadata and default-pr
   } finally { session.close(); sdk.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("virtual updates keep old ASTs, share unchanged versions, and release the latest cache lazily", () => {
+test("virtual updates share active ASTs and refetch after releasing their baseline", () => {
   const dir = mkdtempSync(join(tempRoot, "scriptc-session-updates-"));
   const a = protocolPath(join(dir, "a.json")), b = protocolPath(join(dir, "b.json"));
   const changed = protocolPath(join(dir, "changed.ts")), stable = protocolPath(join(dir, "stable.ts"));
@@ -108,13 +108,14 @@ test("virtual updates keep old ASTs, share unchanged versions, and release the l
     const before = session.getTimingInfo().totals.sourceFilesFetched;
     const third = session.updateSnapshot();
     const oracleThird = sdk.updateSnapshot();
-    expect(third.getProject(a)!.program.getSourceFile(stable)).toBe(retained);
-    expect(session.getTimingInfo().totals.sourceFilesFetched).toBe(before);
+    const refreshed = third.getProject(a)!.program.getSourceFile(stable)!;
+    expect(refreshed.text).toBe(retained.text);
+    expect(session.getTimingInfo().totals.sourceFilesFetched).toBe(before + 1);
     option = "es2020";
     const fourth = session.updateSnapshot({fileChanges: {changed: [a,b]}});
     const oracleFourth = sdk.updateSnapshot({fileChanges: {changed: [a,b]}});
     const reparsed = fourth.getProject(a)!.program.getSourceFile(stable)!;
-    expect(reparsed === retained).toBe(oracleFourth.getProject(a)!.program.getSourceFile(stable) === oracleStable);
+    expect(reparsed === refreshed).toBe(oracleFourth.getProject(a)!.program.getSourceFile(stable) === oracleStable);
     expect(fourth.getProject(a)!.compilerOptions.target).toBe(oracleFourth.getProject(a)!.compilerOptions.target);
     expect(fourth.getProject(a)!.compilerOptions.target).not.toBe(third.getProject(a)!.compilerOptions.target);
     expect(oracleThird.getProject(a)!.program.getSourceFile(stable)).toBe(oracleStable);
@@ -161,4 +162,38 @@ test("transport failure during close seals every snapshot and clears retained AS
     expect(session.cache.size).toBe(0);
     expect(() => session.close()).not.toThrow();
   } finally { session.close(); rmSync(dir, {recursive: true, force: true}); }
+});
+
+
+test("a released latest snapshot cannot lend stale ASTs to the same project", () => {
+  const dir = mkdtempSync(join(tempRoot, "scriptc-session-released-"));
+  const file = protocolPath(join(dir, "main.ts"));
+  const config = protocolPath(join(dir, "tsconfig.json"));
+  let source = "export const value = 1;";
+  const overlay: Ts7FileSystem = {
+    ...fallback,
+    readFile: (path) => path === file ? source : path === config
+      ? JSON.stringify({ compilerOptions: { noLib: true, types: [] }, files: [file] })
+      : null,
+    fileExists: (path) => path === file || path === config,
+  };
+  const session = connect(dir, overlay);
+  try {
+    const first = session.updateSnapshot({ openProjects: [config] });
+    const old = first.getProject(config)!.program.getSourceFile(file)!;
+    first.dispose();
+    source = 'export const replacement = "new";';
+    const second = session.updateSnapshot({ fileChanges: { changed: [file] } });
+    const current = second.getProject(config)!.program.getSourceFile(file)!;
+    expect(current.text).toBe(source);
+    expect(current).not.toBe(old);
+    expect(old.text).toBe("export const value = 1;");
+    second.dispose();
+    const deleted = session.updateSnapshot({ fileChanges: { deleted: [file] } });
+    deleted.dispose();
+    source = "export const third = true;";
+    const third = session.updateSnapshot({ fileChanges: { created: [file] } });
+    expect(third.getProject(config)!.program.getSourceFile(file)!.text).toBe(source);
+    expect(old.statements[0]!.getText()).toBe("export const value = 1;");
+  } finally { session.close(); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -3710,7 +3710,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
       // `var v: void;` / `let x: undefined;` — a unit-only binding rides
       // the unit-only union (its undefined arm is the unassigned state,
       // which is also the only state).
-      if (type.kind === "void" && isUnitOnlyTsType(lowerer.typeParamTsResolver(lowerer.typeOf(decl.name)) ?? lowerer.typeOf(decl.name))) {
+      if (type.kind === "void" && isUnitOnlyTsType(lowerer.typeOf(decl.name), lowerer.typeParamResolver)) {
         type = unitOnlyUnion(lowerer.unions);
       }
       if (type.kind === "void") lowerer.badType(decl.name, lowerer.typeOf(decl.name));
@@ -3946,7 +3946,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     // like any optional completion. A generic visitor can bind the slot's
     // T to void; consult that binding before deciding its value layout.
     // coerceInto preserves a void call's effects before wrapping undefined.
-    if (settledType.kind === "void" && isUnitOnlyTsType(lowerer.typeParamTsResolver(lowerer.typeOf(decl.name)) ?? lowerer.typeOf(decl.name))) {
+    if (settledType.kind === "void" && isUnitOnlyTsType(lowerer.typeOf(decl.name), lowerer.typeParamResolver)) {
       settledType = unitOnlyUnion(lowerer.unions);
     }
     if (settledType.kind === "void") lowerer.badType(decl.name, lowerer.typeOf(decl.name));
@@ -6690,10 +6690,15 @@ function lowerBranchSwitch(
     // loop (`for (const row of grid) for (const cell of row)`). The checker
     // sees the inner value as an array, while its runtime slot retains
     // undefined. An Array.isArray guard can also select the array from a
-    // node | node[] | undefined slot. Validate that exact array arm; simply
-    // stripping undefined would leave a multi-arm union in the loop.
+    // node | node[] | undefined slot. Map lookups and optional fields also
+    // retain nullable runtime slots after a guard selects a concrete
+    // iterable. Validate the selected arm before choosing its iteration
+    // protocol; unchecked null assertions still throw at runtime.
     const checkerIterable = lowerer.mapTypeOf(lowerer.typeOf(iterSrc));
-    if (iterable.type.kind === "union" && lowerer.armTag(iterable.type.unionId, UNDEFINED_T) >= 0 && checkerIterable?.kind === "array") {
+    if (iterable.type.kind === "union" && checkerIterable !== null &&
+        (checkerIterable.kind === "array" || checkerIterable.kind === "map" || checkerIterable.kind === "set" ||
+         checkerIterable.kind === "bytes" || checkerIterable.kind === "string" || checkerIterable.kind === "searchParams" ||
+         checkerIterable.kind === "generator" || checkerIterable.kind === "object")) {
       const helper = lowerer.narrowedArmHelper(iterable.type.unionId, checkerIterable, locOf(iterSrc));
       if (helper) iterable = { kind: "call", callee: helper, args: [iterable], type: checkerIterable, loc: locOf(iterSrc) };
     }

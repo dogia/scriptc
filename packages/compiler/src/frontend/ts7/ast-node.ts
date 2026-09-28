@@ -241,6 +241,29 @@ export class AstNode {
     return result;
   }
 
+  get body(): AstNode | undefined {
+    const body = this.childNode("body");
+    // TS7 can serialize a reparsed @type callable before a method's
+    // body without setting the type presence bit. The linked Block is
+    // still the real body; keep the JSDoc node out of this view.
+    if (body !== undefined && (body.flags & AstNodeFlags.JSDoc) !== 0 && (body.flags & AstNodeFlags.Reparsed) !== 0) {
+      const next = this.file.wire.next(body.index);
+      if (next !== 0 && this.file.wire.parent(next) === this.index && this.file.wire.kind(next) === AstKind.Block) {
+        return this.file.node(next);
+      }
+    }
+    return body;
+  }
+
+  get questionToken(): AstNode | undefined {
+    const direct = this.childNode("questionToken");
+    if (direct !== undefined) return direct;
+    // TypeScript 7 shares one postfix slot for optional and definite-
+    // assignment declarations. The familiar helper surface keeps them apart.
+    const token = this.childNode("postfixToken");
+    return token?.kind === SyntaxKind.QuestionToken ? token : undefined;
+  }
+
   // BEGIN GENERATED CHILD GETTERS
   // Generated from typescript@7.0.2; run scripts/generate-ts7-ast-schema.mjs.
   get argument(): AstNode | undefined { return this.childNode("argument"); }
@@ -251,7 +274,6 @@ export class AstNode {
   get attributes(): AstNode | readonly AstNode[] | undefined { return this.child("attributes"); }
   get awaitModifier(): AstNode | undefined { return this.childNode("awaitModifier"); }
   get block(): AstNode | undefined { return this.childNode("block"); }
-  get body(): AstNode | undefined { return this.childNode("body"); }
   get caseBlock(): AstNode | undefined { return this.childNode("caseBlock"); }
   get catchClause(): AstNode | undefined { return this.childNode("catchClause"); }
   get checkType(): AstNode | undefined { return this.childNode("checkType"); }
@@ -313,7 +335,6 @@ export class AstNode {
   get propertyName(): AstNode | undefined { return this.childNode("propertyName"); }
   get qualifier(): AstNode | undefined { return this.childNode("qualifier"); }
   get questionDotToken(): AstNode | undefined { return this.childNode("questionDotToken"); }
-  get questionToken(): AstNode | undefined { return this.childNode("questionToken"); }
   get readonlyToken(): AstNode | undefined { return this.childNode("readonlyToken"); }
   get right(): AstNode | undefined { return this.childNode("right"); }
   get statement(): AstNode | undefined { return this.childNode("statement"); }
