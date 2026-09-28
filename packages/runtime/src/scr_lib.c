@@ -107,6 +107,9 @@ extern char **environ; /* env snapshot (scr_env_pairs) */
 static SCR_TL int scr_lib_argc = 0;
 static SCR_TL char **scr_lib_argv = NULL;
 static SCR_TL char **scr_lib_argv_owned = NULL;
+#if defined(_WIN32) && !defined(SCR_LIB)
+static SCR_TL char *scr_lib_argv_utf8 = NULL;
+#endif
 static SCR_TL bool scr_lib_has_fork = false;
 static SCR_TL double scr_lib_fork_target_id = -1;
 static SCR_TL uintptr_t scr_lib_fork_read_handle = 0;
@@ -163,6 +166,10 @@ static void scr_lib_cleanup(void) {
   scr_argv_arr = NULL;
   free(scr_lib_argv_owned);
   scr_lib_argv_owned = NULL;
+#if defined(_WIN32) && !defined(SCR_LIB)
+  free(scr_lib_argv_utf8);
+  scr_lib_argv_utf8 = NULL;
+#endif
   scr_lib_argc = 0;
   scr_lib_argv = NULL;
   scr_lib_has_fork = false;
@@ -210,6 +217,65 @@ static bool scr_lib_same_executable_arg(const char *a, const char *b) {
 #endif
 }
 
+#if defined(_WIN32) && !defined(SCR_LIB)
+/* C main's narrow argv has already lost characters outside the active ANSI
+ * code page. Recover the original Unicode command line before publishing
+ * process.argv to either execution tier. Keep this lazy: programs that do
+ * not read arguments need no converted strings or shell32 initialization.
+ * Load the documented OS parser from System32 without adding an executable-
+ * only shell dependency to the embedding runtime's link contract. */
+static void scr_lib_prepare_utf8_argv(void) {
+  if (scr_lib_argv == NULL || scr_lib_argv_utf8 != NULL) return;
+  HMODULE shell = LoadLibraryExW(L"shell32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+  if (shell == NULL) scr_trap("could not load Windows command-line parser");
+  typedef LPWSTR *(WINAPI *ScrParseCommandLine)(LPCWSTR, int *);
+  ScrParseCommandLine parse = (ScrParseCommandLine)(void *)GetProcAddress(shell, "CommandLineToArgvW");
+  if (parse == NULL) {
+    FreeLibrary(shell);
+    scr_trap("Windows command-line parser is unavailable");
+  }
+  int count = 0;
+  LPWSTR *wide = parse(GetCommandLineW(), &count);
+  FreeLibrary(shell);
+  if (wide == NULL || count < 1) scr_trap("could not parse Windows command line");
+  size_t bytes = 0;
+  for (int i = 0; i < count; i++) {
+    int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, NULL, 0, NULL, NULL);
+    if (size == 0 || bytes > SIZE_MAX - (size_t)size) {
+      LocalFree(wide);
+      scr_trap("could not encode Windows argument");
+    }
+    bytes += (size_t)size;
+  }
+  char *text = malloc(bytes);
+  char **args = calloc((size_t)count + 1, sizeof(char *));
+  if (text == NULL || args == NULL) {
+    free(text); free(args); LocalFree(wide);
+    scr_trap("out of memory");
+  }
+  char *next = text;
+  int used = 0;
+  for (int i = 0; i < count; i++) {
+    // scr_lib_init already consumed this private ASCII fork marker. Do not
+    // reintroduce it when replacing the narrow argument storage.
+    if (i == 1 && scr_lib_has_fork) continue;
+    int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, NULL, 0, NULL, NULL);
+    if (size == 0 || WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, next, size, NULL, NULL) != size) {
+      free(text); free(args); LocalFree(wide);
+      scr_trap("could not encode Windows argument");
+    }
+    args[used++] = next;
+    next += size;
+  }
+  LocalFree(wide);
+  free(scr_lib_argv_owned);
+  scr_lib_argv_owned = args;
+  scr_lib_argv_utf8 = text;
+  scr_lib_argv = args;
+  scr_lib_argc = used;
+}
+#endif
+
 /* A child_process call spelling Node's self-reexec shape:
  * spawn(process.execPath, [process.argv[1], ...args]). The parent still
  * knows these two path-like arguments are the executable and script marker,
@@ -217,7 +283,7 @@ static bool scr_lib_same_executable_arg(const char *a, const char *b) {
  * unrelated child's raw user arguments. Library sessions have no argv and
  * always answer false. */
 bool scr_lib_should_collapse_reexec_arg(ScrStr *cmd, ScrArr *args) {
-  if (scr_lib_argv == NULL || scr_lib_argc < 1 || scr_arr_len(args) < 1) return false;
+  if (scr_lib_arg_count() < 1 || scr_arr_len(args) < 1) return false;
   ScrStr *first = (ScrStr *)scr_arr_get_ref(args, 0);
   bool collapse = scr_lib_same_executable_arg(cmd->data, scr_lib_argv[0]) &&
                   scr_lib_same_executable_arg(first->data, scr_lib_argv[0]);
@@ -418,8 +484,18 @@ ScrArr *scr_module_cache_keys(void) {
 /* Raw argv accessors for the island's process shim (scr_island.c): the
  * island's process.argv must match the static world's ["scriptc",
  * argv[0], ...] shape exactly, so both build from the same stash. */
-int scr_lib_arg_count(void) { return scr_lib_argc; }
-const char *scr_lib_arg(int i) { return scr_lib_argv[i]; }
+int scr_lib_arg_count(void) {
+#if defined(_WIN32) && !defined(SCR_LIB)
+  scr_lib_prepare_utf8_argv();
+#endif
+  return scr_lib_argc;
+}
+const char *scr_lib_arg(int i) {
+#if defined(_WIN32) && !defined(SCR_LIB)
+  scr_lib_prepare_utf8_argv();
+#endif
+  return scr_lib_argv[i];
+}
 
 bool scr_lib_fork_info(double *target, uintptr_t *read_handle,
                        uintptr_t *write_handle) {
