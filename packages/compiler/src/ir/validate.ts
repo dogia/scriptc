@@ -1885,8 +1885,8 @@ export function validateModule(mod: IrModule): IrValidationError[] {
     }
   };
   for (const g of mod.globals ?? []) {
-    if (g.tdz && g.type.kind !== "record") {
-      errors.push({ message: `TDZ global "${g.name}" must have record storage`, loc: noLoc });
+    if (g.tdz && g.type.kind !== "record" && g.type.kind !== "func" && g.type.kind !== "dyn") {
+      errors.push({ message: `TDZ global "${g.name}" must have record, function, or checked-value storage`, loc: noLoc });
     }
     if (isUnitType(g.type)) {
       errors.push({ message: `global "${g.name}" has bare unit type ${g.type.kind}`, loc: noLoc });
@@ -2693,19 +2693,15 @@ function validateFunction(
         if (e.source) {
           checkExpr(e.source);
           const sk = e.source.type;
-          if (sk.kind === "bytes") {
-            // Same-elem copies only (cross-kind construction is fenced).
-            if (!typeEquals(sk, e.type)) {
-              err(`bytesNew copy source elem mismatch`, e.loc);
-            }
-          } else if (sk.kind === "array") {
+          if (sk.kind === "array") {
             if (sk.elem.kind !== "f64") {
               err(`bytesNew array source must hold f64, got ${sk.elem.kind}`, e.loc);
             }
-          } else if (sk.kind !== "f64") {
+          } else if (sk.kind !== "f64" && sk.kind !== "bytes" && sk.kind !== "dyn") {
             err(`bytesNew source of kind ${sk.kind}`, e.loc);
           }
         }
+        if (e.from && e.source?.type.kind !== "dyn") err("bytesNew from requires a dyn source", e.loc);
         break;
       }
       case "bytesIntrinsic": {
@@ -2742,6 +2738,8 @@ function validateFunction(
           err(`bytesIntrinsic ${e.method} args[1] must be a strLit encoding`, e.loc);
         }
         const EXTRA_SIGS: Record<string, { argTypes: IrType[]; minArgs: number; result: IrType } | undefined> = {
+          setFromDyn: { argTypes: [DYN, F64], minArgs: 1, result: VOID },
+          copyWithin: { argTypes: [F64, F64, F64], minArgs: 3, result: bytesOf(recv.elem) },
           equals: { argTypes: [BYTES_U8], minArgs: 1, result: BOOL },
           compareBuf: { argTypes: [BYTES_U8, F64, F64, F64, F64], minArgs: 1, result: F64 },
           // [needle, align, byteOffset?] — an OMITTED byteOffset is Node's
@@ -2782,7 +2780,7 @@ function validateFunction(
                     : e.method === "toArray"
                       ? { argTypes: [], minArgs: 0, result: arrayOf(F64) }
                 : e.method === "setFrom"
-                  ? { argTypes: [bytesOf(recv.elem), F64], minArgs: 1, result: VOID }
+                  ? { argTypes: [e.args[0]?.type.kind === "bytes" ? e.args[0].type : bytesOf(recv.elem), F64], minArgs: 1, result: VOID }
                   : e.method === "toString" || e.method === "toStringVar"
                     ? { argTypes: [STRING, F64, F64], minArgs: 1, result: STRING }
                     : e.method === "readNum"

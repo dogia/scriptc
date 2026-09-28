@@ -1913,9 +1913,8 @@ function emitContainerExpr(
       case "bytesNew": {
         // Typed-array/Buffer construction; the SOURCE's static type picks
         // the runtime entry (see the node doc). The source is borrowed;
-        // every form hands back +1. Only the f64 (length) form can throw
-        // (Node's "Invalid typed array length" RangeError) — pending check
-        // after the temp joins its frame.
+        // every form hands back +1. Length and checked-input forms can
+        // throw; check after the result joins its ownership frame.
         if (e.type.kind !== "bytes") throw new InternalCompilerError("emitter bug: bytesNew of non-bytes type");
         const kind = bytesElemKindC(e.type.elem);
         if (!e.source) return emitter.newTemp(e.type, `scr_bytes_new(${kind}, 0)`);
@@ -1926,7 +1925,12 @@ function emitContainerExpr(
           return t;
         }
         if (e.source.type.kind === "bytes") {
-          return emitter.newTemp(e.type, `scr_bytes_copy(${src.name})`);
+          return emitter.newTemp(e.type, `scr_bytes_convert(${kind}, ${src.name})`);
+        }
+        if (e.source.type.kind === "dyn") {
+          const t = emitter.newTemp(e.type, `scr_bytes_from_dyn(${kind}, ${src.name}, ${e.from ? "true" : "false"})`);
+          emitter.emitPendingCheck();
+          return t;
         }
         if (e.source.type.kind === "array") {
           return emitter.newTemp(e.type, `scr_bytes_from_arr(${kind}, ${src.name})`);
@@ -2009,6 +2013,8 @@ function emitContainerExpr(
             );
           case "toReversed":
             return emitter.newTemp(e.type, `scr_bytes_to_reversed(${r.name})`);
+          case "copyWithin":
+            return emitter.newTemp(e.type, `scr_bytes_copy_within(${r.name}, ${args[0]!.name}, ${args[1]!.name}, ${args[2]!.name})`);
           case "with": {
             const out = emitter.newTemp(
               e.type,
@@ -2024,11 +2030,12 @@ function emitContainerExpr(
             );
           case "toArray":
             return emitter.newTemp(e.type, `scr_bytes_to_arr(${r.name})`);
-          case "setFrom": {
+          case "setFrom":
+          case "setFromDyn": {
             // dst.set(src, offset?) — void; throws Node's RangeError on
             // overflow (may-throw seed).
             emitter.line(
-              `scr_bytes_set_from(${r.name}, ${args[0]!.name}, ${args[1]?.name ?? "0"});${emitter.srcComment(e.loc)}`,
+              `${method === "setFromDyn" ? "scr_bytes_set_from_dyn" : "scr_bytes_set_from"}(${r.name}, ${args[0]!.name}, ${args[1]?.name ?? "0"});${emitter.srcComment(e.loc)}`,
             );
             emitter.emitPendingCheck();
             return { name: "", type: e.type };

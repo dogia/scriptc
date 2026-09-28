@@ -1380,8 +1380,8 @@ export interface IrGlobal {
   name: string;
   type: IrType;
   mutable: boolean;
-  /** A lexical codec binding uses its initially-null record slot as the
-   * TDZ sentinel. Reads and later writes throw until initializing assign. */
+  /** Lexical record/function/checked-value bindings use their initially-null
+   * pointer as a TDZ sentinel. Reads and later writes throw until initializing assign. */
   tdz?: true;
   /** Original declaration and lexical scope, when this is a source binding. */
   source?: IrBindingSource;
@@ -1793,6 +1793,9 @@ export type IrBytesIntrinsicMethod =
   | "get"
   | "slice"
   | "subarray"
+  /** In-place overlapping copy, [target, start, end] relative indices;
+   * returns the receiver (+1). */
+  | "copyWithin"
   /** Fresh Uint8Array copying methods. `with` takes [index, value] and
    * throws a catchable RangeError for an invalid relative index. */
   | "toReversed"
@@ -1804,6 +1807,7 @@ export type IrBytesIntrinsicMethod =
    * array spread and typed-array destructuring rest. */
   | "toArray"
   | "setFrom"
+  | "setFromDyn"
   | "toString"
   /** Buffer.toString with a runtime-valued encoding. Same signature as
    * toString, but canonicalizes aliases/case and may throw
@@ -1877,6 +1881,7 @@ export const MAY_THROW_BYTES_METHODS: ReadonlySet<IrBytesIntrinsicMethod> = new 
   "toStringVar",
   "with",
   "setFrom",
+  "setFromDyn",
   "readNum",
   "writeNum",
   "readNumVar",
@@ -4919,12 +4924,14 @@ export type IrExpr =
    *   truncate; a negative/huge result THROWS Node's "Invalid typed array
    *   length" RangeError catchably — backends' may-throw analyses seed on
    *   bytesNew with a non-bytes, non-array source).
-   * - bytes (same elem — frontend-fenced) — an independent COPY. Never
-   *   throws.
+   * - bytes — an independent, element-coerced COPY. Never throws.
    * - array of f64 — a per-element-coerced copy (ToUint8/ToUint32/float).
    *   Never throws.
+   * - dyn — checked native input; can throw on invalid lengths/coercion.
+   *   `from` selects TypedArray.from's iterable/array-like semantics instead
+   *   of constructor length coercion (notably for strings and numbers).
    * The source is BORROWED; the result is owned (+1). */
-  | { kind: "bytesNew"; source: IrExpr | null; type: IrType; loc: SrcLoc }
+  | { kind: "bytesNew"; source: IrExpr | null; from?: true; type: IrType; loc: SrcLoc }
   /** Typed-array/Buffer method or property on a bytes receiver — see
    * IrBytesIntrinsicMethod for the surface and conventions. Methods in
    * MAY_THROW_BYTES_METHODS raise catchable RangeErrors (may-throw

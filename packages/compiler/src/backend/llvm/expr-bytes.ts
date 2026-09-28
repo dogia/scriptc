@@ -371,6 +371,14 @@ export function emitBytesIntrinsic(host: LlvmEmitterContext, e: IrExpr & { kind:
           true,
           false,
         );
+      case "copyWithin":
+        return call(
+          "scr_bytes_copy_within",
+          "ptr (ptr, double, double, double)",
+          `ptr ${r.name}, double ${args[0]!.name}, double ${args[1]!.name}, double ${args[2]!.name}`,
+          true,
+          false,
+        );
       case "with":
         return call(
           "scr_bytes_with",
@@ -396,10 +404,11 @@ export function emitBytesIntrinsic(host: LlvmEmitterContext, e: IrExpr & { kind:
           false,
         );
       case "setFrom":
+      case "setFromDyn":
         // dst.set(src, offset?) — void; throws Node's RangeError on
         // overflow.
         return call(
-          "scr_bytes_set_from",
+          method === "setFromDyn" ? "scr_bytes_set_from_dyn" : "scr_bytes_set_from",
           "void (ptr, ptr, double)",
           `ptr ${r.name}, ptr ${args[0]!.name}, double ${args[1]?.name ?? f64Lit(0)}`,
           false,

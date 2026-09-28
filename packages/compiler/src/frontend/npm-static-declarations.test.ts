@@ -3,6 +3,7 @@ import {
   applyNpmStaticDeclarationProperties,
   applyNpmStaticDeclarationOverloads,
   applyNpmStaticFindReturnWidening,
+  applyNpmStaticNullableClassFields,
   npmStaticDeclarationReexports,
   npmStaticRuntimeClassTargets,
   parseNpmStaticDeclarationProperties,
@@ -31,6 +32,79 @@ export class Chainy {
   labels: string[];
 }
 `;
+
+describe("npm-static nullable class field inference", () => {
+  test("recovers named local and imported constructors without changing runtime lines", () => {
+    const source = `
+import { Parser as Parser2 } from "./parser.js";
+class Local {}
+class Input {
+  parser = null;
+  local = null;
+  constructor() { this.parser = new Parser2(); }
+  reset() { this.parser = null; this.local = new Local(); }
+  later = () => { this.parser = (new Parser2()); };
+}
+`;
+    const result = applyNpmStaticNullableClassFields("index.js", source);
+    expect(result?.text).toContain("/** @type {Parser2 | null} */ parser = null;");
+    expect(result?.text).toContain("/** @type {Local | null} */ local = null;");
+    expect(result?.text.split("\n")).toHaveLength(source.split("\n").length);
+    expect(applyNpmStaticNullableClassFields("index.js", result!.text)).toBeNull();
+  });
+
+  test.each([
+    "this.parser = other;",
+    "this.parser = new Other();",
+    "this.parser = undefined;",
+    "this.parser ||= new Parser();",
+    "this.parser++;",
+    "delete this.parser;",
+    "this['parser'] = other;",
+    "this[key] = other;",
+    "({ value: this.parser } = other);",
+    "(() => { this.parser = other; })();",
+  ])("declines conflicting or indeterminate writes: %s", (write) => {
+    const source = `class Parser {} class Other {} class Input {
+      parser = null;
+      constructor() { this.parser = new Parser(); }
+      update(other, key) { ${write} }
+    }`;
+    expect(applyNpmStaticNullableClassFields("index.js", source)).toBeNull();
+  });
+
+  test.each([
+    "constructor(Parser) { this.parser = new Parser(); }",
+    "constructor() { const Parser = other; this.parser = new Parser(); }",
+    "constructor({ Parser }) { this.parser = new Parser(); }",
+    "constructor() { function Parser() {} this.parser = new Parser(); }",
+  ])("declines a shadowed constructor: %s", (body) => {
+    expect(applyNpmStaticNullableClassFields("index.js", `class Parser {} class Input { parser = null; ${body} }`)).toBeNull();
+  });
+
+  test("preserves annotations and ignores unrelated receivers", () => {
+    const source = `class Parser {} class Input {
+      /** @type {unknown} */ annotated = null;
+      static shared = null;
+      absent = null;
+      parser = null;
+      constructor() { this.annotated = new Parser(); this.parser = new Parser(); }
+      static update() { this.parser = other; }
+      nested() { function other() { this.parser = other; } class Nested { run() { this.parser = other; } } }
+    }`;
+    const result = applyNpmStaticNullableClassFields("index.js", source);
+    expect(result?.insertions).toHaveLength(1);
+    expect(result?.text).toContain("/** @type {Parser | null} */ parser = null;");
+    expect(result?.text).toContain("/** @type {unknown} */ annotated = null;");
+  });
+
+  test.each(["Parser = Other;", "[Parser] = values;", "({ Parser } = value);", "for (Parser of values) {}"])("declines mutable constructor names: %s", (write) => {
+    expect(applyNpmStaticNullableClassFields("index.js", `class Parser {} class Other {}
+      ${write}
+      class Input { parser = null; constructor() { this.parser = new Parser(); } }
+    `)).toBeNull();
+  });
+});
 
 describe("npm-static declaration overload projection", () => {
   test("widens an array find result when JavaScript JSDoc omits undefined", () => {

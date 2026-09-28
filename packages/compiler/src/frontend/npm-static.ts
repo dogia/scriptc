@@ -62,7 +62,7 @@
 
 import { dirname } from "node:path";
 import { rewriteBundlerCjsExports } from "./npm-static-rewrite.js";
-import { applyNpmStaticDeclarationOverloads, applyNpmStaticDeclarationProperties, applyNpmStaticFindReturnWidening } from "./npm-static-declarations.js";
+import { applyNpmStaticDeclarationOverloads, applyNpmStaticDeclarationProperties, applyNpmStaticFindReturnWidening, applyNpmStaticNullableClassFields } from "./npm-static-declarations.js";
 import type { NpmStaticDeclarationOverloads, NpmStaticDeclarationProperties } from "./npm-static-declarations.js";
 import { npmPackageNameOf, registerWorkspacePackage, workspacePackageOfPath } from "./workspace-registry.js";
 import { trackedExists, trackedReadFile, trackedRealpath } from "./input-tracker.js";
@@ -394,22 +394,23 @@ export function npmStaticFsShadow(): NpmStaticFsShadow | null {
         try {
           const source = trackedReadFile(path);
           if (source !== null) {
-            const findWidened = applyNpmStaticFindReturnWidening(path, source);
+            const classFields = applyNpmStaticNullableClassFields(path, source);
+            const findWidened = applyNpmStaticFindReturnWidening(path, classFields?.text ?? source);
             const propertyProjected = applyNpmStaticDeclarationProperties(
               path,
-              findWidened?.text ?? source,
+              findWidened?.text ?? classFields?.text ?? source,
               declarationProperties.get(path.split("\\").join("/")) ?? new Map(),
             );
             const projected = applyNpmStaticDeclarationOverloads(
               path,
-              propertyProjected?.text ?? findWidened?.text ?? source,
+              propertyProjected?.text ?? findWidened?.text ?? classFields?.text ?? source,
               declarationOverloads.get(path.split("\\").join("/")) ?? new Map(),
             );
-            const answer = rewriteBundlerCjsExports(projected?.text ?? propertyProjected?.text ?? findWidened?.text ?? source, path);
+            const answer = rewriteBundlerCjsExports(projected?.text ?? propertyProjected?.text ?? findWidened?.text ?? classFields?.text ?? source, path);
             if (answer !== null && typeof answer === "object") {
               reportNpmStaticOffender(target.pkg, answer.degrade);
             } else {
-              rewritten = answer ?? projected?.text ?? propertyProjected?.text ?? findWidened?.text ?? null;
+              rewritten = answer ?? projected?.text ?? propertyProjected?.text ?? findWidened?.text ?? classFields?.text ?? null;
             }
           }
         } catch {

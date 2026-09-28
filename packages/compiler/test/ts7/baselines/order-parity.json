@@ -8584,6 +8584,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/compound-field-receivers.ts": {
+   "order": [
+    "<repo>/tests/corpus/compound-field-receivers.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/console-imports.cjs": {
    "order": [
     "<repo>/tests/corpus/console-imports.cjs"
@@ -8622,9 +8628,21 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/js-module-function-values.js": {
+   "order": [
+    "<repo>/tests/corpus/js-module-function-values.js"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/js-static-registries.cjs": {
    "order": [
     "<repo>/tests/corpus/js-static-registries.cjs"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/opentui-byte-queue.js": {
+   "order": [
+    "<repo>/tests/corpus/opentui-byte-queue.js"
    ],
    "diags": []
   },
@@ -8659,6 +8677,12 @@
     "<repo>/tests/corpus/text-codec-values/shared.ts",
     "<repo>/tests/corpus/text-codec-values/user.ts",
     "<repo>/tests/corpus/text-codec-values/main.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/typedarray-native-inputs.js": {
+   "order": [
+    "<repo>/tests/corpus/typedarray-native-inputs.js"
    ],
    "diags": []
   },
@@ -10593,6 +10617,18 @@
    "order": [
     "<repo>/tests/corpus/generic-class-js-functions/functions.js",
     "<repo>/tests/corpus/generic-class-js-functions/main.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/nested-map-cycles.ts": {
+   "order": [
+    "<repo>/tests/corpus/nested-map-cycles.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/nested-map-values.ts": {
+   "order": [
+    "<repo>/tests/corpus/nested-map-values.ts"
    ],
    "diags": []
   }

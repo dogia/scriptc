@@ -1,4 +1,4 @@
-import { Base, Metrics, View } from "bundled-methods";
+import { Base, Input, Metrics, View } from "bundled-methods";
 
 const view = new View("selected");
 const base: Base = view;
@@ -24,3 +24,20 @@ for (let i = 0; i < 20; i++) {
   const captured = new View(`iteration ${i}`);
   if (i === 19) captured.runLifecycle();
 }
+
+// The shipped declaration omits the private field's type. Its JavaScript
+// constructor still identifies the class stored behind the null initializer.
+const input = new Input();
+const parser = input.save();
+console.log("parser identity", parser === input.save());
+input.push("hello");
+input.push("!");
+console.log(input.read(), parser?.read(), parser?.describe());
+input.clear();
+console.log(input.read(), parser?.read());
+input.close();
+input.push("ignored");
+input.clear();
+console.log(input.read(), input.save() === null, parser?.describe());
+input.open();
+console.log("replacement", input.save() === parser, input.read());

@@ -9887,8 +9887,8 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
 
 /** `obj.f op= e` (and `obj.f++` with rhs null ≡ 1) — the element spelling
    * `obj[k] op= e` included when k is a declared symbol-keyed field.
-   * Restricted to side-effect-free receivers (identifier or `this`)
-   * because the desugar evaluates the receiver twice. */
+   * Save the receiver and old value before the RHS, then write through
+   * that same receiver even if the RHS replaces its original binding. */
   export function lowerFieldCompound(lowerer: Lowerer, access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
     op: CompoundOp,
     rhsNode: ts.Expression | null,
@@ -9896,53 +9896,62 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
       lowerer.unsupported("SC1090", access, "compound assignment through 'super' (read and write separately)");
     }
-    if (!ts.isIdentifier(access.expression) && access.expression.kind !== ts.SyntaxKind.ThisKeyword) {
-      lowerer.unsupported("SC1090", access, "compound assignment to fields of computed receivers");
-    }
+    const body: IrStmt[] = [];
+    const save = (value: IrExpr, name: string): IrExpr => {
+      const local = lowerer.declareHiddenLocal(name, value.type);
+      body.push({ kind: "varDecl", localId: local.id, init: value, loc: value.loc });
+      return varRef(local.id, value.type, value.loc);
+    };
     // A CHECKED-DYNAMIC receiver (`context.actual++` — test/common's call
     // accounting; dot spelling only — symbol-keyed element targets are
     // static fields): read the member (dynKeyGet), VALIDATE it as a
     // number (dynCheck — a non-number member throws the catchable
     // TypeError where JS would ToNumber-coerce; loud, never a silent
     // NaN — SEMANTICS.md), combine, write back (dyn.keySet). The
-    // receiver is an identifier (checked above), so evaluating it for
-    // read and write matches JS's once-evaluation observably.
+    // receiver and member read are saved before evaluating the RHS.
     if (ts.isPropertyAccessExpression(access)) {
       const probed = tryLowerExpression(lowerer, access.expression);
       if (probed?.type.kind === "dyn") {
+        const receiver = save(probed, "%compoundReceiver");
         const key: IrExpr = { kind: "strLit", value: access.name.text, type: STRING, loc: locOf(access.name) };
-        const read: IrExpr = { kind: "dynKeyGet", key, value: probed, type: DYN, loc };
+        const read = save({ kind: "dynKeyGet", key, value: receiver, type: DYN, loc }, "%compoundOld");
         const cur: IrExpr = { kind: "dynCheck", value: read, type: F64, loc };
-        const rhs: IrExpr = rhsNode
+        const rhs = save(rhsNode
           ? lowerer.lowerExpr(rhsNode)
-          : { kind: "numLit", value: 1, type: F64, loc };
-        if (rhs.type.kind !== "f64") lowerer.unsupported("SC1043", access);
-        const value: IrExpr = { kind: "bin", op, left: cur, right: rhs, type: F64, loc };
-        const recv2 = lowerer.lowerExpr(access.expression);
+          : { kind: "numLit", value: 1, type: F64, loc }, "%compoundRhs");
+        const numericRhs: IrExpr = rhs.type.kind === "dyn"
+          ? { kind: "dynCheck", value: rhs, type: F64, loc: rhs.loc }
+          : lowerOptionalNumber(lowerer, rhs, loc);
+        if (numericRhs.type.kind !== "f64") lowerer.unsupported("SC1043", access);
+        const value: IrExpr = { kind: "bin", op, left: cur, right: numericRhs, type: F64, loc };
         const boxed: IrExpr = { kind: "dynFrom", value, type: DYN, loc };
-        return {
+        body.push({
           kind: "exprStmt",
-          expr: { kind: "libCall", fn: "dyn.keySet", args: [recv2, { ...key }, boxed], type: VOID, loc },
+          expr: { kind: "libCall", fn: "dyn.keySet", args: [receiver, { ...key }, boxed], type: VOID, loc },
           loc,
-        };
+        });
+        return { kind: "block", body, loc };
       }
     }
     const targetOf = (): FieldTarget | null =>
       ts.isPropertyAccessExpression(access) ? lowerer.fieldTarget(access) : symbolFieldTarget(lowerer, access);
     const target = targetOf();
     if (!target) lowerer.unsupported("SC1090", access, "compound assignment to unsupported field targets");
-    // Through an accessor target this desugars to get, op, set — with the
-    // receiver an identifier/this, the observable order matches JS exactly:
-    // getter, rhs side effects, setter (verified against Node).
-    const read = lowerer.fieldGetExpr(target, locOf(access), access);
-    const rhs: IrExpr = rhsNode
+    target.obj = save(target.obj, "%compoundReceiver");
+    // Accessors observe getter, RHS side effects, then setter, all through
+    // the saved receiver.
+    const read = save(lowerer.fieldGetExpr(target, locOf(access), access), "%compoundOld");
+    const rhs = save(rhsNode
       ? lowerer.lowerExpr(rhsNode)
-      : { kind: "numLit", value: 1, type: F64, loc };
+      : { kind: "numLit", value: 1, type: F64, loc }, "%compoundRhs");
+    const numericRhs: IrExpr = rhs.type.kind === "dyn" && isJsSourceFile(access.getSourceFile())
+      ? { kind: "dynCheck", value: rhs, type: F64, loc: rhs.loc }
+      : lowerOptionalNumber(lowerer, rhs, loc);
     let value: IrExpr;
     if (op === "+" && target.fieldType.kind === "string") {
       value = { kind: "strConcat", left: read, right: lowerer.ensureString(rhs, rhsNode ?? access), type: STRING, loc };
-    } else if (target.fieldType.kind === "f64" && rhs.type.kind === "f64") {
-      value = { kind: "bin", op, left: read, right: rhs, type: F64, loc };
+    } else if (target.fieldType.kind === "f64" && numericRhs.type.kind === "f64") {
+      value = { kind: "bin", op, left: read, right: numericRhs, type: F64, loc };
     } else if (
       target.fieldType.kind === "dyn" &&
       isJsSourceFile(access.getSourceFile()) &&
@@ -9977,9 +9986,8 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     } else {
       lowerer.unsupported("SC1043", access);
     }
-    // Second, independent evaluation of the (side-effect-free) receiver.
-    const reevaluatedTarget = targetOf()!;
-    return lowerer.fieldSetStmt(reevaluatedTarget, value, loc, access);
+    body.push(lowerer.fieldSetStmt(target, value, loc, access));
+    return { kind: "block", body, loc };
   }
 
 /** Stream-rooted receivers' property surface (readableEnded, destroyed,

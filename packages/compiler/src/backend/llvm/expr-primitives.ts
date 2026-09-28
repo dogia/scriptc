@@ -515,9 +515,8 @@ export function emitContainerExpr(host: LlvmEmitterContext, e: ExprOf<"arrayLit"
       case "bytesNew": {
         // Typed-array/Buffer construction; the SOURCE's static type picks
         // the runtime entry. The source is borrowed; every form hands
-        // back +1. Only the f64 (length) form can throw (Node's "Invalid
-        // typed array length" RangeError) — pending check after the temp
-        // joins its frame.
+        // back +1. Length and checked-input forms can throw; check after
+        // the result joins its ownership frame.
         if (e.type.kind !== "bytes") throw new InternalCompilerError("llvm emitter bug: bytesNew of non-bytes type");
         const kind = BYTES_ELEM_NUM[e.type.elem];
         if (!e.source) {
@@ -536,9 +535,16 @@ export function emitContainerExpr(host: LlvmEmitterContext, e: ExprOf<"arrayLit"
           return out;
         }
         if (e.source.type.kind === "bytes") {
-          host.declare(`declare ptr @scr_bytes_copy(ptr)`);
-          B.line(`${t} = call ptr @scr_bytes_copy(ptr ${src.name})`);
+          host.declare(`declare ptr @scr_bytes_convert(i32, ptr)`);
+          B.line(`${t} = call ptr @scr_bytes_convert(i32 ${kind}, ptr ${src.name})`);
           return host.own({ name: t, type: e.type });
+        }
+        if (e.source.type.kind === "dyn") {
+          host.declare(`declare ptr @scr_bytes_from_dyn(i32, ptr, i1 zeroext)`);
+          B.line(`${t} = call ptr @scr_bytes_from_dyn(i32 ${kind}, ptr ${src.name}, i1 zeroext ${e.from ? "true" : "false"})`);
+          const out = host.own({ name: t, type: e.type });
+          host.emitPendingCheck();
+          return out;
         }
         if (e.source.type.kind === "array") {
           host.declare(`declare ptr @scr_bytes_from_arr(i32, ptr)`);

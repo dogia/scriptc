@@ -110,12 +110,13 @@ const BYTES_CTORS: Record<string, IrBytesElem | undefined> = {
    * (stdlib provenance — a user's own class with the name resolves through
    * classBySymbol). Lowered argument shapes: none (empty), a length
    * (zero-filled; ToIndex at runtime — invalid lengths throw Node's
-   * RangeError), a same-kind typed array or Buffer (an independent COPY —
+   * RangeError), a numeric typed array or Buffer (an independent COPY —
    * the readFile chain's `new Uint8Array(await readFile(p))`), a number[]
    * literal (element-coerced; its contextual type is the lib's
    * ArrayLike/Iterable union, which cannot map — the Set-seed pattern), or
-   * a number[]-typed value. ArrayBuffer/view forms are fenced: scriptc
-   * typed arrays own their storage. Null when this isn't a stdlib
+   * a number[]-typed value, or checked native input with runtime length /
+   * array-like dispatch. Free-standing ArrayBuffer forms remain fenced.
+   * Null when this isn't a stdlib
    * typed-array construction. */
 export function lowerBytesNew(lowerer: Lowerer, expr: ts.NewExpression, symbol: ts.Symbol | null | undefined): IrExpr | null {
   if (symbol && symbol.name === "DataView" && lowerer.isStdlibSymbol(symbol)) {
@@ -200,17 +201,10 @@ export function lowerBytesNew(lowerer: Lowerer, expr: ts.NewExpression, symbol: 
     }
     if (
       src.type.kind === "f64" ||
-      typeEquals(src.type, type) ||
+      src.type.kind === "bytes" || src.type.kind === "dyn" ||
       (src.type.kind === "array" && src.type.elem.kind === "f64")
     ) {
       return { kind: "bytesNew", source: src, type, loc };
-    }
-    if (src.type.kind === "bytes") {
-      lowerer.noLowering(
-        `new ${name} over a '${lowerer.fmt(src.type)}'`,
-        argNode,
-        "cross-kind typed-array conversion has no lowering — copy element by element",
-      );
     }
     lowerer.noLowering(
       `new ${name} over '${lowerer.fmt(src.type)}' values`,
@@ -224,6 +218,25 @@ export function lowerBytesNew(lowerer: Lowerer, expr: ts.NewExpression, symbol: 
     expr,
     `supported: new ${name}(), (length), (typedArray), or (number[])`,
   );
+}
+
+/** TypedArray.from without a mapping callback. Preserve its iterable /
+ * array-like semantics separately from constructor length coercion. */
+export function lowerBytesStaticCall(lowerer: Lowerer, call: ts.CallExpression,
+  access: ts.PropertyAccessExpression): IrExpr | null {
+  if (call.questionDotToken || access.questionDotToken || access.name.text !== "from" || !ts.isIdentifier(access.expression)) return null;
+  const symbol = lowerer.resolveValueSymbol(access.expression);
+  const elem = symbol ? own(BYTES_CTORS, symbol.name) : undefined;
+  if (!elem || !lowerer.isStdlibSymbol(symbol ?? undefined)) return null;
+  if (call.arguments.length !== 1 || call.arguments.some(ts.isSpreadElement)) {
+    lowerer.noLowering("TypedArray.from with a mapping callback or this argument count", call);
+  }
+  const node = call.arguments[0]!;
+  const source = lowerer.lowerExpr(node);
+  if (source.type.kind === "bytes" || (source.type.kind === "array" && source.type.elem.kind === "f64")) {
+    return { kind: "bytesNew", source, type: bytesOf(elem), loc: locOf(call) };
+  }
+  return { kind: "bytesNew", source: lowerer.coerceInto(node, source, DYN), from: true, type: bytesOf(elem), loc: locOf(call) };
 }
 
 /** `new DataView(x.buffer, byteOffset?, byteLength?)` (stdlib provenance).
@@ -303,8 +316,8 @@ function lowerDataViewNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
   return { kind: "bytesIntrinsic", method: "dataViewNew", receiver, args: idxArgs, type: BYTES_U8, loc };
 }
 
-/** Method calls on typed-array/Buffer receivers: slice and subarray (BOTH
-   * copy — subarray's sharing is the documented divergence), set(src,
+/** Method calls on typed-array/Buffer receivers: slice (copy), subarray
+   * (shared view), copyWithin, set(src,
    * offset?), and the u8-only Buffer surface: toString(enc?) plus the
    * whole numeric read/write family (fixed widths BE/LE and the
    * variable-width read/writeUIntLE quartet — BUF_NUM_METHODS). Everything
@@ -399,6 +412,18 @@ export function lowerBytesMethodCall(lowerer: Lowerer, call: ts.CallExpression,
     const method = name === "subarray" || declaredOnBuffer ? "subarray" : "slice";
     return { kind: "bytesIntrinsic", method, receiver, args, type: receiverIr, loc };
   }
+  if (name === "copyWithin") {
+    if (nArgs > 3 || call.arguments.some(ts.isSpreadElement)) {
+      lowerer.noLowering(`.copyWithin with ${nArgs} arguments on typed arrays`, call);
+    }
+    const receiver = lowerer.lowerExpr(access.expression);
+    const args = [0, 0, Infinity].map((value, i) => {
+      const fallback: IrExpr = { kind: "numLit", value, type: F64, loc };
+      const node = call.arguments[i];
+      return node ? lowerOptionalArgument(lowerer, node, F64, fallback) : fallback;
+    });
+    return { kind: "bytesIntrinsic", method: "copyWithin", receiver, args, type: receiverIr, loc };
+  }
   if (name === "fill" && receiverIr.elem !== "u8") {
     // TypedArray.prototype.fill on the non-u8 kinds: per-element value
     // coercion, slice-clamped relative indices, never throws. u8
@@ -418,16 +443,10 @@ export function lowerBytesMethodCall(lowerer: Lowerer, call: ts.CallExpression,
     }
     const receiver = lowerer.lowerExpr(access.expression);
     const src = lowerer.lowerExpr(call.arguments[0]!);
-    if (!typeEquals(src.type, receiverIr)) {
-      lowerer.noLowering(
-        `.set from '${lowerer.fmt(src.type)}' values`,
-        call.arguments[0]!,
-        "only a same-kind typed array copies in (number[] sources have no lowering — narrow unions first)",
-      );
-    }
-    const args = [src];
-    if (nArgs === 2) args.push(lowerer.lowerExprExpecting(call.arguments[1]!, F64));
-    return { kind: "bytesIntrinsic", method: "setFrom", receiver, args, type: VOID, loc };
+    const method = src.type.kind === "bytes" ? "setFrom" : "setFromDyn";
+    const args = [src.type.kind === "bytes" ? src : lowerer.coerceInto(call.arguments[0]!, src, DYN)];
+    if (nArgs === 2) args.push(lowerOptionalArgument(lowerer, call.arguments[1]!, F64, { kind: "numLit", value: 0, type: F64, loc }));
+    return { kind: "bytesIntrinsic", method, receiver, args, type: VOID, loc };
   }
   if (name === "toString") {
     // Buffer's toString(encoding?) — utf8 by default. A 0-arg toString

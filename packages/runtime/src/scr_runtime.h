@@ -5329,6 +5329,16 @@ void scr_bytes_copy_contents(ScrBytes *dst, const ScrBytes *src);
  * string/array slice (ToIntegerOrInfinity, negatives from the end); the
  * result is a fresh same-kind copy. Never throws. */
 ScrBytes *scr_bytes_slice(const ScrBytes *b, double start, double end); /* +1 */
+/* Independent element-coerced copy; same-kind copies preserve raw bits. */
+ScrBytes *scr_bytes_convert(ScrBytesElem elem, const ScrBytes *src); /* +1 */
+/* Checked native constructor/from input; no JavaScript engine required.
+ * `from` selects iterable/array-like semantics, otherwise primitives are
+ * converted to lengths. Borrows source, returns +1 or NULL+pending. */
+ScrBytes *scr_bytes_from_dyn(ScrBytesElem elem, const ScrDyn *value, bool from);
+
+/* In-place, overlapping copy with relative/clamped element indices;
+ * returns the retained receiver, including for a shared subarray view. */
+ScrBytes *scr_bytes_copy_within(ScrBytes *b, double target, double start, double end); /* +1 */
 
 /* ES2023 typed-array copying methods. Both preserve the receiver's element
  * kind and return a fresh +1 owner. with() raises Node's catchable
@@ -5353,11 +5363,14 @@ ScrBytes *scr_bytes_fill_elem(ScrBytes *b, double v, double start, double end); 
  * Same index clamping as slice; never throws. */
 ScrBytes *scr_bytes_subarray(ScrBytes *b, double start, double end); /* +1 */
 
-/* dst.set(src, offset): same-kind bulk copy (memmove — dst may be src).
+/* dst.set(src, offset): overlapping-safe, element-coerced copy.
  * offset goes through ToIntegerOrInfinity; a negative offset or
  * src.len + offset > dst.len THROWS Node's "offset is out of bounds"
  * RangeError catchably. */
 void scr_bytes_set_from(ScrBytes *dst, const ScrBytes *src, double offset);
+/* Array-like source with sequential element coercion and catchable errors.
+ * Earlier writes remain visible when a later coercion throws. */
+void scr_bytes_set_from_dyn(ScrBytes *dst, const ScrDyn *src, double offset);
 
 /* buf.toString(enc) on u8 bytes: "utf8" decodes with WHATWG per-maximal-
  * subpart U+FFFD replacement (Node-exact for invalid sequences), "hex" is
