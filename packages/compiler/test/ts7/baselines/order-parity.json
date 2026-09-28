@@ -10631,6 +10631,36 @@
     "<repo>/tests/corpus/nested-map-values.ts"
    ],
    "diags": []
+  },
+  "<repo>/tests/corpus/buffer-primitive-predicate.ts": {
+   "order": [
+    "<repo>/tests/corpus/buffer-primitive-predicate.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/js-expando-records.js": {
+   "order": [
+    "<repo>/tests/corpus/js-expando-records.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/js-scalar-iterables.js": {
+   "order": [
+    "<repo>/tests/corpus/js-scalar-iterables.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/string-code-points.ts": {
+   "order": [
+    "<repo>/tests/corpus/string-code-points.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/unicode-process-argv.ts": {
+   "order": [
+    "<repo>/tests/corpus/unicode-process-argv.ts"
+   ],
+   "diags": []
   }
  }
 }

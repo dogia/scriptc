@@ -2032,6 +2032,9 @@ export type IrLibFn =
    * SEMANTICS.md notes the sloppy divergence: loud, never silent). Void
    * result; in the may-throw seed set. */
   | "dyn.keySet"
+  /** Delete an ordinary checked-native object's own key. Borrows both
+   * arguments; other receiver representations retain a runtime refusal. */
+  | "dyn.keyDelete"
   /** Destructuring pack over a dyn source — `const [a, b] = d`, a
    * destructured dyn callback param (args: the source and the STATIC
    * TypeError spelling, "" when the source has none — both borrowed;
@@ -4507,6 +4510,9 @@ export type IrLibFn =
    * from UTF-16 code units. Adjacent surrogate pairs combine; lone
    * surrogates follow the runtime's replacement policy. */
   | "string.fromCharCode"
+  /** Numeric code points, with catchable RangeError for non-integers or
+   * values outside 0..0x10ffff. Uses the same UTF-8 surrogate policy. */
+  | "string.fromCodePoint"
   /** lastIndexOf returns the last UTF-16 start index, or -1. The two-arg
    * form searches at or before its numeric position; NaN starts at the end.
    * String arguments are borrowed and neither form throws. */
@@ -7770,9 +7776,11 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   // throws Node's catchable SyntaxError at construction.
   "regex.new",
   "dyn.keySet",
+  "dyn.keyDelete",
   // the destructuring pack throws V8's TypeError on non-iterable dyn kinds
   "dyn.iterPack",
   "dyn.toString",
+  "string.fromCodePoint",
   "dyn.defineProps",
   "process.chdir",
   "fs.realpathSync",

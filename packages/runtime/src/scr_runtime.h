@@ -3616,6 +3616,7 @@ void scr_dyn_obj_set(ScrDyn *obj, const char *key, size_t key_len, ScrDyn *value
  * non-object kinds throw Node's catchable TypeErrors (strict-mode
  * wording). All three operands BORROWED (the value is retained in). */
 void scr_dyn_key_set(ScrDyn *recv, ScrStr *key, ScrDyn *value);
+void scr_dyn_key_delete(ScrDyn *recv, const ScrStr *key);
 /* `key in v` with a runtime key — the dynHasKey fold per value (OBJ own
  * members, ARR length/valid indices, false elsewhere). Never throws. */
 bool scr_dyn_has_key(const ScrDyn *v, const ScrStr *key);
@@ -5087,6 +5088,10 @@ ScrStr *scr_str_from_char_code_one(double code);
 /* The spread-typed-array form (String.fromCharCode(...bytes) — the
  * magic-number ASCII probe); same semantics per element. */
 ScrStr *scr_str_from_char_code_bytes(ScrBytes *codes);
+/* Numeric Unicode code points, borrowed source; +1 string or NULL with
+ * a pending RangeError. Adjacent surrogate code points combine. */
+ScrStr *scr_str_from_code_point(ScrArr *codes);
+ScrStr *scr_str_from_code_point_bytes(ScrBytes *codes);
 
 /* ── Number statics (scr_lib.c) ───────────────────────────────────────
  * JS-exact by construction: Number.isFinite/isNaN/isInteger/isSafeInteger

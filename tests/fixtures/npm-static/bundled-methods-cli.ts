@@ -1,4 +1,4 @@
-import { Base, Input, Metrics, View } from "bundled-methods";
+import { Base, FactoryInput, Input, Metrics, View } from "bundled-methods";
 
 const view = new View("selected");
 const base: Base = view;
@@ -41,3 +41,13 @@ input.clear();
 console.log(input.read(), input.save() === null, parser?.describe());
 input.open();
 console.log("replacement", input.save() === parser, input.read());
+
+const factory = new FactoryInput();
+console.log(factory.read());
+factory.open("from factory");
+const saved = factory.save();
+console.log(factory.read(), saved === factory.save());
+factory.close();
+console.log(factory.read(), saved?.describe());
+factory.open("replacement");
+console.log(factory.read(), factory.save() === saved);

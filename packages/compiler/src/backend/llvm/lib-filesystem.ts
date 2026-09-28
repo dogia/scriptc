@@ -694,9 +694,9 @@ export function emitPrimitiveLibCall(host: LlvmEmitterContext, e: LibCallExpr): 
       B.line(`${raw} = call ptr @${sym}(ptr ${v.name})`);
       return host.wrapNullable(raw, raw, STRING, strTag, e.type, undefTag);
     }
-    if (e.fn === "string.fromCharCode") {
+    if (e.fn === "string.fromCharCode" || e.fn === "string.fromCodePoint") {
       const packed = e.args[0]!;
-      if (packed.kind === "arrayLit" && packed.elems.length === 1 && !packed.spreads?.length) {
+      if (e.fn === "string.fromCharCode" && packed.kind === "arrayLit" && packed.elems.length === 1 && !packed.spreads?.length) {
         const code = host.emitExpr(packed.elems[0]!);
         host.declare(`declare ptr @scr_str_from_char_code_one(double)`);
         const t = B.tmp();
@@ -705,12 +705,15 @@ export function emitPrimitiveLibCall(host: LlvmEmitterContext, e: LibCallExpr): 
       }
       // One packed f64[] (the frontend built it) or one bytes value (the
       // spread-typed-array form); +1 string.
-      const sym = e.args[0]!.type.kind === "bytes" ? "scr_str_from_char_code_bytes" : "scr_str_from_char_code";
+      const base = e.fn === "string.fromCodePoint" ? "scr_str_from_code_point" : "scr_str_from_char_code";
+      const sym = e.args[0]!.type.kind === "bytes" ? `${base}_bytes` : base;
       const v = host.emitExpr(e.args[0]!);
       host.declare(`declare ptr @${sym}(ptr)`);
       const t = B.tmp();
       B.line(`${t} = call ptr @${sym}(ptr ${v.name})`);
-      return host.own({ name: t, type: e.type });
+      const out = host.own({ name: t, type: e.type });
+      if (e.fn === "string.fromCodePoint") host.emitPendingCheck();
+      return out;
     }
     return host.emitGenericLibCall(e);
   }

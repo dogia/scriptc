@@ -506,6 +506,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "json.parseReviver": "scr_json_parse_reviver",
   "json.stringifyReplacer": "scr_json_stringify_replacer",
   "dyn.keySet": "scr_dyn_key_set",
+  "dyn.keyDelete": "scr_dyn_key_delete",
   "dyn.iterPack": "scr_dyn_iter_pack",
   "dyn.arrLen": "scr_dyn_arr_len",
   "dyn.arrAt": "scr_dyn_arr_at",

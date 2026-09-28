@@ -112,6 +112,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "json.parseReviver": { argTypes: [STRING, DYN], result: DYN },
   "json.stringifyReplacer": { argTypes: [DYN, DYN, STRING], result: DYN },
   "dyn.keySet": { argTypes: [DYN, STRING, DYN], result: VOID },
+  "dyn.keyDelete": { argTypes: [DYN, STRING], result: VOID },
   "dyn.iterPack": { argTypes: [DYN, STRING], result: DYN },
   "dyn.arrLen": { argTypes: [DYN], result: F64 },
   "dyn.arrAt": { argTypes: [DYN, F64], result: DYN },
@@ -1378,6 +1379,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   // Arg 0 is a packed f64[] OR a bytes value (the spread-typed-array
   // form) — checked in the libCall case.
   "string.fromCharCode": { argTypes: [null], result: STRING },
+  "string.fromCodePoint": { argTypes: [null], result: STRING },
   "string.lastIndexOf": { argTypes: [STRING, STRING], result: F64 },
   "string.lastIndexOfFrom": { argTypes: [STRING, STRING, F64], result: F64 },
   "string.raw": { argTypes: [arrayOf(STRING), arrayOf(STRING)], result: STRING },
@@ -4104,13 +4106,13 @@ function validateFunction(
           }
           break;
         }
-        if (e.fn === "string.fromCharCode") {
+        if (e.fn === "string.fromCharCode" || e.fn === "string.fromCodePoint") {
           // One packed f64[] or one bytes value (the spread form).
           const t = e.args[0]?.type;
           const ok =
             t && ((t.kind === "array" && t.elem.kind === "f64") || t.kind === "bytes");
           if (!ok) {
-            err(`libCall string.fromCharCode arg 0: expected number[] or bytes, got ${t?.kind}`, e.loc);
+            err(`libCall ${e.fn} arg 0: expected number[] or bytes, got ${t?.kind}`, e.loc);
           }
           break;
         }

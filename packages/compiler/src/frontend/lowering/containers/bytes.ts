@@ -1180,6 +1180,16 @@ export function lowerBufferStaticCall(lowerer: Lowerer, call: ts.CallExpression,
       if (v.type.kind === "dyn") {
         return { kind: "dynTest", test: "buffer", value: v, type: BOOL, loc };
       }
+      // Primitive storage cannot carry a Buffer. Keep argument effects
+      // even when its representation makes the answer constant.
+      if (v.type.kind === "string" || v.type.kind === "f64" || v.type.kind === "bool" ||
+          v.type.kind === "symbol" || v.type.kind === "bigint" || v.type.kind === "nullT" || v.type.kind === "undefinedT") {
+        if (isSafeToDiscard(v)) return { kind: "boolLit", value: false, type: BOOL, loc };
+        return {
+          kind: "seqExpr", stmts: [{ kind: "exprStmt", expr: v, loc: v.loc }],
+          result: { kind: "boolLit", value: false, type: BOOL, loc }, type: BOOL, loc,
+        };
+      }
       if (v.type.kind === "union") {
         const def = lowerer.unions.get(v.type.unionId);
         const tag = def ? def.arms.findIndex((a) => a.kind === "bytes" && a.elem === "u8") : -1;

@@ -4020,6 +4020,16 @@ function lowerPromiseThenPresence(
             loc: locOf(el),
           };
         }
+        // A native checked iterable can supply scalar elements even when
+        // the checker inferred a typed array from its producer. Drain once
+        // and validate the elements before the ordinary spread copy.
+        if (src.type.kind === "dyn" && (type.elem.kind === "f64" || type.elem.kind === "string" || type.elem.kind === "bool")) {
+          src = lowerer.coerceInto(el.expression, {
+            kind: "libCall", fn: "dyn.iterPack", args: [src,
+              { kind: "strLit", value: el.expression.getText(), type: STRING, loc: locOf(el) }],
+            type: DYN, loc: locOf(el),
+          }, type);
+        }
         // A same-family array whose ELEMENT lifts (string[] into a
         // (string | symbol)[] literal — per-element wrap/width copy):
         // the interned width helper reshapes before the spread copies.

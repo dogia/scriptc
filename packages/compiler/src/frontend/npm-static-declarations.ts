@@ -47,7 +47,7 @@ export interface NpmStaticOverloadRewrite {
 }
 
 /** Recover nullable class storage erased by a JavaScript bundle. A null
- * field whose writes only construct one named class (or reset to null)
+ * field whose writes construct one named class or call one static factory (or reset to null)
  * keeps that class's native methods instead of an opaque checked value.
  * Unknown writes, shadowed constructors and authored annotations decline;
  * downstream lowering still checks every assignment against the slot. */
@@ -139,9 +139,14 @@ export function applyNpmStaticNullableClassFields(
           let value = node.right;
           while (ts.isParenthesizedExpression(value)) value = value.expression;
           if (value.kind !== ts.SyntaxKind.NullKeyword) {
-            if (ts.isNewExpression(value) && ts.isIdentifier(value.expression) &&
-                constructors.has(value.expression.text) && !shadowed.has(value.expression.text)) {
-              const name = value.expression.text;
+            const construct = ts.isNewExpression(value) && ts.isIdentifier(value.expression) ? value.expression : null;
+            const factory = ts.isCallExpression(value) && !value.questionDotToken && ts.isPropertyAccessExpression(value.expression) &&
+              !value.expression.questionDotToken && ts.isIdentifier(value.expression.name) && ts.isIdentifier(value.expression.expression) ? value.expression : null;
+            const owner = construct ?? factory?.expression;
+            if (owner && ts.isIdentifier(owner) && constructors.has(owner.text) && !shadowed.has(owner.text)) {
+              // ReturnType asks the same implementation checker that types
+              // the call; no declaration-only class name is invented.
+              const name = factory ? `ReturnType<typeof ${owner.text}.${factory.name.text}>` : owner.text;
               if (field.className !== undefined && field.className !== name) field.invalid = true;
               field.className = name;
             } else field.invalid = true;

@@ -2843,6 +2843,23 @@ static void scr_json_delete_member(ScrDyn *object, const ScrStr *key) {
   }
 }
 
+/* Ordinary native objects carry removable own data properties. Dense
+ * arrays, typed references and handles keep their explicit boundary;
+ * deleting from a materialized snapshot would lose the mutation. */
+void scr_dyn_key_delete(ScrDyn *recv, const ScrStr *key) {
+  if (recv->kind == SCR_DYN_OBJ) {
+    scr_json_delete_member(recv, key);
+    return;
+  }
+  if (recv->kind == SCR_DYN_UNDEF || recv->kind == SCR_DYN_NULL) {
+    const char *message = "Cannot convert undefined or null to object";
+    scr_throw_error_msg(SCR_ERR_TYPE, message, strlen(message));
+    return;
+  }
+  const char *message = "delete on this checked-native receiver is not supported yet";
+  scr_throw_error_msg_code(SCR_ERR_ERROR, message, strlen(message), "SC2020");
+}
+
 static ScrDyn *scr_json_revive(ScrDyn *holder, const ScrStr *key,
                               const ScrDyn *reviver, size_t depth) {
   if (!scr_json_callback_depth(depth)) return NULL;

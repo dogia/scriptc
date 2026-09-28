@@ -5216,6 +5216,69 @@ ScrStr *scr_str_from_char_code_bytes(ScrBytes *codes) {
   return scr_str_from_units(codes->len, scr_fcc_bytes_unit, codes);
 }
 
+static double scr_fcp_array_value(void *source, size_t i) {
+  return scr_arr_get_number((ScrArr *)source, (double)i);
+}
+
+static double scr_fcp_bytes_value(void *source, size_t i) {
+  return scr_bytes_get((const ScrBytes *)source, (double)i);
+}
+
+static ScrStr *scr_str_from_points(size_t n, double (*value)(void *, size_t), void *source) {
+  /* Validate before allocating the result. The frontend supplies numeric
+   * elements, so these reads invoke no user conversions. */
+  for (size_t i = 0; i < n; i++) {
+    double point = value(source, i);
+    if (!isfinite(point) || point < 0 || point > 0x10ffff || trunc(point) != point) {
+      char number[64], message[96];
+      size_t len = scr_f64_to_str(point, number);
+      int size = snprintf(message, sizeof message, "Invalid code point %.*s", (int)len, number);
+      scr_throw_error_msg(SCR_ERR_RANGE, message, (size_t)size);
+      return NULL;
+    }
+  }
+  if (n > (SIZE_MAX - 1) / 4) scr_trap("scriptc: out of memory\n");
+  char *out = malloc(n * 4 + 1);
+  if (!out) scr_trap("scriptc: out of memory\n");
+  size_t offset = 0;
+  for (size_t i = 0; i < n; i++) {
+    uint32_t point = (uint32_t)value(source, i);
+    if (point >= 0xd800 && point <= 0xdbff && i + 1 < n) {
+      uint32_t next = (uint32_t)value(source, i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        point = 0x10000 + ((point - 0xd800) << 10) + (next - 0xdc00);
+        i++;
+      }
+    }
+    if (point >= 0xd800 && point <= 0xdfff) point = 0xfffd;
+    if (point < 0x80) out[offset++] = (char)point;
+    else if (point < 0x800) {
+      out[offset++] = (char)(0xc0 | (point >> 6));
+      out[offset++] = (char)(0x80 | (point & 0x3f));
+    } else if (point < 0x10000) {
+      out[offset++] = (char)(0xe0 | (point >> 12));
+      out[offset++] = (char)(0x80 | ((point >> 6) & 0x3f));
+      out[offset++] = (char)(0x80 | (point & 0x3f));
+    } else {
+      out[offset++] = (char)(0xf0 | (point >> 18));
+      out[offset++] = (char)(0x80 | ((point >> 12) & 0x3f));
+      out[offset++] = (char)(0x80 | ((point >> 6) & 0x3f));
+      out[offset++] = (char)(0x80 | (point & 0x3f));
+    }
+  }
+  ScrStr *result = scr_str_new(out, offset);
+  free(out);
+  return result;
+}
+
+ScrStr *scr_str_from_code_point(ScrArr *codes) {
+  return scr_str_from_points(codes->len, scr_fcp_array_value, codes);
+}
+
+ScrStr *scr_str_from_code_point_bytes(ScrBytes *codes) {
+  return scr_str_from_points(codes->len, scr_fcp_bytes_value, codes);
+}
+
 /* ── Date, the read-only value slice ───────────────────────────────────
  * Values are TimeClip'd epoch-millisecond scalars. Identity/mutation are
  * frontend-fenced; construction, storage, getters, and ISO formatting

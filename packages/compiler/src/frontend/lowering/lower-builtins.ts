@@ -8888,16 +8888,16 @@ function lowerStoredTextCodecCall(lowerer: Lowerer, call: ts.CallExpression, acc
     return { kind: "libCall", fn: "buffer.fromStr", args: [s, enc], type: BYTES_U8, loc };
   }
 
-/** `String.fromCharCode(...codes)` on THE String global: every argument
+/** `String.fromCharCode/fromCodePoint(...codes)` on THE String global: every argument
    * lowers as a number and packs into ONE f64[] array-literal argument
    * (the path.join convention) — or ONE whole-array spread forwards the
-   * array itself. Other String statics (fromCodePoint, raw) fall through
-   * to the member fence. Null for non-String receivers. */
+   * array itself. String.raw has its own template path below.
+   * Null for non-String receivers. */
   export function lowerStringStaticCall(lowerer: Lowerer, call: ts.CallExpression,
     access: ts.PropertyAccessExpression,): IrExpr | null {
     if (call.questionDotToken) return null;
     const member = lowerer.stdlibGlobalMember(access, "String");
-    if (member !== "fromCharCode" && member !== "raw") return null;
+    if (member !== "fromCharCode" && member !== "fromCodePoint" && member !== "raw") return null;
     const loc = locOf(call);
     // String.raw(template, ...substitutions): the template's `raw` member
     // is a string[] read off any record that carries one (the lib's
@@ -8951,9 +8951,9 @@ function lowerStoredTextCodecCall(lowerer: Lowerer, call: ts.CallExpression, acc
     if (spread) {
       if (call.arguments.length !== 1) {
         lowerer.noLowering(
-          "String.fromCharCode with a mixed spread call",
+          `String.${member} with a mixed spread call`,
           call,
-          "spread a whole array (String.fromCharCode(...codes)) or pass plain arguments",
+          `spread a whole array (String.${member}(...codes)) or pass plain arguments`,
         );
       }
       // A typed-array/Buffer spread (String.fromCharCode(...data.slice(4, 8))
@@ -8963,14 +8963,14 @@ function lowerStoredTextCodecCall(lowerer: Lowerer, call: ts.CallExpression, acc
       if (spreadT?.kind === "bytes") {
         const packed = lowerer.lowerExpr(spread.expression);
         if (packed.type.kind !== "bytes") lowerer.badType(spread.expression, lowerer.typeOf(spread.expression));
-        return { kind: "libCall", fn: "string.fromCharCode", args: [packed], type: STRING, loc };
+        return { kind: "libCall", fn: `string.${member}`, args: [packed], type: STRING, loc };
       }
       const packed = lowerer.lowerExprExpecting(spread.expression, arrayOf(F64));
-      return { kind: "libCall", fn: "string.fromCharCode", args: [packed], type: STRING, loc };
+      return { kind: "libCall", fn: `string.${member}`, args: [packed], type: STRING, loc };
     }
     const elems = call.arguments.map((a) => lowerer.lowerExprExpecting(a, F64));
     const packed: IrExpr = { kind: "arrayLit", elems, type: arrayOf(F64), loc };
-    return { kind: "libCall", fn: "string.fromCharCode", args: [packed], type: STRING, loc };
+    return { kind: "libCall", fn: `string.${member}`, args: [packed], type: STRING, loc };
   }
 
 /** `s.lastIndexOf(searchValue?, position?)` on string receivers, using UTF-16

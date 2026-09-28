@@ -34,6 +34,33 @@ export class Chainy {
 `;
 
 describe("npm-static nullable class field inference", () => {
+  test("recovers static factory return types and preserves their runtime calls", () => {
+    const source = `import { Buffer as Buffer2 } from "./buffer.js";
+class View { buffer = null; init() { this.buffer = Buffer2.create(4); } reset() { this.buffer = null; } }`;
+    const result = applyNpmStaticNullableClassFields("view.js", source);
+    expect(result?.text).toContain("/** @type {ReturnType<typeof Buffer2.create> | null} */ buffer = null;");
+    expect(result?.text).toContain("this.buffer = Buffer2.create(4)");
+    expect(applyNpmStaticNullableClassFields("view.js", result!.text)).toBeNull();
+  });
+
+  test.each([
+    "this.buffer = Buffer2.other();",
+    "this.buffer = new Buffer2();",
+    "this.buffer = unrelated.create();",
+    "this.buffer = Buffer2?.create();",
+    "this.buffer = Buffer2.create?.();",
+  ])("declines competing factory writes: %s", (write) => {
+    const source = `import { Buffer as Buffer2 } from "./buffer.js";
+class View { buffer = null; init() { this.buffer = Buffer2.create(); } reset() { ${write} } }`;
+    expect(applyNpmStaticNullableClassFields("view.js", source)).toBeNull();
+  });
+
+  test("declines shadowed factory owners", () => {
+    const source = `import { Buffer as Buffer2 } from "./buffer.js";
+class View { buffer = null; init(Buffer2) { this.buffer = Buffer2.create(); } }`;
+    expect(applyNpmStaticNullableClassFields("view.js", source)).toBeNull();
+  });
+
   test("recovers named local and imported constructors without changing runtime lines", () => {
     const source = `
 import { Parser as Parser2 } from "./parser.js";
