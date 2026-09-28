@@ -1,3 +1,4 @@
+import { Ts7Host } from "../../src/frontend/ts7/program-adapter.js";
 /* The two-world agreement battery: every fixture program is parsed and
  * checked through BOTH worlds — typescript@5.9.3 in-process and the TS7
  * adapter over tsgo — and the worlds must agree on structure (walk order,
@@ -41,7 +42,7 @@ import {
 import type { TwoWorlds } from "./harness.js";
 import { ALL_BATTERIES } from "./fixtures.js";
 
-const host = new ad.Ts7Host();
+const host = new Ts7Host();
 const worldsByName = new Map<string, TwoWorlds>();
 for (const battery of ALL_BATTERIES) {
   worldsByName.set(battery.name, buildTwoWorlds(battery.sources, host));

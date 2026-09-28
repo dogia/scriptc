@@ -82,7 +82,7 @@ export function isRequireMainFilename(lowerer: Lowerer, expr: ts.Expression): bo
   const main = expr.expression;
   if (!ts.isPropertyAccessExpression(main) || main.name.text !== "main") return false;
   if (!lowerer.isStdlibGlobal(main.expression, "require")) return false;
-  return !isNodeEsmFile(expr.getSourceFile());
+  return !isNodeEsmFile(expr.getSourceFile(), lowerer.program);
 }
 
 /** True when `expr` is the tail of an optional chain that must short-circuit

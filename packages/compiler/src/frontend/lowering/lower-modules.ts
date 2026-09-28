@@ -147,7 +147,7 @@ export function appendForkModules(
     const dep = resolveImport(program, sf, spec);
     if (!dep || dep.isDeclarationFile) return null;
     if (dep.fileName.endsWith(".json") || dep.fileName.endsWith(".cts")) return null;
-    if (isCjsJsFile(dep)) return null;
+    if (isCjsJsFile(dep, program)) return null;
     return dep;
   }
 
@@ -289,7 +289,9 @@ export function appendForkModules(
    * site. Type-only imports are free either way: the .d.ts is a type
    * surface, not code. */
   export function collectNpmImports(lowerer: Lowerer, parts: FileParts[]): void {
-    const builder = lowerer.dynamic ? new NpmGraphBuilder() : null;
+    const services = lowerer.frontendServices;
+    if (lowerer.dynamic && services === undefined) throw new Error("dynamic lowering requires frontend services");
+    const builder = lowerer.dynamic && services !== undefined ? new NpmGraphBuilder(services) : null;
     const entryPackageFile = entryPackageFilePredicate(lowerer.entry.fileName);
     for (const fp of parts) {
       for (const stmt of fp.sf.statements) {

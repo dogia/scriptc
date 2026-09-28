@@ -1,3 +1,4 @@
+import { createProgram } from "../frontend/ts7/program-adapter.js";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, test } from "vitest";
 import * as ts from "../frontend/ts7/adapter.js";
@@ -13,7 +14,7 @@ const statement = (value: number): IrStmt => ({ kind: "exprStmt", expr: num(valu
 // child field added to an existing variant. These structural samples need
 // not be executable: a child's identity and position are the contract here.
 const path = fileURLToPath(new URL("./ir.ts", import.meta.url));
-const program = ts.createProgram([path], { noLib: true, noResolve: true, types: [] });
+const program = createProgram([path], { noLib: true, noResolve: true, types: [] });
 const source = program.getSourceFile(path)!;
 afterAll(() => program.dispose());
 function childType(type: ts.TypeNode): boolean {

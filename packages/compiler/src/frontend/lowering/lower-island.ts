@@ -2776,7 +2776,7 @@ export function lowerStaticReadableStreamReaderCall(
         break;
       }
     }
-    if (dep !== null && (dep.fileName.endsWith(".cts") || isCjsJsFile(dep))) {
+    if (dep !== null && (dep.fileName.endsWith(".cts") || isCjsJsFile(dep, lowerer.program))) {
       lowerer.unsupported(
         "SC1090",
         call,
@@ -2832,7 +2832,7 @@ export function lowerStaticReadableStreamReaderCall(
     arg: ts.StringLiteralLike,
   ): IrExpr {
     const dep = programImportTarget(lowerer, arg);
-    if (dep !== null && (dep.fileName.endsWith(".cts") || isCjsJsFile(dep))) {
+    if (dep !== null && (dep.fileName.endsWith(".cts") || isCjsJsFile(dep, lowerer.program))) {
       lowerer.unsupported(
         "SC1090",
         call,

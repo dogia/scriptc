@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { moduleSpecifiersOf } from "./npm.js";
-import { NpmGraphBuilder } from "./npm.js";
+import { moduleSpecifiersOf } from "./npm-node.js";
+import { NpmGraphBuilder } from "./npm-node.js";
 
 const fixturesRoot = fileURLToPath(new URL("../../../../tests/fixtures/npm/", import.meta.url));
 const fixture = (...parts: string[]): string => join(fixturesRoot, ...parts);

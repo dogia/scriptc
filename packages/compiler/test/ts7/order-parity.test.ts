@@ -41,7 +41,7 @@ import { globSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { checkPreflightTs7 } from "../../src/frontend/program.js";
+import { checkPreflightTs7 } from "../../src/frontend/program-node.js";
 import { Ts7Host } from "../../src/frontend/ts7/program-adapter.js";
 import type { ScrDiagnostic } from "../../src/diagnostics/diagnostic.js";
 

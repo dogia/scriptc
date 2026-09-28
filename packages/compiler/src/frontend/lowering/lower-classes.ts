@@ -3424,7 +3424,7 @@ export function staticFieldWriteTarget(lowerer: Lowerer, access: ts.PropertyAcce
     // class expression: the receiver is exactly that class (the kept
     // export assignment pins it) — the direct-name rules apply.
     if (!ts.isIdentifier(access.expression)) {
-      if (!isModuleExportsAccess(access.expression) || !isCjsJsFile(access.getSourceFile())) {
+      if (!isModuleExportsAccess(access.expression) || !isCjsJsFile(access.getSourceFile(), lowerer.program)) {
         return null;
       }
       const whole = cjsClassExprWholeExportOf(access.getSourceFile());
@@ -3567,7 +3567,7 @@ export function staticFieldWriteTarget(lowerer: Lowerer, access: ts.PropertyAcce
       // `module.exports.label` in a class-replaced CJS module: the
       // receiver is the exact exported class, and the read is
       // side-effect-free — as bindable as an identifier.
-      !(isModuleExportsAccess(expr.expression) && isCjsJsFile(expr.getSourceFile()))
+      !(isModuleExportsAccess(expr.expression) && isCjsJsFile(expr.getSourceFile(), lowerer.program))
     ) {
       // Devirtualized reads DISCARD the receiver value, so only
       // side-effect-free receivers are claimed (the instanceOf fold
@@ -5087,7 +5087,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
       // lowering ahead of the assignment statement).
       if (
         !expr.expression.questionDotToken &&
-        ((isCjsJsFile(expr.getSourceFile()) &&
+        ((isCjsJsFile(expr.getSourceFile(), lowerer.program) &&
           (isModuleExportsAccess(expr.expression.expression) ||
             (ts.isIdentifier(expr.expression.expression) &&
               expr.expression.expression.text === "exports" &&

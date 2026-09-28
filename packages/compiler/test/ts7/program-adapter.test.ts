@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { checkPreflight, loadProgram } from "../../src/frontend/program.js";
+import { checkPreflight, loadProgram } from "../../src/frontend/program-node.js";
 import { tsgoPath } from "../../src/frontend/dts-paths.js";
 import * as ts from "../../src/frontend/ts7/adapter.js";
 import { CheckerFacade } from "../../src/frontend/ts7/checker.js";

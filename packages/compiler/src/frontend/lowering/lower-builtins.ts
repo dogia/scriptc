@@ -811,7 +811,7 @@ function lowerBuiltinOptionalDefault(
   function requireResolverBaseFile(lowerer: Lowerer, receiver: ts.Expression): ts.SourceFile | null {
     const created = createRequireCalleeFileOf(lowerer, receiver);
     if (created !== null) return created;
-    return lowerer.isStdlibGlobal(receiver, "require") && !isNodeEsmFile(receiver.getSourceFile())
+    return lowerer.isStdlibGlobal(receiver, "require") && !isNodeEsmFile(receiver.getSourceFile(), lowerer.program)
       ? receiver.getSourceFile()
       : null;
   }

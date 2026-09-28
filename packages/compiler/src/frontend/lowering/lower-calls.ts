@@ -1179,7 +1179,7 @@ export function collectSignatureInner(lowerer: Lowerer, decl: ts.FunctionDeclara
       isJsSourceFile(decl.getSourceFile()) &&
       bodyReadsArguments(decl)
     ) {
-      if (decl.parameters.length > 0 && !isNodeEsmFile(decl.getSourceFile())) {
+      if (decl.parameters.length > 0 && !isNodeEsmFile(decl.getSourceFile(), lowerer.program)) {
         lowerer.unsupported("SC1090", decl, "parameterized 'arguments' outside an ES module (sloppy-mode parameter aliases)");
       }
       params.push({ type: DYN, mode: decl.parameters.length > 0 ? "arguments" : "dynRest" });
@@ -6954,7 +6954,7 @@ function loweredTemplateStrings(
     if (usesArguments && (node.parameters.length > 0 || ts.isMethodDeclaration(node))) {
       const classMethod = ts.isMethodDeclaration(node) &&
         (ts.isClassDeclaration(node.parent) || ts.isClassExpression(node.parent));
-      if (!classMethod && !isNodeEsmFile(node.getSourceFile())) {
+      if (!classMethod && !isNodeEsmFile(node.getSourceFile(), lowerer.program)) {
         lowerer.unsupported("SC1090", node, "parameterized 'arguments' outside an ES module (sloppy-mode parameter aliases)");
       }
       shapes.push({ type: DYN, mode: "arguments" });

@@ -27,7 +27,7 @@ function cjsGlobal(lowerer: Lowerer, node: ts.Expression, name: "module" | "requ
       ts.isFunctionDeclaration(decl) || ts.isClassDeclaration(decl) ||
       ts.isImportSpecifier(decl) || ts.isNamespaceImport(decl) || ts.isImportEqualsDeclaration(decl)),
   );
-  return !sourceShadow && !isNodeEsmFile(node.getSourceFile());
+  return !sourceShadow && !isNodeEsmFile(node.getSourceFile(), lowerer.program);
 }
 
 function graphSyntax(lowerer: Lowerer, sf: ts.SourceFile): boolean {
@@ -62,7 +62,7 @@ export function prepareCjsModuleGraph(lowerer: Lowerer, parts: readonly FilePart
   lowerer.cjsModuleGraphEnabled = parts.some(({ sf }) => graphSyntax(lowerer, sf));
   if (!lowerer.cjsModuleGraphEnabled) return;
   for (const { sf } of parts) {
-    if (sf.isDeclarationFile || sf.fileName.endsWith(".json") || isNodeEsmFile(sf)) continue;
+    if (sf.isDeclarationFile || sf.fileName.endsWith(".json") || isNodeEsmFile(sf, lowerer.program)) continue;
     // Zero stays reserved so every module handle is truthy like the object
     // it represents, even when a value reaches a generic boolean context.
     const id = lowerer.cjsModuleFiles.length + 1;
@@ -98,7 +98,7 @@ export function cjsModuleRegistryPrelude(lowerer: Lowerer, loc: IrExpr["loc"]): 
   for (const [index, sf] of lowerer.cjsModuleFiles.entries()) {
     const moduleId = index + 1;
     const filename = moduleFileName(lowerer, sf);
-    const isMain = sf === lowerer.entry && !isNodeEsmFile(lowerer.entry);
+    const isMain = sf === lowerer.entry && !isNodeEsmFile(lowerer.entry, lowerer.program);
     const path = (lowerer.targetPlatform === "win32" ? win32 : posix).dirname(filename);
     const paths: IrExpr = {
       kind: "arrayLit",

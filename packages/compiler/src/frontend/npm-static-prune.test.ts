@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { checkPreflight, loadProgram } from "./program.js";
+import { checkPreflight, loadProgram } from "./program-node.js";
 
 const fixtureRoot = join(import.meta.dirname, "../../../../tests/fixtures/npm-static");
 

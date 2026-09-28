@@ -1,3 +1,4 @@
+import { Ts7Host } from "../../src/frontend/ts7/program-adapter.js";
 /* The checker facade's mechanics: memoization and batch prefetch must be
  * REAL — measured as raw-client call counts through a counting proxy, not
  * inferred from timings — and the client-side fast paths must agree with
@@ -14,7 +15,7 @@ import { ad, buildTwoWorlds } from "./harness.js";
 import type { TwoWorlds } from "./harness.js";
 import { RICH_TS } from "./fixtures.js";
 
-const host = new ad.Ts7Host();
+const host = new Ts7Host();
 const worlds: TwoWorlds[] = [];
 afterAll(() => {
   for (const w of worlds) w.dispose();

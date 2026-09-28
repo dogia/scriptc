@@ -1,3 +1,4 @@
+import { ProgramAnalysis } from "../program-analysis.js";
 import { InternalCompilerError } from "../../errors.js";
 /* Shared program lifecycle over the native TypeScript server API.
  *
@@ -250,6 +251,7 @@ export class Ts7Host {
  * getTypeChecker() returning the memoizing/batching CheckerFacade. dispose()
  * releases the snapshot (and the host, when this program spawned it). */
 export class Ts7Program {
+  readonly analysis = new ProgramAnalysis();
   private sourceFilesCache: readonly SourceFile[] | null = null;
   private checkerFacade: CheckerFacade | null = null;
   private disposed = false;
@@ -329,6 +331,7 @@ export class Ts7Program {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.analysis.clear();
     this.checkerFacade?.dispose();
     this.checkerFacade = null;
     this.sourceFilesCache = null;

@@ -61,9 +61,8 @@
  * slate. */
 
 import { dirname } from "node:path";
-import { rewriteBundlerCjsExports } from "./npm-static-rewrite.js";
-import { applyNpmStaticDeclarationOverloads, applyNpmStaticDeclarationProperties, applyNpmStaticFindReturnWidening, applyNpmStaticNullableClassFields } from "./npm-static-declarations.js";
-import type { NpmStaticDeclarationOverloads, NpmStaticDeclarationProperties } from "./npm-static-declarations.js";
+import type { FrontendServices } from "./services.js";
+import type { NpmStaticDeclarationOverloads, NpmStaticDeclarationProperties } from "./npm-static-declaration-syntax.js";
 import { npmPackageNameOf, registerWorkspacePackage, workspacePackageOfPath } from "./workspace-registry.js";
 import { trackedExists, trackedReadFile, trackedRealpath } from "./input-tracker.js";
 
@@ -343,7 +342,7 @@ export interface NpmStaticFsShadow {
 
 /** The virtual-FS shadow loadProgram hands the tsgo host — null when the
  * flag is off, so flagless compiles keep the exact host behavior. */
-export function npmStaticFsShadow(): NpmStaticFsShadow | null {
+export function npmStaticFsShadow(services: FrontendServices): NpmStaticFsShadow | null {
   if (!npmStaticActive()) return null;
   return {
     readFile: (path) => {
@@ -394,19 +393,19 @@ export function npmStaticFsShadow(): NpmStaticFsShadow | null {
         try {
           const source = trackedReadFile(path);
           if (source !== null) {
-            const classFields = applyNpmStaticNullableClassFields(path, source);
-            const findWidened = applyNpmStaticFindReturnWidening(path, classFields?.text ?? source);
-            const propertyProjected = applyNpmStaticDeclarationProperties(
+            const classFields = services.nullableClassFields(path, source);
+            const findWidened = services.findReturnWidening(path, classFields?.text ?? source);
+            const propertyProjected = services.declarationProperties(
               path,
               findWidened?.text ?? classFields?.text ?? source,
               declarationProperties.get(path.split("\\").join("/")) ?? new Map(),
             );
-            const projected = applyNpmStaticDeclarationOverloads(
+            const projected = services.declarationOverloads(
               path,
               propertyProjected?.text ?? findWidened?.text ?? classFields?.text ?? source,
               declarationOverloads.get(path.split("\\").join("/")) ?? new Map(),
             );
-            const answer = rewriteBundlerCjsExports(projected?.text ?? propertyProjected?.text ?? findWidened?.text ?? classFields?.text ?? source, path);
+            const answer = services.rewriteCjs(projected?.text ?? propertyProjected?.text ?? findWidened?.text ?? classFields?.text ?? source, path);
             if (answer !== null && typeof answer === "object") {
               reportNpmStaticOffender(target.pkg, answer.degrade);
             } else {

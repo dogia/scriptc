@@ -11,10 +11,8 @@ import { npmStaticPackageOfPath } from "./npm-static.js";
 import { trackedReadFile } from "./input-tracker.js";
 import { npmPackageNameOf } from "./workspace-registry.js";
 
-const prunedByProgram = new WeakMap<ts.Program, ReadonlySet<ts.ExportDeclaration>>();
-
 export function isPrunedNpmReexport(program: ts.Program, stmt: ts.ExportDeclaration): boolean {
-  return prunedByProgram.get(program)?.has(stmt) ?? false;
+  return program.analysis.prunedNpmReexports.has(stmt);
 }
 
 function packageJson(path: string): Record<string, unknown> | null {
@@ -201,6 +199,7 @@ export function planNpmStaticReexports(
       if (canPrune(sf, stmt, resolveEdge(sf, stmt.moduleSpecifier.text))) pruned.add(stmt);
     }
   }
-  prunedByProgram.set(program, pruned);
+  program.analysis.prunedNpmReexports.clear();
+  for (const stmt of pruned) program.analysis.prunedNpmReexports.add(stmt);
   return files.filter((sf) => npmStaticPackageOfPath(sf.fileName) === null || demanded.has(sf));
 }

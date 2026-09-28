@@ -1,3 +1,4 @@
+import type { FrontendServices } from "../services.js";
 import { InternalCompilerError } from "../../errors.js";
 import { ClassDynamicDispatch } from "./class-dynamic-dispatch.js";
 /* AST + checker → IR.
@@ -345,6 +346,8 @@ export interface LowerResult {
 }
 
 export interface LowerOptions {
+  /** Parser/checker services owned by the load; required for npm graph analysis. */
+  frontendServices?: FrontendServices | undefined;
   /** --dynamic: the island engine is linked, so island constructs
    * (__island_eval) may lower. Off by default — without it they produce a
    * requires-dynamic diagnostic instead. */
@@ -433,6 +436,7 @@ type RuntimeFenceTarget =
 
 /** The Lowerer's pass configuration (see lowerToIr). */
 export interface LowererMode {
+  frontendServices?: FrontendServices | undefined;
   /** Names of bodies a prior reachability pass reached; null lowers everything. */
   reachable?: ReadonlySet<string> | null;
   /** Coverage remainder: lower ONLY bodies outside `reachable`, skip the
@@ -551,6 +555,7 @@ export function lowerToIr(
   const externalTypeSpecifiersByFile = options.externalTypeSpecifiersByFile ??
     directExternalTypeSpecifiersByFile(externalTypes);
   const validation = new Lowerer(program, entry, moduleOrder, dynamic, {
+    frontendServices: options.frontendServices,
     targetPlatform,
     startupCrash,
     ffiImports,
@@ -569,6 +574,7 @@ export function lowerToIr(
   const reachableEmit = ffiImports.length === 0
     ? validation
     : new Lowerer(program, entry, moduleOrder, dynamic, {
+        frontendServices: options.frontendServices,
         targetPlatform,
         startupCrash,
         ffiImports,
@@ -594,6 +600,7 @@ export function lowerToIr(
   // without such a settled fence retain checker-backed IR exactly once.
   if (reachableEmit.requiresHistoricalOrderRelower) {
     const emit = new Lowerer(program, entry, moduleOrder, dynamic, {
+      frontendServices: options.frontendServices,
       reachable,
       targetPlatform,
       startupCrash,
@@ -612,6 +619,7 @@ export function lowerToIr(
   }
   if (options.coverage !== true) return result;
   const remainder = new Lowerer(program, entry, moduleOrder, dynamic, {
+    frontendServices: options.frontendServices,
     reachable,
     remainder: true,
     alreadyFlushed: resultLowerer.flushedSymbols,
@@ -679,7 +687,7 @@ export function staticImportNamespaceType(lowerer: Lowerer, expr: ts.Expression 
       (decl): decl is ts.SourceFile => ts.isSourceFile(decl) && !decl.isDeclarationFile,
     );
     if (
-      source && !source.fileName.endsWith(".cts") && !isCjsJsFile(source) &&
+      source && !source.fileName.endsWith(".cts") && !isCjsJsFile(source, lowerer.program) &&
       lowerer.moduleOrder.includes(source)
     ) {
       moduleId = `file:${tsgoPath(resolve(source.fileName))}`;
@@ -953,7 +961,7 @@ function jsArgumentsFunctionType(lowerer: Lowerer, t: ts.Type): IrType | null {
   const decl = lowerer.checker.signatureDeclaration(sigs[0]!);
   if (
     decl === undefined || !(ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) ||
-    !isJsSourceFile(decl.getSourceFile()) || !isNodeEsmFile(decl.getSourceFile()) ||
+    !isJsSourceFile(decl.getSourceFile()) || !isNodeEsmFile(decl.getSourceFile(), lowerer.program) ||
     decl.parameters.length === 0 ||
     decl.parameters.some((p) => p.dotDotDotToken !== undefined) ||
     !bodyReadsArguments(decl as { body?: ts.Node })
@@ -1054,6 +1062,7 @@ export function jsFuncNameOf(node: ts.Node): string | null {
 }
 
 export class Lowerer {
+  readonly frontendServices: FrontendServices | undefined;
   readonly checker: ts.TypeChecker;
   readonly diags: ScrDiagnostic[] = [];
   readonly fnSigsBySymbol = new Map<ts.Symbol, FnSig>();
@@ -1965,6 +1974,7 @@ export class Lowerer {
     readonly dynamic: boolean,
     mode: LowererMode = {},
   ) {
+    this.frontendServices = mode.frontendServices;
     this.reachable = mode.reachable ?? null;
     this.remainder = mode.remainder ?? false;
     this.alreadyFlushed = mode.alreadyFlushed ?? new Set();
@@ -2037,7 +2047,7 @@ export class Lowerer {
     for (const decl of this.checker.declarationsOf(sym)) {
       if (
         ts.isSourceFile(decl) && !decl.isDeclarationFile &&
-        !decl.fileName.endsWith(".cts") && !isCjsJsFile(decl) &&
+        !decl.fileName.endsWith(".cts") && !isCjsJsFile(decl, this.program) &&
         this.moduleOrder.includes(decl)
       ) {
         return `file:${tsgoPath(resolve(decl.fileName))}`;
@@ -2493,7 +2503,7 @@ export class Lowerer {
     // relative imports; an opted-in --npm-static package is the fallback.
     const dep = resolveImport(this.program, importDecl.getSourceFile(), spec) ??
       npmStaticDepSf7(this.program, importDecl.getSourceFile(), spec);
-    if (!dep || !isJsSourceFile(dep) || isNodeEsmFile(dep)) return null;
+    if (!dep || !isJsSourceFile(dep) || isNodeEsmFile(dep, this.program)) return null;
     return dep;
   }
 
@@ -2708,7 +2718,7 @@ export class Lowerer {
     while (changed) {
       changed = false;
       for (const fp of parts) {
-        if (this.asyncInitFiles.has(fp.sf) || !isNodeEsmFile(fp.sf)) continue;
+        if (this.asyncInitFiles.has(fp.sf) || !isNodeEsmFile(fp.sf, this.program)) continue;
         if (orderedImportsOf(this.program, fp.sf).some(({ dep }) => dep !== null && this.asyncInitFiles.has(dep))) {
           this.asyncInitFiles.add(fp.sf);
           changed = true;

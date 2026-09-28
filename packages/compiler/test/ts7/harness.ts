@@ -1,3 +1,4 @@
+import { createProgram } from "../../src/frontend/ts7/program-adapter.js";
 /* Shared two-world harness for the TS7 adapter suite: builds the SAME
  * fixture programs through typescript@5.9.3 (the "typescript5" island
  * alias — allowed here precisely because this suite's job is comparing
@@ -79,7 +80,7 @@ export function buildTwoWorlds(sources: Record<string, string>, host?: ad.Ts7Hos
   }
   const roots = [...files, ambientDtsPath(), fallbackDtsPath()];
   const p5 = ts5.createProgram(roots, options5());
-  const p7 = ad.createProgram(roots, options7(), host);
+  const p7 = createProgram(roots, options7(), host);
   return {
     dir,
     files,

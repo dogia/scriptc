@@ -54,8 +54,9 @@ import { isNodeModulesPath, nearestInvalidPackageJsonPath, nearestPackageType, n
 import { probeNodeImportRefusal, probeNodeRequireRefusal } from "./npm.js";
 import { isNpmStaticPackage, npmStaticActive, npmStaticFsShadow, npmStaticPackageOfPath, reportNpmStaticOffender, setNpmStaticDeclarationOverloads, setNpmStaticPackages } from "./npm-static.js";
 import { isPrunedNpmReexport, planNpmStaticReexports } from "./npm-static-prune.js";
-import { npmStaticDeclarationReexports, npmStaticRuntimeClassTargets, parseNpmStaticDeclarationOverloads, parseNpmStaticDeclarationProperties } from "./npm-static-declarations.js";
-import type { NpmStaticDeclarationOverloads, NpmStaticDeclarationProperties, NpmStaticOverloadSignature } from "./npm-static-declarations.js";
+import { npmStaticDeclarationReexports, npmStaticRuntimeClassTargets, parseNpmStaticDeclarationOverloads, parseNpmStaticDeclarationProperties } from "./npm-static-declaration-syntax.js";
+import type { FrontendServices } from "./services.js";
+import type { NpmStaticDeclarationOverloads, NpmStaticDeclarationProperties, NpmStaticOverloadSignature } from "./npm-static-declaration-syntax.js";
 import { provenanceEntryFor, provenancePaths } from "./provenance-registry.js";
 import { cjsLexedExportsOfFile, cjsVisibleNames } from "./cjs-syntax.js";
 import {
@@ -314,6 +315,7 @@ function runtimeReexportTarget(fromFile: string, specifier: string): string | nu
  * closure. This is intentionally narrower than TypeScript module
  * resolution: bare edges name other packages and never inherit trust. */
 function visitNpmStaticDeclarationClosure(
+  services: FrontendServices,
   entryPath: string,
   onSource: (path: string, source: string) => void,
 ): void {
@@ -329,7 +331,7 @@ function visitNpmStaticDeclarationClosure(
     const source = trackedReadFile(path);
     if (source === null) return;
     onSource(path, source);
-    for (const specifier of npmStaticDeclarationReexports(path, source)) {
+    for (const specifier of npmStaticDeclarationReexports(services.parse(path, source, "ts"))) {
       const target = declarationReexportTarget(path, specifier);
       if (target !== null) visit(target);
     }
@@ -337,10 +339,10 @@ function visitNpmStaticDeclarationClosure(
   visit(entryPath);
 }
 
-function npmStaticDeclarationOverloadsOf(entryPath: string): NpmStaticDeclarationOverloads {
+function npmStaticDeclarationOverloadsOf(services: FrontendServices, entryPath: string): NpmStaticDeclarationOverloads {
   const classes = new Map<string, Map<string, readonly NpmStaticOverloadSignature[]>>();
-  visitNpmStaticDeclarationClosure(entryPath, (path, source) => {
-    for (const [className, methods] of parseNpmStaticDeclarationOverloads(path, source)) {
+  visitNpmStaticDeclarationClosure(services, entryPath, (path, source) => {
+    for (const [className, methods] of parseNpmStaticDeclarationOverloads(services.parse(path, source, "ts"))) {
       const target = classes.get(className) ?? new Map<string, readonly NpmStaticOverloadSignature[]>();
       classes.set(className, target);
       for (const [methodName, signatures] of methods) {
@@ -351,10 +353,10 @@ function npmStaticDeclarationOverloadsOf(entryPath: string): NpmStaticDeclaratio
   return classes;
 }
 
-function npmStaticDeclarationPropertiesOf(entryPath: string): NpmStaticDeclarationProperties {
+function npmStaticDeclarationPropertiesOf(services: FrontendServices, entryPath: string): NpmStaticDeclarationProperties {
   const classes = new Map<string, Map<string, string>>();
-  visitNpmStaticDeclarationClosure(entryPath, (path, source) => {
-    for (const [className, properties] of parseNpmStaticDeclarationProperties(path, source)) {
+  visitNpmStaticDeclarationClosure(services, entryPath, (path, source) => {
+    for (const [className, properties] of parseNpmStaticDeclarationProperties(services.parse(path, source, "ts"))) {
       const target = classes.get(className) ?? new Map<string, string>();
       classes.set(className, target);
       for (const [propertyName, type] of properties) {
@@ -582,63 +584,64 @@ function loadProgram7(
   }
   const coreRoots = [entryPath, ambientDtsPath(), nodeTypes ?? fallbackDtsPath()];
   const programRoots = [...coreRoots];
-  let program = ts.createProgram([...programRoots, overridesDtsPath()], options, host);
-  for (let pass = 0; pass < 32; pass++) {
-    const candidates = [
-      ...entryPackageProgramRoots7(program, entryPath),
-      ...createRequireProgramRoots7(program),
-      ...forkTargetPaths(program, program.getSourceFiles()),
-    ];
-    const extraRoots = candidates.filter(
-      (root, index) => !programRoots.includes(root) && candidates.indexOf(root) === index,
-    );
-    if (extraRoots.length === 0) break;
-    program.dispose();
-    programRoots.push(...extraRoots);
-    program = ts.createProgram([...programRoots, overridesDtsPath()], options, host);
-    if (pass === 31) throw new Error("static program-root discovery did not converge");
-  }
-  const entry = program.getSourceFile(entryPath);
-  if (!entry) throw new Error(`could not load ${entryPath}`);
-  const externalTypeSpecifiersByFile = externalTypeFileClosure7(program, externalTypes);
-  let projectWorld: ts.Program | null = null;
-  return {
-    program,
-    entry,
-    moduleOrder: [],
-    configDiags: config.diags,
-    externalTypes,
-    externalTypeSpecifiersByFile,
-    projectWorld: () => (projectWorld ??= ts.createProgram(programRoots, options, host)),
-    disposeAll: () => {
-      projectWorld?.dispose();
+  let program = host.createProgram([...programRoots, overridesDtsPath()], options);
+  try {
+    for (let pass = 0; pass < 32; pass++) {
+      const candidates = [
+        ...entryPackageProgramRoots7(program, entryPath),
+        ...createRequireProgramRoots7(program),
+        ...forkTargetPaths(program, program.getSourceFiles()),
+      ];
+      const extraRoots = candidates.filter(
+        (root, index) => !programRoots.includes(root) && candidates.indexOf(root) === index,
+      );
+      if (extraRoots.length === 0) break;
       program.dispose();
-    },
-  };
+      programRoots.push(...extraRoots);
+      program = host.createProgram([...programRoots, overridesDtsPath()], options);
+      if (pass === 31) throw new Error("static program-root discovery did not converge");
+    }
+    const entry = program.getSourceFile(entryPath);
+    if (!entry) throw new Error(`could not load ${entryPath}`);
+    const externalTypeSpecifiersByFile = externalTypeFileClosure7(program, externalTypes);
+    let projectWorld: ts.Program | null = null;
+    return {
+      program,
+      entry,
+      moduleOrder: [],
+      configDiags: config.diags,
+      externalTypes,
+      externalTypeSpecifiersByFile,
+      projectWorld: () => (projectWorld ??= host.createProgram(programRoots, options)),
+      disposeAll: () => {
+        try { projectWorld?.dispose(); }
+        finally { program.dispose(); }
+      },
+    };
+  } catch (error) {
+    program.dispose();
+    throw error;
+  }
 }
 
 /** The pipeline surface: ONE tsgo program serves preflight AND the
  * lowering. The caller runs checkPreflight, hands program/entry/
  * moduleOrder straight to lowerToIr, and MUST dispose() when done — the
  * spawned tsgo server must not outlive the compile. */
+export interface ProgramLoadOptions {
+  /** Package names whose shipped JavaScript is compiled as program code. */
+  npmStatic?: readonly string[];
+  /** Exact host module specifiers paired with their declaration paths. */
+  externalTypes?: readonly (readonly [string, string])[];
+}
+
 export function loadProgram(
   entryPath: string,
-  opts?: {
-    /** --npm-static: package names whose shipped JS compiles as program
-     * modules this load (npm-static.ts owns the doctrine). Every load
-     * RESETS the module state, so flagless loads always start clean. */
-    npmStatic?: Iterable<string>;
-    /** Coverage-only type surfaces for modules supplied by an embedder.
-     * Exact bare specifiers only; values never become runtime edges. */
-    externalTypes?: ReadonlyMap<string, string> | Readonly<Record<string, string>> | undefined;
-  },
-): LoadResult & { dispose: () => void } {
-  // Absolute from the start: tsgo's world is absolute-path-keyed (the CLI
-  // resolves before calling; this covers direct API callers too).
+  services: FrontendServices,
+  opts?: ProgramLoadOptions,
+): LoadResult & { services: FrontendServices; dispose: () => void } {
   entryPath = resolve(entryPath);
-  const externalTypeEntries = opts?.externalTypes instanceof Map
-    ? [...opts.externalTypes]
-    : Object.entries(opts?.externalTypes ?? {});
+  const externalTypeEntries = opts?.externalTypes ?? [];
   const externalTypes = new Map<string, string>();
   for (const [specifier, file] of externalTypeEntries) {
     if (!isExactExternalTypeSpecifier(specifier)) {
@@ -676,15 +679,15 @@ export function loadProgram(
     ) {
       continue;
     }
-    const overloads = npmStaticDeclarationOverloadsOf(resolved.typesFile);
-    const properties = npmStaticDeclarationPropertiesOf(resolved.typesFile);
+    const overloads = npmStaticDeclarationOverloadsOf(services, resolved.typesFile);
+    const properties = npmStaticDeclarationPropertiesOf(services, resolved.typesFile);
     const classNames = new Set([...overloads.keys(), ...properties.keys()]);
     if (classNames.size === 0) continue;
     const runtime = resolveBareModule(entryPath, pkg, "js-only");
     if (runtime === null || !isJsSourceFileName(runtime.typesFile)) continue;
     const runtimeSource = trackedReadFile(runtime.typesFile);
     if (runtimeSource === null) continue;
-    const targets = npmStaticRuntimeClassTargets(runtime.typesFile, runtimeSource, classNames);
+    const targets = npmStaticRuntimeClassTargets(services.parse(runtime.typesFile, runtimeSource, "js"), runtimeSource, classNames);
     for (const [className, { specifier, localName }] of targets) {
       const methods = overloads.get(className);
       const fields = properties.get(className);
@@ -753,21 +756,27 @@ export function loadProgram(
   // outside node_modules — the classic typed-JS-library entry — must not exist for
   // the checker, so its resolution lands on the JS Node actually loads;
   // resolve.ts answers the same sibling for scriptc's own edges).
-  const npmShadow = npmStaticFsShadow();
+  const npmShadow = npmStaticFsShadow(services);
   const fsShadow = {
     readFile: (path: string) => npmShadow?.readFile(path),
     hideFile: (path: string) =>
       (npmShadow?.hideFile(path) ?? false) || projectDtsRuntimeSibling(path) !== null,
   };
-  const host = new ts.Ts7Host({ cwd: dirname(entryPath), fsShadow });
-  const load = loadProgram7(host, entryPath, externalTypes);
-  return {
-    ...load,
-    dispose: () => {
-      load.disposeAll();
-      host.close();
-    },
-  };
+  const host = services.createProgramHost({ cwd: dirname(entryPath), fsShadow });
+  try {
+    const load = loadProgram7(host, entryPath, externalTypes);
+    return {
+      ...load,
+      services,
+      dispose: () => {
+        try { load.disposeAll(); }
+        finally { host.close(); }
+      },
+    };
+  } catch (error) {
+    host.close();
+    throw error;
+  }
 }
 
 /** tsc diagnostics (syntax + types), the supported-import fence, and the
@@ -966,7 +975,7 @@ function purePrefixStmt7(program: ts.Program, s: ts.Statement): boolean {
   if (ts.isEmptyStatement(s) || ts.isFunctionDeclaration(s)) return true;
   if (ts.isExpressionStatement(s) && ts.isStringLiteral(s.expression)) return true; // directive
   if (isRequireStatement7(s)) return true;
-  if (isCjsJsFile7(s.getSourceFile())) {
+  if (isCjsJsFile7(s.getSourceFile(), program)) {
     if (ts.isExpressionStatement(s) && isEsModuleStamp(s.expression)) {
       const call = s.expression as ts.CallExpression;
       const object = (call.expression as ts.PropertyAccessExpression).expression as ts.Identifier;
@@ -1174,11 +1183,8 @@ function staticCreateRequireUse7(expr: ts.Expression): boolean {
     call.arguments.length === 1 && ts.isStringLiteralLike(call.arguments[0]!);
 }
 
-const stableCreateRequireReasons7 = new WeakMap<ts.Program, Map<ts.VariableDeclaration, string | null>>();
-
 function stableCreateRequireBindingReason7(program: ts.Program, decl: ts.VariableDeclaration): string | null {
-  let cache = stableCreateRequireReasons7.get(program);
-  if (!cache) stableCreateRequireReasons7.set(program, cache = new Map());
+  const cache = program.analysis.createRequireReasons;
   if (cache.has(decl)) return cache.get(decl)!;
   const check = (): string | null => {
     const stmt = decl.parent?.parent;
@@ -1393,15 +1399,13 @@ function nodeEsmSyntaxMarker7(sf: ts.SourceFile): ts.Node | null {
   return found;
 }
 
-const nodeEsmFileCache7 = new WeakMap<ts.SourceFile, boolean>();
-
 /** True when Node would treat this file as an ES MODULE (never defining
  * require/__dirname there): fixed extensions first, then an explicit
  * nearest-package type, then Node's syntax markers for ambiguous .js/.ts
  * files. TypeScript's external-module bit is forced for checker scoping and
  * therefore intentionally plays no part in this runtime decision. */
-function isNodeEsmFile7(sf: ts.SourceFile): boolean {
-  const cached = nodeEsmFileCache7.get(sf);
+function isNodeEsmFile7(sf: ts.SourceFile, program?: ts.Program): boolean {
+  const cached = program?.analysis.nodeEsmFiles.get(sf);
   if (cached !== undefined) return cached;
   let result: boolean;
   if (sf.fileName.endsWith(".cjs") || sf.fileName.endsWith(".cts")) {
@@ -1416,7 +1420,7 @@ function isNodeEsmFile7(sf: ts.SourceFile): boolean {
         ? false
         : nodeEsmSyntaxMarker7(sf) !== null;
   }
-  nodeEsmFileCache7.set(sf, result);
+  program?.analysis.nodeEsmFiles.set(sf, result);
   return result;
 }
 
@@ -1424,15 +1428,15 @@ function isNodeEsmFile7(sf: ts.SourceFile): boolean {
  * ESM namespace/default machinery must not claim it — its export surface
  * is module.exports, read through the CJS interop paths and their own
  * fences. */
-function isCjsJsFile7(sf: ts.SourceFile): boolean {
-  return isJsSourceFileName(sf.fileName) && !isNodeEsmFile7(sf);
+function isCjsJsFile7(sf: ts.SourceFile, program?: ts.Program): boolean {
+  return isJsSourceFileName(sf.fileName) && !isNodeEsmFile7(sf, program);
 }
 
 /** The exported spelling of isCjsJsFile7 (the lowering's gate for
  * module.exports surfaces — `ts.isExternalModule` is NOT the CJS test:
  * tsgo marks CJS files with export assignments as external modules). */
-export function isCjsJsFile(sf: ts.SourceFile): boolean {
-  return isCjsJsFile7(sf);
+export function isCjsJsFile(sf: ts.SourceFile, program?: ts.Program): boolean {
+  return isCjsJsFile7(sf, program);
 }
 
 /** The self-import TDZ fences: for `import { x } from "<self>"` (default
@@ -2002,7 +2006,7 @@ export function makeCycleAdmission(
     if (!sccVerdict.has(comp)) {
       let reason: string | null = null;
       for (const m of comp) {
-        if (isCjsJsFile7(m)) {
+        if (isCjsJsFile7(m, program)) {
           reason = `${m.fileName} is a CommonJS module — admission covers ES-module cycles only`;
           break;
         }
@@ -2135,24 +2139,18 @@ function processModuleAliasImport7(spec: string, stmt: ts.ImportDeclaration): bo
 }
 
 /** The whole TS7-lane lifecycle for one entry: spawn (or share) a tsgo
- * host, build the lowering-world program, run the ported preflight, and
- * dispose EVERYTHING before returning — the CLI process must exit promptly,
- * so no snapshot or tsgo child outlives the call. */
+ * host, build the lowering-world program, run preflight, and release its
+ * snapshot. The caller owns the supplied host and can reuse or close it. */
 export function checkPreflightTs7(
   entryPath: string,
-  sharedHost?: ts.Ts7Host,
+  host: ts.Ts7Host,
 ): { diags: ScrDiagnostic[]; moduleOrder: string[] } {
-  const host = sharedHost ?? new ts.Ts7Host({ cwd: dirname(entryPath) });
+  const load = loadProgram7(host, resolve(entryPath));
   try {
-    const load = loadProgram7(host, entryPath);
-    try {
-      const { diags, moduleOrder } = preflight7(load);
-      return { diags, moduleOrder: moduleOrder.map((sf) => sf.fileName) };
-    } finally {
-      load.disposeAll();
-    }
+    const { diags, moduleOrder } = preflight7(load);
+    return { diags, moduleOrder: moduleOrder.map((sf) => sf.fileName) };
   } finally {
-    if (!sharedHost) host.close();
+    load.disposeAll();
   }
 }
 
@@ -2435,7 +2433,7 @@ function preflight7(load: LoadResult): {
       }
       continue;
     }
-    if (!isNodeEsmFile7(sf)) {
+    if (!isNodeEsmFile7(sf, program)) {
       const marker = nodeEsmSyntaxMarker7(sf);
       if (marker !== null) diags.push(commonJsModuleSyntaxDiag(locOf7(marker)));
     }
@@ -2585,7 +2583,7 @@ function preflight7(load: LoadResult): {
         // RESOLVED user module lowers; everything else keeps the fence —
         // there is no namespace object to materialize.
         if (stmt.exportClause && ts.isNamespaceExport(stmt.exportClause)) {
-          if (reDep === null || reDep.fileName.endsWith(".json") || isCjsJsFile7(reDep)) {
+          if (reDep === null || reDep.fileName.endsWith(".json") || isCjsJsFile7(reDep, program)) {
             diags.push(unsupportedDiag("SC1013", locOf7(stmt), "namespace re-exports (export * as ns) of this module form"));
             continue;
           }
@@ -2801,7 +2799,7 @@ function preflight7(load: LoadResult): {
           // before (their namespace members are the declared surface).
           if (isJson) {
             diags.push(unsupportedDiag("SC1013", locOf7(clause.namedBindings), "namespace imports of JSON modules"));
-          } else if (dep !== null && isCjsJsFile7(dep)) {
+          } else if (dep !== null && isCjsJsFile7(dep, program)) {
             // A CJS namespace binding whose every use is a bare expression
             // statement (`cjs;` — the corpus's "the import linked"
             // assertion) carries no surface question: the statement lowers
@@ -2840,7 +2838,7 @@ function preflight7(load: LoadResult): {
           // calls retain the existing checker/lowering diagnostics; JS
           // files keep the full CommonJS scan.
           if (!jsRequireFile && bindingKind !== "createRequire") continue;
-          if (isNodeEsmFile7(sf)) {
+          if (isNodeEsmFile7(sf, program)) {
             if (bindingKind !== "createRequire") {
               diags.push(unsupportedDiag("SC1013", loc, esmRequireFeature7(bindingKind)));
               continue;
@@ -2939,7 +2937,7 @@ function preflight7(load: LoadResult): {
         const loc = { file: sf.fileName, start: call.getStart(sf), end: call.getEnd() };
         const bindingKind = requireCallBindingKind7(program, call);
         if (!jsRequireFile && bindingKind !== "createRequire") continue;
-        if (isNodeEsmFile7(sf)) {
+        if (isNodeEsmFile7(sf, program)) {
           if (bindingKind !== "createRequire") {
             diags.push(unsupportedDiag("SC1013", loc, esmRequireFeature7(bindingKind)));
             continue;
@@ -3143,7 +3141,7 @@ function cjsNamedImportLinkCheck(
   // files (Node's cjsPreparseModuleExports rule).
   const resolveCjsDep = (from: ts.SourceFile, spec: string): ts.SourceFile | null => {
     const dep = resolveEdge(from, spec);
-    return dep !== null && isCjsJsFile7(dep) ? dep : null;
+    return dep !== null && isCjsJsFile7(dep, program) ? dep : null;
   };
   const visible = (dep: ts.SourceFile, name: string): boolean =>
     // `default` is the module.exports binding itself — always provided.
@@ -3155,7 +3153,7 @@ function cjsNamedImportLinkCheck(
    * import/re-export from one. */
   const cjsDepOf = (sf: ts.SourceFile, spec: string): ts.SourceFile | null => {
     const dep = resolveEdge(sf, spec);
-    return dep !== null && isCjsJsFile7(dep) ? dep : null;
+    return dep !== null && isCjsJsFile7(dep, program) ? dep : null;
   };
 
   /** The first lexer-invisible CJS name request of ONE module, in V8's
@@ -3213,19 +3211,19 @@ function cjsNamedImportLinkCheck(
       if (specNode === undefined || !ts.isStringLiteral(specNode)) continue;
       const spec = specNode.text;
       const dep = resolveEdge(sf, spec);
-      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep)) continue;
+      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep, program)) continue;
       const bad = dfs(dep);
       if (bad !== null) return bad;
     }
     return firstInvisibleOf(sf);
   };
-  const bad = isNodeEsmFile7(entry) ? dfs(entry) : null;
+  const bad = isNodeEsmFile7(entry, program) ? dfs(entry) : null;
 
   // ESM modules only require() reaches: same invisibility, but Node's
   // SyntaxError fires mid-evaluation at the require — a pointed fence
   // instead of a mismodeled crash position.
   for (const sf of moduleOrder) {
-    if (!isNodeEsmFile7(sf) || visited.has(sf)) continue;
+    if (!isNodeEsmFile7(sf, program) || visited.has(sf)) continue;
     const b = firstInvisibleOf(sf);
     if (b !== null) {
       diags.push(
@@ -3377,7 +3375,7 @@ function analyzeEsmNamedImportLinks(
       if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly || stmt.exportClause !== undefined) continue;
       if (stmt.moduleSpecifier === undefined || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
       const target = resolveEdge(dep, stmt.moduleSpecifier.text);
-      if (target === null || target.fileName.endsWith(".json") || !isNodeEsmFile7(target)) continue;
+      if (target === null || target.fileName.endsWith(".json") || !isNodeEsmFile7(target, program)) continue;
       const candidate = runtimeExport(target, name, nextSeen);
       if (candidate === undefined) continue;
       if (starExport !== undefined && starExport !== candidate) return undefined;
@@ -3394,7 +3392,7 @@ function analyzeEsmNamedImportLinks(
       if (clause === undefined || clause.phaseModifier === ts.SyntaxKind.TypeKeyword) continue;
       const spec = stmt.moduleSpecifier.text;
       const dep = resolveEdge(sf, spec);
-      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep)) continue;
+      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep, program)) continue;
       if (clause.name !== undefined) {
         imports.push({ local: clause.name.text, exportName: "default", spec, nameNode: clause.name, dep });
       }
@@ -3434,7 +3432,7 @@ function analyzeEsmNamedImportLinks(
       if (!ts.isStringLiteral(moduleSpecifier) || !ts.isNamedExports(exportClause)) continue;
       const spec = moduleSpecifier.text;
       const dep = resolveEdge(sf, spec);
-      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep)) continue;
+      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep, program)) continue;
       for (const element of exportClause.elements) {
         if (element.isTypeOnly) continue;
         const nameNode = element.propertyName ?? element.name;
@@ -3460,7 +3458,7 @@ function analyzeEsmNamedImportLinks(
       const moduleSpecifier = stmt.moduleSpecifier;
       if (moduleSpecifier === undefined || !ts.isStringLiteral(moduleSpecifier)) continue;
       const dep = resolveEdge(sf, moduleSpecifier.text);
-      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep)) continue;
+      if (dep === null || dep.fileName.endsWith(".json") || !isNodeEsmFile7(dep, program)) continue;
       const bad = dfs(dep);
       if (bad !== null) return bad;
     }
@@ -3470,7 +3468,7 @@ function analyzeEsmNamedImportLinks(
   // Native ESM linking itself starts only from an ESM entry. The caller
   // supplies dynamic-only roots here too; each such root gets its own
   // promise rejection rather than a startup crash.
-  const bad = isNodeEsmFile7(entry) ? dfs(entry) : null;
+  const bad = isNodeEsmFile7(entry, program) ? dfs(entry) : null;
   if (bad !== null) {
     return {
       crash: {
@@ -3508,7 +3506,7 @@ function esmNamedImportLinkCheck(
   // before earlier output). Keep the compile-time fence used by the CJS link
   // checker for the analogous mid-evaluation failure instead.
   for (const sf of moduleOrder) {
-    if (!isNodeEsmFile7(sf) || analysis.visited.has(sf)) continue;
+    if (!isNodeEsmFile7(sf, program) || analysis.visited.has(sf)) continue;
     const childFailure = analysis.firstMissingOf(sf);
     if (childFailure !== null) {
       diags.push(

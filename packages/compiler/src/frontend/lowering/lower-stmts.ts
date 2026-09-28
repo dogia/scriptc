@@ -4885,7 +4885,7 @@ function lowerBranchSwitch(
       // site (message with the one-entry require stack), CATCHABLE — the
       // optional-dependency try/require pattern. The compiled statement
       // IS that throw, wherever it sits.
-      if (isCjsJsFile(sf)) {
+      if (isCjsJsFile(sf, lowerer.program)) {
         if (
           !isRelativeSpecifier(spec) &&
           canonicalBuiltinModule(spec) === null
@@ -4907,7 +4907,7 @@ function lowerBranchSwitch(
           }
         }
       }
-      if (isCjsJsFile(sf)) {
+      if (isCjsJsFile(sf, lowerer.program)) {
         const init = lowerer.requireInitStmt(spec, expr);
         if (init) return init;
         return { kind: "block", body: [], loc: locOf(expr) };

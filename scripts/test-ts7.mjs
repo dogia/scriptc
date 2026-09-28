@@ -9,7 +9,6 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const ALLOWED_TYPESCRIPT5_IMPORTS = new Set([
   "packages/compiler/src/frontend/lowering/lower-comptime.ts",
-  "packages/compiler/src/frontend/npm.ts",
   "packages/compiler/src/frontend/ts7/world-check.ts",
   "packages/compiler/src/frontend/ts7/source-parser.test.ts",
   "packages/compiler/src/library/semantic-source.ts",

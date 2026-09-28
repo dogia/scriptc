@@ -1,3 +1,5 @@
+import { Ts7Host } from "../../src/frontend/ts7/program-adapter.js";
+import { createProgram } from "../../src/frontend/ts7/program-adapter.js";
 /* The memo/batch effect, measured on the survey's two real workloads.
  *
  * The survey counted the checker traffic a real lowering makes (counting
@@ -61,7 +63,7 @@ const WORKLOADS = [
   },
 ] as const;
 
-const host = new ad.Ts7Host();
+const host = new Ts7Host();
 afterAll(() => host.close());
 
 interface Pools {
@@ -138,7 +140,7 @@ for (const workload of WORKLOADS) {
   // invert the comparison on a busy machine. A real batching regression
   // is ~10x and fails every attempt.
   test(`${workload.name}: facade replay of the census mix beats the naive per-call projection`, { retry: 2 }, () => {
-    const program = ad.createProgram(
+    const program = createProgram(
       [workload.entry, ambientDtsPath(), fallbackDtsPath(), overridesDtsPath()],
       options7(),
       host,

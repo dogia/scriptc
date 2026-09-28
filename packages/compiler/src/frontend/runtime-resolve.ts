@@ -15,7 +15,7 @@ import { createRequire, isBuiltin } from "node:module";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { markFrontendInputsUnstable } from "./input-tracker.js";
-import { NpmGraphBuilder, probeNodeImportRefusal } from "./npm.js";
+import { NpmGraphBuilder, probeNodeImportRefusal } from "./npm-node.js";
 import { wasiGuestPath } from "../wasi-paths.js";
 
 export interface RuntimeResolveError {

@@ -27,7 +27,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import * as ts from "../../packages/compiler/src/frontend/ts7/adapter.js";
 import { ambientDtsPath, ir, ISLAND_SURFACE, overridesDtsPath, STATIC_MATH_PROPS, type IslandFnEntry } from "@scriptc/compiler";
-import { loadProgram } from "../../packages/compiler/src/frontend/program.js";
+import { loadProgram } from "../../packages/compiler/src/frontend/program-node.js";
 
 function placeholder(t: ir.IrType): string {
   if (ir.typeEquals(t, ir.F64)) return "__num";

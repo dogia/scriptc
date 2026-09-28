@@ -906,7 +906,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
         lowerer.isStdlibGlobal(expr, expr.text)
       ) {
         const sf = expr.getSourceFile();
-        if (isNodeEsmFile(sf)) {
+        if (isNodeEsmFile(sf, lowerer.program)) {
           lowerer.unsupported(
             "SC1090",
             expr,
@@ -1677,7 +1677,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       // resolve unconditionally — they run after the module evaluated,
       // the same approximation identifier exports already make. Every
       // other module.exports read keeps its existing story.
-      if (!expr.questionDotToken && isModuleExportsAccess(expr) && isCjsJsFile(expr.getSourceFile())) {
+      if (!expr.questionDotToken && isModuleExportsAccess(expr) && isCjsJsFile(expr.getSourceFile(), lowerer.program)) {
         const whole = cjsClassExprWholeExportOf(expr.getSourceFile());
         if (whole) {
           let inBody = false;
@@ -1711,7 +1711,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
           ts.isBinaryExpression(expr.parent) &&
           expr.parent.left === expr &&
           expr.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
-        if (!expr.questionDotToken && cjsMemberRecv && !writePos && isCjsJsFile(sf)) {
+        if (!expr.questionDotToken && cjsMemberRecv && !writePos && isCjsJsFile(sf, lowerer.program)) {
           const sym =
             lowerer.checker.getSymbolAtLocation(expr.name) ??
             lowerer.cjsModuleExportSymbol(sf, expr.name.text);
@@ -7702,7 +7702,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     const recv = expr.expression;
     if (!ts.isIdentifier(recv) || recv.text !== "exports") return null;
     const sf = expr.getSourceFile();
-    if (!isJsSourceFile(sf) || isNodeEsmFile(sf)) return null;
+    if (!isJsSourceFile(sf) || isNodeEsmFile(sf, lowerer.program)) return null;
     if (lowerer.peekLocal(recv) || lowerer.globalOf(recv)) return null; // a user binding shadows
     // Write position is the export-assignment machinery's territory.
     if (ts.isBinaryExpression(expr.parent) && expr.parent.left === expr &&

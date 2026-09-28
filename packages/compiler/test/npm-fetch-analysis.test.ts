@@ -1,8 +1,9 @@
+import { npmFetchCases } from "./npm-fetch-cases.js";
 import { expect, test } from "vitest";
 import {
   embeddedModulesUsingGlobalFetch,
-  type EmbeddedModule,
-} from "../src/frontend/npm.js";
+} from "../src/frontend/npm-fetch-node.js";
+import type { EmbeddedModule } from "../src/frontend/npm.js";
 
 function js(key: string, source: string): EmbeddedModule {
   return { key: `/${key}.js`, source, format: "cjs" };
@@ -69,4 +70,11 @@ test("embedded fetch capability analysis finds global reads", () => {
     "/global-alias-destructure.js",
     "C:\\pkg\\index.js",
   ]);
+});
+
+
+test("global fetch capability matrix keeps local names and global aliases distinct", () => {
+  const modules: EmbeddedModule[] = npmFetchCases.map((item, index) => ({ key: `${index}.js`, source: item.source, format: "cjs" }));
+  const found = embeddedModulesUsingGlobalFetch(modules);
+  for (let i = 0; i < modules.length; i++) expect(found.has(modules[i]!.key), npmFetchCases[i]!.name).toBe(npmFetchCases[i]!.usesFetch);
 });

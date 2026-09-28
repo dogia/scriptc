@@ -5,30 +5,16 @@
  *     import * as ts from "./ts7/adapter.js";   // path per file
  *
  * This preserves familiar `ts.name` spellings for guards, enums, helpers,
- * createProgram, Expression, Node, Symbol, and the other frontend types.
+ * Ts7Host, Expression, Node, Symbol, and the other frontend types.
  *
- * TWO-WORLD DISCIPLINE. typescript@7.0.2 is the REAL "typescript"
- * dependency; typescript@5.9.3 stays installed under the "typescript5"
- * alias for string-bounded parser/transpile islands only. TypeScript 7.0.2
- * ships no client-side parser or transpileModule equivalent, so the npm,
- * provenance, semantic-source, CJS-lexer, and comptime helpers retain that
- * implementation detail. scripts/test-ts7.mjs owns the exact import
- * allowlist. Nothing may hand a 5.9.3 node, type, symbol, or enum value to
- * this world or back; every island accepts source strings and returns
- * world-neutral facts or rewritten strings:
- *   - Mixing OBJECTS is a compile-time error: every node interface carries
- *     `kind: SyntaxKind` and the two packages declare DISTINCT enums, which
- *     TypeScript treats nominally — a 5.9.3 SourceFile is not assignable
- *     where the adapter takes one, and vice versa (world-check.ts pins this
- *     with @ts-expect-error assertions that pnpm build enforces).
- *   - Mixing ENUM VALUES cannot be fenced by the type system alone (both
- *     erase to number), which is why every enum here is generated from 7's pinned
- *     declarations, checked against its runtime objects, and no new source may import
- *     "typescript5" outside the enforced island allowlist.
+ * Parser/checker services are injected by the client. Node convenience
+ * constructors live in program-adapter.ts and are never re-exported here.
+ * Syntax helpers use the native source parser; remaining TypeScript 5
+ * transforms accept source strings and return world-neutral results.
+ * scripts/test-ts7.mjs owns their exact import allowlist and world-check.ts
+ * prevents their ASTs from entering this frontend.
  *
- * Census coverage not present here, by design (the survey's MISSING list):
- *   - ts.createSourceFile / ts.preProcessFile — no client-side parser in 7;
- *     the npm.ts edge scan keeps 5.9.3 (island).
+ * APIs replaced by dedicated services:
  *   - ts.transpileModule — lower-comptime keeps 5.9.3 (island).
  *   - ts.resolveModuleName / ts.resolveTypeReferenceDirective — replaced by
  *     resolve.ts, the one resolver shared by the TypeScript 7 program graph
@@ -42,11 +28,11 @@
 export * from "./enums.js";
 export * from "./ast.js";
 export * from "./checker.js";
-export * from "./program-adapter.js";
+export * from "./program-host.js";
 
 /* 5.9.3-name aliases for the program/checker surface. */
 export type { CheckerFacade as TypeChecker } from "./checker.js";
-export type { Ts7Program as Program } from "./program-adapter.js";
+export type { Ts7Program as Program } from "./program-host.js";
 
 export * from "./semantic-types.js";
 
