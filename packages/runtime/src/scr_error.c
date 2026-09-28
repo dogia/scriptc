@@ -28,12 +28,12 @@ bool scr_error_has_cause(ScrError *e) { return e->error_cause != NULL; }
 
 void scr_error_set_traced(void) { scr_error_traced = true; }
 
-static const char *const scr_error_names[5] = {
+static const char *const scr_error_names[SCR_ERR_COUNT] = {
     "Error", "TypeError", "RangeError", "SyntaxError",
     /* DOMException's DEFAULT name is "Error" too (WebIDL: the name
      * parameter defaults to "Error"); the class identity lives in the
      * vtable, never the name. */
-    "Error"};
+    "Error", "ReferenceError", "EvalError", "URIError"};
 
 void scr_error_trace(void *e, ScrTraceVisit visit, void *ctx) {
   /* name/message are strings — never collector-headered; nothing to visit. */
@@ -99,12 +99,15 @@ static void scr_domex_reld(void *obj) {
 
 /* Defaults cover only the instants before main() stamps the program's real
  * preorder intervals; release is permanent. */
-SCR_TL ScrVt scr_error_vts[5] = {
-    {0, 4, &scr_error_reld}, /* Error */
+SCR_TL ScrVt scr_error_vts[SCR_ERR_COUNT] = {
+    {0, 7, &scr_error_reld}, /* Error */
     {1, 1, &scr_error_reld}, /* TypeError */
     {2, 2, &scr_error_reld}, /* RangeError */
     {3, 3, &scr_error_reld}, /* SyntaxError */
     {4, 4, &scr_domex_reld}, /* DOMException */
+    {5, 5, &scr_error_reld}, /* ReferenceError */
+    {6, 6, &scr_error_reld}, /* EvalError */
+    {7, 7, &scr_error_reld}, /* URIError */
 };
 
 ScrError *scr_error_retain(ScrError *e) {
@@ -339,7 +342,8 @@ void scr_throw_domex_str(const char *name, ScrStr *message) {
 
 void scr_throw_error_named(ScrStr *name, ScrStr *message) {
   int kind = SCR_ERR_ERROR;
-  for (int i = 1; i < 4; i++) {
+  for (int i = 1; i < SCR_ERR_COUNT; i++) {
+    if (i == SCR_ERR_DOMEX) continue;
     const char *n = scr_error_names[i];
     if (name->len == strlen(n) && memcmp(name->data, n, name->len) == 0) {
       kind = i;

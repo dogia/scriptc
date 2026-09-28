@@ -1686,6 +1686,9 @@ ScrError *scr_error_from_dyn(const ScrDyn *d) {
     if (n->len == 9 && memcmp(n->data, "TypeError", 9) == 0) k = SCR_ERR_TYPE;
     else if (n->len == 10 && memcmp(n->data, "RangeError", 10) == 0) k = SCR_ERR_RANGE;
     else if (n->len == 11 && memcmp(n->data, "SyntaxError", 11) == 0) k = SCR_ERR_SYNTAX;
+    else if (n->len == 14 && memcmp(n->data, "ReferenceError", 14) == 0) k = SCR_ERR_REFERENCE;
+    else if (n->len == 9 && memcmp(n->data, "EvalError", 9) == 0) k = SCR_ERR_EVAL;
+    else if (n->len == 8 && memcmp(n->data, "URIError", 8) == 0) k = SCR_ERR_URI;
   }
   ScrError *e = scr_error_new(k, (em && em->kind == SCR_DYN_STR) ? em->v.str : NULL);
   if (en && en->kind == SCR_DYN_STR) {
@@ -3275,11 +3278,13 @@ ScrDyn *scr_dyn_obj_read(const ScrDyn *d, const char *key, size_t key_len) {
     static const char *const tokens[] = {
         "[builtin Error]", "[builtin TypeError]",
         "[builtin RangeError]", "[builtin SyntaxError]",
+        NULL, "[builtin ReferenceError]", "[builtin EvalError]", "[builtin URIError]",
     };
     for (size_t i = 0; i < scr_errdyn_n; i++) {
       if (scr_errdyn_cache[i].dyn != d) continue;
       const ScrVt *vt = scr_errdyn_cache[i].err->vt;
       for (size_t kind = 0; kind < sizeof tokens / sizeof tokens[0]; kind++) {
+        if (!tokens[kind]) continue;
         if (vt != &scr_error_vts[kind]) continue;
         ScrStr *token = scr_str_new(tokens[kind], strlen(tokens[kind]));
         ScrDyn *result = scr_dyn_new_str(token);

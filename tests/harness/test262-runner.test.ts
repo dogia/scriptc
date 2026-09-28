@@ -104,8 +104,10 @@ test("negative parse cases require the compiler's matching source diagnostic", (
 });
 
 test("built-in error assertions are admitted without permitting constructor aliases", () => {
-  const accepted = source("description: exact error", "assert.throws(TypeError, () => { throw new TypeError(); });");
-  expect(exclusion(accepted, metadata(accepted), "strict")).toBeUndefined();
+  for (const name of ["TypeError", "ReferenceError", "EvalError", "URIError"]) {
+    const accepted = source("description: exact error", `assert.throws(${name}, () => { throw new ${name}(); });`);
+    expect(exclusion(accepted, metadata(accepted), "strict")).toBeUndefined();
+  }
   const alias = source("description: custom error", "const Expected = TypeError; assert.throws(Expected, () => { throw new TypeError(); });");
   expect(exclusion(alias, metadata(alias), "strict")).toBe("harness:assert-surface");
 });

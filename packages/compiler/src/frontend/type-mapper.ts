@@ -1468,8 +1468,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     checker.declarationsOf(psym).some(
       (d) => ts.isInterfaceDeclaration(d) && ctx.isStdlibFile(d.getSourceFile()),
     );
-  // The builtin Error classes: references to the LIB's Error/TypeError/
-  // RangeError/SyntaxError interfaces map to the runtime-provided class
+  // The builtin Error classes: references to the lib's Error interfaces map to the runtime-provided class
   // hierarchy (provenance, not the name — a user's own `class Error`
   // resolved through the class-instance branch above, and a user
   // `interface Error` maps as a record). The '%'-prefixed IR names are the

@@ -34,7 +34,7 @@ async function fixture(target: NativeTargetSpec) {
   const manifest: RuntimePackManifest = {
     schema: "scriptc.runtime-pack.v1", format: 1, package: target.runtimePackPackage, version: compilerReleaseVersion(),
     target: { name: target.name, llvm_triple: target.llvmTriple, architecture: target.architecture, object_format: target.objectFormat, minimum_os: target.minimumOs },
-    runtime_abi: { version: 2, marker: "scr_runtime_abi_v2" },
+    runtime_abi: { version: 3, marker: "scr_runtime_abi_v3" },
     compiler: { command: "fixture", identity: "fixture", target: target.llvmTriple },
     macros: { executable: [], excluded: ["SCR_LIB"], sanitizer: "external-toolchain-required" },
     flavors: {

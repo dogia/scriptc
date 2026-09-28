@@ -102,9 +102,8 @@ export function cType(t: IrType): string {
       // ONE struct type for every class (the fields are class-independent).
       return "ScrClassObj *";
     case "object":
-      // Runtime-provided error classes share the runtime's ScrError struct
-      // (all four builtins have the same layout; user subclasses embed it
-      // as their emitted struct's prefix).
+      // Runtime-provided error classes use the ScrError prefix. DOMException
+      // has additional runtime slots; user subclasses embed the prefix.
       if (RUNTIME_ERROR_CLASSES.has(t.className)) return "ScrError *";
       // The runtime emitter class shares the runtime's ScrEmitter struct
       // (user subclasses embed its prefix in their emitted structs).

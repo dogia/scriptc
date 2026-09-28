@@ -62,7 +62,7 @@ void scr_init(void);
 /* Program objects emitted by the bundled LLVM helper reference this symbol.
  * Its versioned spelling makes a mismatched manual runtime link fail before
  * the program can start. */
-void scr_runtime_abi_v2(void);
+void scr_runtime_abi_v3(void);
 
 /* ── the trap funnel (scr_console.c; scr_library.c under -DSCR_LIB) ──────
  * Every unrecoverable runtime trap — OOM, semantic range traps, internal-
@@ -490,14 +490,14 @@ ScrStr *scr_classobj_name(ScrClassObj *c);
 void scr_record_key_miss(ScrStr *k);
 
 /* ── error objects (scr_error.c) ──────────────────────────────────────
- * `Error` and its lib subclasses (TypeError/RangeError/SyntaxError) are a
+ * `Error` and its standard subclasses are a
  * RUNTIME-PROVIDED hierarchy: ScrError lays out exactly like a compiler-
  * emitted hierarchy class (rc, vt, then the fields), so `class MyError
  * extends Error` compiles as an ordinary derived class whose struct embeds
  * this prefix, and every vtable mechanism (base-typed release, preorder-
  * interval instanceof) applies unchanged.
  *
- * The four builtin classes' vtables live HERE as mutable globals because
+ * The builtin classes' vtables live HERE as mutable globals because
  * the runtime itself creates error instances (JSON/dynCheck/regex failures,
  * the island bridge) — but their preorder intervals depend on the whole
  * program's class forest, which only the compiler knows. Every emitted
@@ -528,9 +528,13 @@ enum {
   SCR_ERR_RANGE = 2,
   SCR_ERR_SYNTAX = 3,
   SCR_ERR_DOMEX = 4, /* DOMException — ScrDomException, the wider layout */
+  SCR_ERR_REFERENCE = 5,
+  SCR_ERR_EVAL = 6,
+  SCR_ERR_URI = 7,
+  SCR_ERR_COUNT = 8,
 };
 
-extern SCR_TL ScrVt scr_error_vts[5]; /* indexed by SCR_ERR_*; main() stamps pre/post */
+extern SCR_TL ScrVt scr_error_vts[SCR_ERR_COUNT]; /* indexed by SCR_ERR_*; main() stamps pre/post */
 
 struct ScrDyn; /* full declaration below (the checked-dynamic tree section) */
 

@@ -320,7 +320,7 @@ export interface GenericClassInfo {
     return out;
   }
 
-/** The builtin Error hierarchy (Error + TypeError/RangeError/SyntaxError)
+/** The builtin Error hierarchy
    * as eagerly-registered ClassInfos: mapType names them the moment a lib
    * Error type appears, so the infos must exist before any lowering. They
    * are runtime-provided — no decl, no lowerable bodies; `new`/super()/
@@ -4972,7 +4972,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
       // (a no-op for every non-import= binding).
       fenceEarlyAliasUse(lowerer, expr.expression, expr);
       const symbol = lowerer.resolveValueSymbol(expr.expression);
-      // `new Error(msg?)` (and TypeError/RangeError/SyntaxError): the
+      // `new Error(msg?)` and its standard subclasses: the
       // runtime-provided classes construct through one libCall — the result
       // TYPE names which builtin, and the message completes to "" exactly
       // like Node's message property default.

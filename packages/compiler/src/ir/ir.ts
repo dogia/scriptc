@@ -1168,7 +1168,7 @@ export interface IrClassDef {
  * `class Error` can never collide). `lib` is the standard-library name the
  * frontend recognizes; `kind` is the runtime's SCR_ERR_* index (backends
  * stamp scr_error_vts[kind] and pick constructor kinds by it). Every
- * emitted module carries all four class defs (flagged `runtime`) so the
+ * emitted module carries the builtin class defs (flagged `runtime`) so the
  * program's preorder numbering always covers them — the runtime's own
  * throws (JSON/dynCheck/regex) mint instances of these classes whether or
  * not user code mentions Error. */
@@ -1183,8 +1183,11 @@ export const RUNTIME_ERROR_CLASSES: ReadonlyMap<string, { lib: string; kind: num
     // cause) lives in runtime-side slots BEYOND the ScrError prefix the IR
     // fields describe, reached only through the error.dom* libCalls — so
     // user `extends DOMException` is fenced (the subclass layout would
-    // overlap the hidden slots), where the other four extend freely.
+    // overlap the hidden slots), while the standard Error classes extend freely.
     ["%DOMException", { lib: "DOMException", kind: 4, base: "%Error" }],
+    ["%ReferenceError", { lib: "ReferenceError", kind: 5, base: "%Error" }],
+    ["%EvalError", { lib: "EvalError", kind: 6, base: "%Error" }],
+    ["%URIError", { lib: "URIError", kind: 7, base: "%Error" }],
   ]);
 
 /** The runtime-provided node:events EventEmitter class (ScrEmitter /

@@ -63,7 +63,7 @@ describe.runIf(supported)("macOS arm64 native link info", () => {
         minimum_os: "14.0",
       },
       program: { object, entry_symbol: "main" },
-      runtime_abi: { version: 2, marker: "scr_runtime_abi_v2" },
+      runtime_abi: { version: 3, marker: "scr_runtime_abi_v3" },
       runtime_pack: {
         kind: "source",
         package: "@scriptc/runtime",
@@ -147,6 +147,6 @@ describe.runIf(supported)("macOS arm64 native link info", () => {
     const error = await execFileAsync("clang", [
       "-target", "arm64-apple-macosx14.0.0", object, stub, "-o", join(dir, "bad"),
     ]).then(() => null, (failure: { stderr?: string }) => failure);
-    expect(error?.stderr).toContain("scr_runtime_abi_v2");
+    expect(error?.stderr).toContain("scr_runtime_abi_v3");
   });
 });

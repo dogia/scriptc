@@ -131,7 +131,7 @@ export function exclusion(source, meta, variant) {
           (parent.name.text === "throws" &&
             parent.parent.arguments[0] !== undefined &&
             ts.isIdentifier(parent.parent.arguments[0]) &&
-            ["Error", "TypeError", "RangeError", "SyntaxError"].includes(parent.parent.arguments[0].text)))
+            ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"].includes(parent.parent.arguments[0].text)))
       ) {
         // Supported assertion calls; aliases, mutations, and reflection stay out.
       } else reason = "harness:assert-surface";

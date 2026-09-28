@@ -1103,7 +1103,7 @@ class LlEmitter {
     const tl = this.mod.lib?.threadInstances === true ? "thread_local " : "";
     out.push(
       ``,
-      `@scr_error_vts = external ${tl}global [5 x %ScrVt]`,
+      `@scr_error_vts = external ${tl}global [${RUNTIME_ERROR_CLASSES.size} x %ScrVt]`,
       `declare void @scr_init()`,
       `declare void @scr_lib_init(i32, ptr)`,
       ...(this.runtimeAbiMarker && this.mod.lib === undefined
@@ -1267,7 +1267,7 @@ class LlEmitter {
     for (const iv of this.errorIntervals) {
       for (const [field, value] of [[0, iv.pre], [1, iv.post]] as const) {
         stamps.push(
-          `  store ${this.sizeType} ${value}, ptr getelementptr inbounds ([5 x %ScrVt], ptr @scr_error_vts, i64 0, i64 ${iv.kind}, i32 ${field})${field === 1 ? ` ; ${iv.lib}` : ""}`,
+          `  store ${this.sizeType} ${value}, ptr getelementptr inbounds ([${RUNTIME_ERROR_CLASSES.size} x %ScrVt], ptr @scr_error_vts, i64 0, i64 ${iv.kind}, i32 ${field})${field === 1 ? ` ; ${iv.lib}` : ""}`,
         );
       }
     }
