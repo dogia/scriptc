@@ -10595,6 +10595,18 @@
     "<repo>/tests/corpus/generic-class-js-functions/main.ts"
    ],
    "diags": []
+  },
+  "<repo>/tests/corpus/nested-map-cycles.ts": {
+   "order": [
+    "<repo>/tests/corpus/nested-map-cycles.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/nested-map-values.ts": {
+   "order": [
+    "<repo>/tests/corpus/nested-map-values.ts"
+   ],
+   "diags": []
   }
  }
 }
