@@ -35,7 +35,17 @@ export interface ClassInfo {
   /** OWN fields only (declaration order) with their initializers: the
    * class's constructor runs exactly these — inherited fields initialize in
    * the base constructor, before/via super(). */
-  fieldOrder: { name: string; type: IrType; initializer: ts.Expression | undefined; /** Redeclared INHERITED field: the initializer assigns the base slot at this position; no new slot (def.fields excludes it). */ redeclared?: true }[];
+  fieldOrder: {
+    name: string;
+    type: IrType;
+    initializer: ts.Expression | undefined;
+    /** A bare JS dyn field defines undefined at its declaration position,
+     * even if an earlier initializer or base constructor wrote the slot. */
+    undefinedInitializer?: SrcLoc;
+    /** Redeclared field: initialize the existing slot at this position;
+     * no new slot (def.fields excludes it). */
+    redeclared?: true;
+  }[];
   /** OWN declared methods only — inherited lookups walk the base chain
    * (findMethodOn). An `abstract` entry is a signature with no body (and
    * no module function): it declares the vtable slot; concrete subclasses
@@ -1572,11 +1582,15 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
           // the ordinary undefined-armed union machinery.
           const type = lowerer.irTypeOf(member.name);
           if (type.kind === "void") lowerer.badType(member.name, lowerer.typeOf(member.name));
-          // dyn stays out of class fields (KEEP NARROW; record
-          // fields and array elements are unmappable via mapType already).
-          if (type.kind === "dyn") {
+          // Bundled JS declares fields without annotations before assigning
+          // them in the constructor. Use the same native checked-dynamic
+          // storage as implicit constructor-assigned JS fields.
+          if (type.kind === "dyn" && !isJsSourceFile(member.getSourceFile())) {
             lowerer.unsupported("SC1090", member.name, "'unknown'-typed class fields");
           }
+          const undefinedInitializer = type.kind === "dyn" && !member.initializer
+            ? { undefinedInitializer: locOf(member) }
+            : {};
           if (fields.has(member.name.text)) {
             // REDECLARING an inherited field: Node [[Define]]s the OWN
             // property again when THIS class's field initializers run
@@ -1586,13 +1600,12 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
             // slot, no new slot, no layout change (the `class
             // ConfigError extends Error { name = "ConfigError" }`; the
             // builtin Error prefix included — reads, toString, and throw
-            // reports all answer the overwritten name like Node). A BARE
-            // redeclare writes undefined in Node (`class B extends A
-            // { x; }` reads undefined!) and a type-changing redeclare has
-            // no single slot type — both keep the fence.
+            // reports all answer the overwritten name like Node). A bare
+            // JS dyn redeclaration resets the existing slot to undefined.
+            // Other bare or type-changing redeclarations keep the fence.
             const baseType = fields.get(member.name.text)!;
-            if (member.initializer && typeEquals(type, baseType)) {
-              fieldOrder.push({ name: member.name.text, type, initializer: member.initializer, redeclared: true });
+            if ((member.initializer || type.kind === "dyn") && typeEquals(type, baseType)) {
+              fieldOrder.push({ name: member.name.text, type, initializer: member.initializer, ...undefinedInitializer, redeclared: true });
               continue;
             }
             lowerer.unsupported(
@@ -1622,7 +1635,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
           const admitsUndefined =
             (type.kind === "union" &&
               (lowerer.unions.get(type.unionId)?.arms.some((a) => a.kind === "undefinedT") ?? false)) ||
-            type.kind === "jsval";
+            type.kind === "jsval" || type.kind === "dyn";
           if (!member.initializer && !admitsUndefined) {
             const opts = lowerer.program.getCompilerOptions();
             const spi = opts.strictPropertyInitialization ?? opts.strict ?? false;
@@ -1641,7 +1654,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
             }
           }
           fields.set(member.name.text, type);
-          fieldOrder.push({ name: member.name.text, type, initializer: member.initializer });
+          fieldOrder.push({ name: member.name.text, type, initializer: member.initializer, ...undefinedInitializer });
         } else if (ts.isConstructorDeclaration(member)) {
           // A body-less constructor is an OVERLOAD SIGNATURE: type-world,
           // lowers to nothing — tsc resolved each `new` against the
@@ -3009,6 +3022,24 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
     return a.length === b.length && a.every((p, i) => p.mode === b[i]!.mode && typeEquals(p.type, b[i]!.type));
   }
 
+/** Writable storage for an own static field named through its exact class.
+ * Inherited writes create a new subclass property in JS, so they must not
+ * update the declaring class's global. */
+export function staticFieldWriteTarget(lowerer: Lowerer, access: ts.PropertyAccessExpression): { id: string; type: IrType } | null {
+  if (access.questionDotToken || !ts.isIdentifier(access.expression)) return null;
+  const info = lowerer.exactClassOfReceiver(access.expression);
+  if (!info) return null;
+  const found = lowerer.findStaticOn(info, access.name.text);
+  if (!found?.field) return null;
+  if (found.declarer !== info) {
+    lowerer.unsupported("SC1090", access, `assigning the inherited static '${access.name.text}' through a subclass name (JS creates an OWN property on the subclass — assign through '${found.declarer.def.jsName ?? found.declarer.def.name}' instead)`);
+  }
+  if (found.field.readonly) {
+    lowerer.unsupported("SC1090", access, `assigning the readonly static '${access.name.text}'`);
+  }
+  return { id: found.field.globalId, type: found.field.type };
+}
+
 /** `C.x` where C is a class declared in the program and x a static
    * member of its chain: field reads are the module global, static
    * methods become interned closures, and `.name` folds to the class's
@@ -4354,6 +4385,17 @@ export function lowerClassMembers(lowerer: Lowerer, info: ClassInfo): IrFunction
     const out: IrStmt[] = [];
     const thisType: IrType = { kind: "object", className: info.def.name };
     for (const f of info.fieldOrder) {
+      if (f.undefinedInitializer) {
+        const loc = f.undefinedInitializer;
+        out.push({
+          kind: "fieldSet",
+          obj: { kind: "varRef", localId: thisLocal.id, type: thisType, loc },
+          className: info.def.name,
+          field: f.name,
+          value: dynUndefinedExpr(loc),
+          loc,
+        });
+      }
       if (!f.initializer) continue;
       lowerer.stats.statementsTotal++;
       lowerer.bumpFileStat(locOf(f.initializer).file, "total");

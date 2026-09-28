@@ -24,7 +24,7 @@ import { fenceEnumObjectValue, lowerEnumAccess } from "./lower-enums.js";
 import { ambientNsRootOf, ambientUndefReadType, ambientUndefVarRootOf, ambientUndefinedFnSymbolOf, contextualUndefReadType, fenceEarlyAliasUse, fenceEarlyNsMemberRef, lowerNsIdentifierValue, nsMemberIdentOf, nsUndefRead, nsWritableTarget } from "./lower-namespaces.js";
 import { expandoMemberRead, expandoWritableTarget } from "./lower-expando.js";
 import { lowerSocketInstanceOf, lowerTlsRootCertificates } from "./lower-server.js";
-import { findGenericMethodOn, lowerStaticFieldRead } from "./lower-classes.js";
+import { findGenericMethodOn, lowerStaticFieldRead, staticFieldWriteTarget } from "./lower-classes.js";
 import { bindingNeverReassigned, funcTypeFromParamShapes, implicitMonoFile, lowerTaggedTemplate, nullishGenericBindingUnitOf, objLitGenericFnInfoOf, objLitGenericFnNodeOf, requireObjLitGenericReceiver } from "./lower-calls.js";
 import { mixinFnOfCallee } from "./lower-mixins.js";
 import { isConstAssertionTypeNode, isGenericCallableMemberType, isParseArgsDynTypeName, underConstAssertion, unitOnlyUnion } from "../type-mapper.js";
@@ -5911,6 +5911,13 @@ export function lowerPrefixUnary(lowerer: Lowerer, expr: ts.PrefixUnaryExpressio
     const loc = locOf(expr);
     const op = expr.operator === ts.SyntaxKind.PlusPlusToken ? "+" : "-";
     if (!ts.isIdentifier(expr.operand)) {
+      if (ts.isPropertyAccessExpression(expr.operand)) {
+        const target = staticFieldWriteTarget(lowerer, expr.operand);
+        if (target) {
+          if (target.type.kind !== "f64") lowerer.unsupported("SC1043", expr);
+          return { kind: "incDec", op, prefix, localId: target.id, type: F64, loc };
+        }
+      }
       // CLASS-FIELD receivers (`if (--this.limit === 0)` — countdown.js's
       // dec(); `--this[kLimit]` — its symbol-keyed spelling): a single-
       // evaluation read-modify-write over the instance, yielding old/new

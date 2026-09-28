@@ -21,7 +21,7 @@ import { ForOfIterProjection, lowerForOfArrayIter, lowerForOfMap, lowerForOfSear
 import { bindingContextualGenericFnNodeOf, bindingGenericFnAliasInfoOf, bindingGenericFnInfoOf, bindingGenericFnNodeOf, bindingNeverReassigned, deadUnmappableBinding, implicitLocalFnInfoOf, implicitLocalFnNodeOf, implicitMethodCallInfersReturn, nullishExprUnitOf, nullishGenericBindingUnitOf, recordKeysArrayCall, registerOverloadedCallableAlias } from "./lower-calls.js";
 import { isMixinFnBinding, mixinResultBindingClassOf } from "./lower-mixins.js";
 import type { ClassInfo, ClassIteratorInfo } from "./lower-classes.js";
-import { genericIfaceBindingKeepsClass } from "./lower-classes.js";
+import { genericIfaceBindingKeepsClass, staticFieldWriteTarget } from "./lower-classes.js";
 import { lowerStreamUnderscoreAssign, streamClassAliasDecl } from "./lower-stream.js";
 import { lowerHttpResPropertyAssignment, lowerHttpServerTimeoutAssignment, lowerServerCloseOverrideAssignment } from "./lower-server.js";
 import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRequireBindingDecl, createRequireCalleeFileOf, createRequireNamespaceDecl, createRequireProgramModuleDecl, createRequireProgramModuleOf, lowerNodeModuleCall, registerBuiltinCallableAlias } from "./lower-builtins.js";
@@ -5263,6 +5263,8 @@ function lowerBranchSwitch(
         // increment (the member's global IS the variable); expando
         // function members (`foo.count++`) are module globals too.
         if (ts.isPropertyAccessExpression(expr.operand) && !expr.operand.questionDotToken) {
+          const staticTarget = staticFieldWriteTarget(lowerer, expr.operand);
+          if (staticTarget) return lowerIncDecToTarget(lowerer, expr, staticTarget);
           const exT = expandoWritableTarget(lowerer, expr.operand);
           if (exT) return lowerIncDecToTarget(lowerer, expr, exT);
           const nsT = nsWritableTarget(lowerer, expr.operand);

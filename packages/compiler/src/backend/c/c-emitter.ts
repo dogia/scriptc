@@ -1706,13 +1706,17 @@ export class CEmitter {
    * assigns later, a constructor branch skips it, a base constructor's
    * virtual call reads a derived field before super() returns. Node reads
    * `undefined` there; a NULL payload pointer would be a segfault (union
-   * fields) or a silent nothing (jsval fields). Undefined-armed unions get
+   * fields), or an invalid dyn/jsval cell. Native checked-dynamic fields
+   * get the immortal dyn undefined. Undefined-armed unions get
    * the interned immortal unit instance (free; releases skip it); jsval
    * (`any`) fields get an engine undefined cell — such classes exist only
    * in --dynamic builds, and the field's release balances it. Empty for
    * every type that cannot hold undefined (tsc's SPI guards those) and for
    * record shapes' construction paths, which write every field. */
   undefFieldInitLineC(name: string, t: IrType): string[] {
+    if (t.kind === "dyn") {
+      return [`  o->${mangleField(name)} = scr_dyn_undefined(); /* ${cCommentText(name)} starts undefined */`];
+    }
     if (t.kind === "jsval") {
       return [`  o->${mangleField(name)} = scr_jsval_undefined(); /* ${cCommentText(name)} starts undefined */`];
     }

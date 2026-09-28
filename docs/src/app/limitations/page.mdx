@@ -35,6 +35,7 @@ const results = await Promise.all(jobs); // number[] — compiles
 ```
 
 - `undefined` and `null` compile both as standalone values and as union arms. Optional record and class fields compile, as do optional/default/rest parameters.
+- Numeric static fields support prefix/postfix `++` and `--` through the declaring class or an immutable alias. Updates through a subclass name remain unsupported because JavaScript creates a separate property on that subclass.
 - Symbol-keyed instance fields compile with an initializer or an unconditional constructor assignment when the key is a stable module-level `Symbol()`, `Symbol("literal")`, or `Symbol.for("literal")` binding. Equal registry keys share a field across modules. Reassigned keys, runtime-computed descriptions, uninitialized computed fields, distinct symbols with the same description in one class, copying symbol fields with rest/spread or `Object.assign`, and symbol-keyed access through `unknown` remain unsupported.
 
 **Standard library**
@@ -54,7 +55,7 @@ const results = await Promise.all(jobs); // number[] — compiles
 **The `any`/`unknown` boundary**
 
 - `any` without `--dynamic` is a compile error (SC2011) — use `unknown` and a checked cast, or opt into the engine.
-- `any` and `unknown` ride locals, parameters, and returns — never class fields, array elements, or union arms (record and tuple fields hold `unknown`). Program class instances can pass through `unknown` and recover at their exact static class type without losing identity, as can supported native handles; JSON-shaped records and arrays retain the copy boundary described below.
+- `any` and `unknown` ride locals, parameters, and returns; record and tuple fields hold `unknown`. JavaScript instance fields can also hold native checked values without a JavaScript engine: bare fields start as `undefined`, and redeclaring a field with the same checked-value type resets it in initialization order. Explicit TypeScript `any`/`unknown` class fields, static checked-value fields, statically typed array elements, and union arms remain unsupported in static builds. Program class instances can pass through `unknown` and recover at their exact static class type without losing identity, as can supported native handles; JSON-shaped records and arrays retain the copy boundary described below.
 - Operations on `unknown` beyond the supported surface (truthiness, `typeof` narrowing, property access, `+`, `switch`, `throw`) need a checked cast first.
 
 **Type surface**
