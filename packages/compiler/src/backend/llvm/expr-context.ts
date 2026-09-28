@@ -168,6 +168,7 @@ export interface LlvmEmitterContext extends ShapeHost {
   retainBox(box: string): string;
   retainValue(name: string, type: IrType): string;
   sizeType: "i32" | "i64";
+  ffiExtendNarrowIntegers: boolean;
   storeField(ptr: string, t: IrType, value: string): void;
   streamCbThunkFor(kind: "r" | "w" | "f" | "d" | "t" | "l" | "e", cbT: IrType): string;
   streamDataAdapter(cbT: IrType & { kind: "func" }): string;
@@ -179,6 +180,7 @@ export interface LlvmEmitterContext extends ShapeHost {
   streamTypedRefMaterializeAdapter(t: IrType, ctx: LlStreamTypedRefContext, preferredSnapshot?: string): LlStreamTypedRefAdapter;
   tagInSet(uName: string, tags: number[]): string;
   tdzBoxRead(box: string, t: IrType, name: string): string;
+  checkGlobalTdz(id: string): void;
   writeBindingBox(box: string, local: IrLocal, value: string, initializes?: boolean, borrowed?: boolean): void;
   templateStringsInstances: Map<string, { sym: string; slots: string[]; }>;
   truthy(v: LlValue): string;

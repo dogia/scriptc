@@ -37,7 +37,7 @@ import { InternalCompilerError } from "../../errors.js";
 import * as ts from "../ts7/adapter.js";
 import type { Lowerer } from "./lowerer.js";
 import { isJsSourceFile } from "../program.js";
-import { BOOL, DYN, F64, IrExpr, IrStmt, IrType, RUNTIME_ERROR_CLASSES, STRING, SrcLoc, canConvertToDyn, canDynCheckTo, shapeHasAccessorSlots, typeKey } from "../../ir/ir.js";
+import { BOOL, DYN, F64, IrExpr, IrStmt, IrType, RUNTIME_ERROR_CLASSES, STRING, SrcLoc, canConvertToDyn, canDynCheckTo, recordTextCodecClass, shapeHasAccessorSlots, typeKey } from "../../ir/ir.js";
 import type { ClassInfo } from "./lower-classes.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
 import { boolLit, numLit, strLit, varRef } from "../../ir/build.js";
@@ -143,6 +143,8 @@ function inspectSupport(lowerer: Lowerer, t: IrType, visiting: Set<string>, out:
       visiting.add(t.shapeId);
       const shape = lowerer.shapes.get(t.shapeId);
       if (!shape) return "this record shape has no inspect lowering";
+      const codec = recordTextCodecClass(shape);
+      if (codec !== null) return `${codec} instances have no inspect lowering yet`;
       // Accessor-carrying shapes: Node prints the accessor names as
       // `x: [Getter]` / `[Setter]` / `[Getter/Setter]` in insertion order
       // — a position the static field walk does not track (accessor slots

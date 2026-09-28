@@ -6,7 +6,7 @@ import { arrayOf, BOOL, bytesOf, canConvertToDyn, CHILD_T, CRYPTOHASH_T, CRYPTOH
 import { BIGINT_T } from "../ir/ir.js";
 
 import { isJsSourceFile, isNodeTypesPath } from "./program.js";
-import { accessorSlotProp } from "../ir/ir.js";
+import { accessorSlotProp, recordTextCodecClass } from "../ir/ir.js";
 // typeKey moved to ir/ir.ts (the backend needs it too, for per-type
 // helper interning); re-exported here so frontend call sites keep their
 // import path.
@@ -497,6 +497,8 @@ export function formatIrType(t: IrType, shapes: ShapeRegistry, unions: UnionRegi
       case "record": {
         const shape = shapes.get(t.shapeId);
         if (!shape) return append(`{ /* unknown shape ${t.shapeId} */ }`);
+        const codec = recordTextCodecClass(shape);
+        if (codec !== null) return append(codec);
         if (seen.has(t.shapeId)) return append("..."); // the recursive knot
         seen.add(t.shapeId);
         try {
@@ -1580,6 +1582,19 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     )
   ) {
     return F64;
+  }
+  // WHATWG codec instances have ordinary reference identity and ownership.
+  // Their private encoding slot is omitted from enumeration and JSON.
+  if (
+    (psym?.name === "TextEncoder" || psym?.name === "TextDecoder") &&
+    checker.declarationsOf(psym).some((d) =>
+      (ts.isInterfaceDeclaration(d) || ts.isClassDeclaration(d)) && ctx.isStdlibFile(d.getSourceFile()),
+    )
+  ) {
+    return {
+      kind: "record",
+      shapeId: ctx.shapes.intern([{ name: `%${psym.name}`, type: F64 }], false, undefined, []),
+    };
   }
   // string_decoder.StringDecoder: the decoder value is a two-field record
   // — the CANONICAL encoding name (construction normalizes aliases; the

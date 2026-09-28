@@ -103,7 +103,7 @@ import { lowerBufferStaticCall, lowerBytesMethodCall, lowerBytesNew } from "./co
 import { lowerRegexMethodCall, lowerStringMethodCall } from "./containers/string-and-regexp.js";
 import { lowerStreamModuleCall } from "./lower-stream.js";
 import { lowerEmitOverrideSpec, type EmitSpecCtx, type EmitSpecRequest } from "./lower-event-emitter.js";
-import { builtinImportOf, createRequireBindingDecl, createRequireNamespaceDecl, createRequireProgramModuleOf, createRequireSpecOf, stripTypeCasts, lowerBuiltinModuleCall, lowerNodeModuleCall, lowerTimersPromisesSetInterval, lowerFsToUnixTimestampCall, lowerFsLadderCall, lowerChildArgsArg, lowerSpawnSyncCall, lowerSpawnCall, lowerExecFileCall, lowerExecSyncCall, recordToEnvPairs, lowerJsonMethodCall, fencedBuiltinImportOf, lowerCryptoComposedCall, lowerUrlMethodCall, lowerSearchParamsMethodCall, lowerStatsMethodCall, lowerChildMethodCall, lowerAtomicsCall, lowerBuiltinExtraProperty, registerPromisifiedBuiltinDecl, lowerExecFileAsyncCall, execFileAsyncHelper, lowerStringDecoderMethodCall, strdecHelper, lowerReadlineMethodCall, lowerDcChannelMethodCall, lowerDcChannelProperty, lowerAlsMethodCall, lowerDcTracingChannelMethodCall, lowerDcTracingChannelProperty, lowerJsonProperty, lowerErrorCodeProperty, lowerProcessProperty, isProcessEnv, envValueType, lowerProcessEnvGet, lowerProcessMethodCall, lowerProcessOptionalMethodCall, lowerTimeoutMethodCall, envSnapshotHelper, isConsoleLog, consoleCallMember, lowerNumberStaticCall, lowerNumberStaticProperty, lowerDateCall, lowerTextCodecCall, lowerCryptoModuleCall, lowerFsConstantsProperty, lowerBuiltinConstantsProperty, builtinConstantBindingOf, builtinConstantsDestructureDecl, lowerProcessStreamProperty, lowerStringStaticCall, lowerStringLastIndexOfCall, lowerPromiseStaticCall, textCodecBindingClassOf } from "./lower-builtins.js";
+import { builtinImportOf, createRequireBindingDecl, createRequireNamespaceDecl, createRequireProgramModuleOf, createRequireSpecOf, stripTypeCasts, lowerBuiltinModuleCall, lowerNodeModuleCall, lowerTimersPromisesSetInterval, lowerFsToUnixTimestampCall, lowerFsLadderCall, lowerChildArgsArg, lowerSpawnSyncCall, lowerSpawnCall, lowerExecFileCall, lowerExecSyncCall, recordToEnvPairs, lowerJsonMethodCall, fencedBuiltinImportOf, lowerCryptoComposedCall, lowerUrlMethodCall, lowerSearchParamsMethodCall, lowerStatsMethodCall, lowerChildMethodCall, lowerAtomicsCall, lowerBuiltinExtraProperty, registerPromisifiedBuiltinDecl, lowerExecFileAsyncCall, execFileAsyncHelper, lowerStringDecoderMethodCall, strdecHelper, lowerReadlineMethodCall, lowerDcChannelMethodCall, lowerDcChannelProperty, lowerAlsMethodCall, lowerDcTracingChannelMethodCall, lowerDcTracingChannelProperty, lowerJsonProperty, lowerErrorCodeProperty, lowerProcessProperty, isProcessEnv, envValueType, lowerProcessEnvGet, lowerProcessMethodCall, lowerProcessOptionalMethodCall, lowerTimeoutMethodCall, envSnapshotHelper, isConsoleLog, consoleCallMember, lowerNumberStaticCall, lowerNumberStaticProperty, lowerDateCall, lowerTextCodecCall, lowerCryptoModuleCall, lowerFsConstantsProperty, lowerBuiltinConstantsProperty, builtinConstantBindingOf, builtinConstantsDestructureDecl, lowerProcessStreamProperty, lowerStringStaticCall, lowerStringLastIndexOfCall, lowerPromiseStaticCall } from "./lower-builtins.js";
 import { fenceFetchObjectAssignment, fenceFetchObjectBinding, fenceStaticAbortControllerMemberRead, fenceStaticHeadersIteration, fenceStaticHeadersMember, fenceStaticReadableStreamMember, fenceStaticResponseMember, fenceUnsupportedFetchConstructorMember, isIslandExpr, islandFuncValueFence, islandRegexpOf, jsvalIn, requireDynamicApi, islandGlobalFnOf, lowerAbortControllerNew, lowerDynamicHeadersIteratorCall, lowerDynamicHeadersSpread, lowerDynamicImportCall, lowerFetchCall, lowerFetchElementMethodCall, lowerResponseNew, lowerStaticFetchCompanionCall, lowerStaticAbortControllerCall, lowerStaticAbortSignalListenerCall, lowerStaticReadableStreamCancelCall, lowerStaticReadableStreamControllerCall, lowerStaticReadableStreamNew, lowerStaticReadableStreamReaderCall, lowerStaticResponseCall, lowerIslandMethodCall, lowerMathProperty, npmPackageOf, npmMemberFence, npmPackageOfSymbol } from "./lower-island.js";
 import { lowerHttpHeadersElement, lowerNetModuleCall, lowerServerMethodCall, lowerServerProperty, lowerTlsRootCertificates } from "./lower-server.js";
 import { lowerDgramDnsModuleCall, lowerDgramMethodCall } from "./lower-dgram.js";
@@ -4625,9 +4625,9 @@ export class Lowerer {
         Segmenter: intlHint,
         DisplayNames: intlHint,
         TextEncoder:
-          "TextEncoder values have no representation — call through a const initialized with new TextEncoder(), or use the composed new TextEncoder().encode(s) form",
+          "TextEncoder instances support encode(string) and encode(); other codec operations require a dedicated lowering",
         TextDecoder:
-          "TextDecoder values have no representation — call through a const initialized with a recognized literal label, or use the composed new TextDecoder(<literal label>).decode(bytes) form",
+          "TextDecoder instances support recognized literal labels with default options and whole-buffer decode(Uint8Array); runtime labels and options remain unsupported",
       };
       this.pushDiag(
         noLoweringDiag(this.checker.typeToString(type), locOf(node), typeHints[stdlibOwnSym?.name ?? ""]),
@@ -9091,24 +9091,6 @@ export class Lowerer {
     // binding-form text.
     if (symbol) {
       const d = this.checker.valueDeclarationOf(symbol);
-      if (
-        d && ts.isVariableDeclaration(d) && ts.isVariableDeclarationList(d.parent) &&
-        (d.parent.flags & ts.NodeFlags.Const) !== 0
-      ) {
-        const codec = textCodecBindingClassOf(this, d.name, d.initializer);
-        if (codec !== null) {
-          const call = codec === "TextEncoder" ? `${name}.encode(s)` : `${name}.decode(bytes)`;
-          const composed =
-            codec === "TextEncoder"
-              ? "new TextEncoder().encode(s)"
-              : "new TextDecoder().decode(bytes)";
-          this.noLowering(
-            `${codec} instance stored in ${name}`,
-            node,
-            `${call} compiles through this const; the codec object itself has no representation (the composed ${composed} form also compiles)`,
-          );
-        }
-      }
       if (d && ts.isVariableDeclaration(d) && d.initializer === undefined) {
         const t = this.checker.getTypeOfSymbol(symbol);
         const parts = t.isUnionType() ? ts.constituentTypes(t) : [t];

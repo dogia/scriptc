@@ -1645,6 +1645,7 @@ async function compileTracked(
     let llvm: string;
     try {
       llvm = emitLlvmModule(lowered.module, {
+        targetTriple: process.env["SCRIPTC_TARGET"] ?? "",
         ...debugOptions,
         pointerBits: buildPlatform === "wasi" ? 32 : 64,
         wasi: buildPlatform === "wasi",
@@ -1717,6 +1718,7 @@ async function compileTracked(
   if (opts.backend !== "c") {
     try {
       const ll = emitLlvmModule(lowered.module!, {
+        targetTriple: process.env["SCRIPTC_TARGET"] ?? "",
         ...debugOptions,
         pointerBits: buildPlatform === "wasi" ? 32 : 64,
         wasi: buildPlatform === "wasi",
@@ -2877,7 +2879,7 @@ async function compileLibraryTracked(
   let cPath: string;
   if (profile.emission === "llvm") {
     try {
-      const ll = emitLlvmModule(mod);
+      const ll = emitLlvmModule(mod, { targetTriple: process.env["SCRIPTC_TARGET"] ?? "" });
       timing("llvm-emit", { output_bytes: Buffer.byteLength(ll) });
       cPath = join(opts.outDir, `${stem}.lib.ll`);
       await writeFile(cPath, ll);

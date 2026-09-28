@@ -17,7 +17,8 @@
  * lanes (npm.test.ts, vercel-e2e.test.ts pin those). */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { globSync, mkdirSync, readFileSync } from "node:fs";
+import { cpSync, globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
@@ -98,6 +99,57 @@ async function buildStatic(entry: string, npmStatic: string[] | "auto"): Promise
 }
 
 describe(`npm-static pilots${sanitize ? " (sanitized)" : ""}`, () => {
+  test.each(["c", "llvm"] as const)("a package's literal createRequire calls compile without an engine (%s)", async (backend) => {
+    const entry = join(pilotRoot, "module-loader-cli.ts");
+    const { coverage } = analyze(entry, { npmStatic: "auto" });
+    expect(coverage.npmStatic).toEqual([{ package: "module-loader", status: "static" }]);
+    expect(coverage.diagnostics).toHaveLength(0);
+    expect(coverage.runtimeFences ?? []).toHaveLength(0);
+    const outDir = join(cacheDir, "module-loader", sanitize ? "san" : "plain", backend);
+    const result = await compile(entry, { backend, dynamic: false, npmStatic: "auto", sanitize, outDir, outPath: join(outDir, "program") });
+    if (!result.ok) throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+    const [nodeRes, nativeRes] = await Promise.all([runBinary(process.execPath, [entry]), runBinary(result.binaryPath, [])]);
+    expect(nativeRes.stdout).toEqual(nodeRes.stdout);
+    expect(comparableStderr(nativeRes.stderr)).toEqual(nodeRes.stderr);
+    expect(nativeRes.exitCode).toBe(nodeRes.exitCode);
+  });
+
+  test.each([
+    ["computed specifier", 'const spec = "node:path"; const path = load(spec);', "computed specifier"],
+    ["escaped require", 'const alias = load; const path = alias("node:path");', "escapes"],
+    ["mutable require", 'let load = createLoader(import.meta.url); const path = load("node:path");', "mutable binding"],
+    ["foreign base", 'const load = createLoader("/tmp/other.js"); const path = load("node:path");', "current file"],
+  ])("a package's %s preserves createRequire fallback", (_name, source, reason) => {
+    const dir = mkdtempSync(join(tmpdir(), "scriptc-module-loader-"));
+    try {
+      const pkg = join(dir, "node_modules/module-loader");
+      cpSync(join(pilotRoot, "node_modules/module-loader"), pkg, { recursive: true });
+      const declaration = source.includes("load = createLoader") ? "" : "const load = createLoader(import.meta.url);\n";
+      writeFileSync(join(pkg, "index.js"), `import { createRequire as createLoader } from "node:module";\n${declaration}${source}\nexport function describe() { return path.join("a", "b"); }\n`);
+      writeFileSync(join(dir, "package.json"), '{"type":"module"}\n');
+      cpSync(join(pilotRoot, "module-loader-cli.ts"), join(dir, "main.ts"));
+      const { coverage } = analyze(join(dir, "main.ts"), { npmStatic: "auto" });
+      expect(coverage.npmStatic).toEqual([{ package: "module-loader", status: "fallback", detail: expect.stringContaining(reason!) }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["c", "llvm"] as const)("bundled CommonJS function imports compile without an engine (%s)", async (backend) => {
+    const entry = join(pilotRoot, "bundled-function-cli.ts");
+    const { coverage } = analyze(entry, { npmStatic: "auto" });
+    expect(coverage.npmStatic).toEqual([{ package: "bundled-function", status: "static" }]);
+    expect(coverage.diagnostics).toHaveLength(0);
+    expect(coverage.runtimeFences ?? []).toHaveLength(0);
+    const outDir = join(cacheDir, "bundled-function", sanitize ? "san" : "plain", backend);
+    const result = await compile(entry, { backend, dynamic: false, npmStatic: "auto", sanitize, outDir, outPath: join(outDir, "program") });
+    if (!result.ok) throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+    const [nodeRes, nativeRes] = await Promise.all([runBinary(process.execPath, [entry]), runBinary(result.binaryPath, [])]);
+    expect(nativeRes.stdout).toEqual(nodeRes.stdout);
+    expect(comparableStderr(nativeRes.stderr)).toEqual(nodeRes.stderr);
+    expect(nativeRes.exitCode).toBe(nodeRes.exitCode);
+  });
+
   // Tier 1: fully static, byte-exact against Node. ms's driven surface —
   // BOTH the parse and format directions — joined when implicit-any
   // monomorphization and aliased-typeof narrowing landed; its one

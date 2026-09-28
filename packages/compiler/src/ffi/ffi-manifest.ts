@@ -59,26 +59,39 @@
  *
  *   { "callback": { "id": "tick", "params": [{ "context": "tick" }],
  *                   "returns": "void", "lifetime": "retained",
- *                   "invoke": "foreign" } } */
+ *                   "invoke": "foreign" } }
+ *
+ * Format 6 adds f32/i8/u16/i16 scalar arguments and results (including
+ * callbacks), and outbound mutable-bytes spans. Writable spans borrow the
+ * exact Uint8Array view for the call; native code cannot retain or free it. */
 import { readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { ffiProfileDiag, type ScrDiagnostic } from "../diagnostics/diagnostic.js";
 
 export const FFI_PARAM_CLASSES = [
   "f64",
+  "f32",
   "bool",
   "u8",
+  "i8",
+  "u16",
+  "i16",
   "u32",
   "i32",
   "string",
   "bytes",
+  "mutable-bytes",
 ] as const;
 
-export const FFI_RETURN_CLASSES = ["f64", "bool", "u8", "u32", "i32", "void"] as const;
+export const FFI_RETURN_CLASSES = ["f64", "f32", "bool", "u8", "i8", "u16", "i16", "u32", "i32", "void"] as const;
 export const FFI_CALLBACK_PARAM_CLASSES = [
   "f64",
+  "f32",
   "bool",
   "u8",
+  "i8",
+  "u16",
+  "i16",
   "u32",
   "i32",
   "cstring",
@@ -86,6 +99,13 @@ export const FFI_CALLBACK_PARAM_CLASSES = [
   "bytes",
 ] as const;
 const FFI_FORMAT_2_CALLBACK_PARAM_CLASSES = ["f64", "bool", "u8", "u32", "i32"] as const;
+const FORMAT_6_CLASSES = new Set(["f32", "i8", "u16", "i16", "mutable-bytes"]);
+
+function checkClassVersion(value: unknown, path: string, format: number): void {
+  if (format < 6 && typeof value === "string" && FORMAT_6_CLASSES.has(value)) {
+    throw new FfiProfileError(`'${path}' class '${value}' requires ffi_format 6`);
+  }
+}
 
 export type FfiValueParamClass = (typeof FFI_PARAM_CLASSES)[number];
 export type FfiReturnClass = (typeof FFI_RETURN_CLASSES)[number];
@@ -137,7 +157,7 @@ export interface FfiFunction {
 }
 
 export interface FfiProfile {
-  ffiFormat: 1 | 2 | 3 | 4 | 5;
+  ffiFormat: 1 | 2 | 3 | 4 | 5 | 6;
   functions: FfiFunction[];
   /** Absolute paths, resolved relative to the manifest. */
   libraries: string[];
@@ -209,7 +229,7 @@ type UnresolvedFfiParamClass = FfiParamClass | UnresolvedFfiReleaseParam;
 function callbackParam(
   value: unknown,
   path: string,
-  format: 2 | 3 | 4 | 5,
+  format: 2 | 3 | 4 | 5 | 6,
 ): FfiCallbackParam | UnresolvedFfiReleaseParam | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const rec = value as Record<string, unknown>;
@@ -239,6 +259,7 @@ function callbackParam(
   }
   const params = callback["params"].map((entry, i): FfiCallbackParamClass | FfiContextParam => {
     const entryPath = `${path}.callback.params[${i}]`;
+    checkClassVersion(entry, entryPath, format);
     const allowed = format >= 3
       ? FFI_CALLBACK_PARAM_CLASSES
       : FFI_FORMAT_2_CALLBACK_PARAM_CLASSES;
@@ -261,6 +282,7 @@ function callbackParam(
     );
   });
   const returns = stringField(callback["returns"], `${path}.callback.returns`);
+  checkClassVersion(returns, `${path}.callback.returns`, format);
   if (!(FFI_RETURN_CLASSES as readonly string[]).includes(returns)) {
     throw new FfiProfileError(
       `'${path}.callback.returns' must be one of ${FFI_RETURN_CLASSES.join("/")}, got '${returns}'`,
@@ -326,11 +348,11 @@ export function loadFfiProfile(
     }
     const root = raw as Record<string, unknown>;
     const format = root["ffi_format"];
-    if (format !== 1 && format !== 2 && format !== 3 && format !== 4 && format !== 5) {
+    if (format !== 1 && format !== 2 && format !== 3 && format !== 4 && format !== 5 && format !== 6) {
       throw new FfiProfileError(
         typeof format === "number"
-          ? `unsupported ffi_format ${format} (this scriptc reads formats 1, 2, 3, 4, and 5)`
-          : "'ffi_format' must be the number 1, 2, 3, 4, or 5",
+          ? `unsupported ffi_format ${format} (this scriptc reads formats 1, 2, 3, 4, 5, and 6)`
+          : "'ffi_format' must be the number 1, 2, 3, 4, 5, or 6",
       );
     }
     rejectUnknownKeys(root, "", [
@@ -376,12 +398,13 @@ export function loadFfiProfile(
       }
       const params = row["params"].map((value, j): UnresolvedFfiParamClass => {
         const paramPath = `${path}.params[${j}]`;
+        checkClassVersion(value, paramPath, format);
         if (
           typeof value !== "string" ||
           !(FFI_PARAM_CLASSES as readonly string[]).includes(value)
         ) {
           if (format >= 2) {
-            const callback = callbackParam(value, paramPath, format as 2 | 3 | 4 | 5);
+            const callback = callbackParam(value, paramPath, format as 2 | 3 | 4 | 5 | 6);
             if (callback !== null) return callback;
             const context = contextParam(value, paramPath);
             if (context !== null) return context;
@@ -451,6 +474,7 @@ export function loadFfiProfile(
         }
       }
       const returns = stringField(row["returns"], `${path}.returns`);
+      checkClassVersion(returns, `${path}.returns`, format);
       if (!(FFI_RETURN_CLASSES as readonly string[]).includes(returns)) {
         throw new FfiProfileError(
           `'${path}.returns' must be one of ${FFI_RETURN_CLASSES.join("/")}, got '${returns}'`,

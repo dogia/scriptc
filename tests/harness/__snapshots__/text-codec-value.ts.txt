@@ -1,35 +1,79 @@
-text-codec-value.ts:2:13 - error SC2020: 'TextEncoder instance stored in encoder' is part of the standard library types but has no scriptc lowering yet
+text-codec-value.ts:2:13 - error SC1090: console.log of 'TextEncoder' values (TextEncoder instances have no inspect lowering yet) are not supported yet
 
   1 | const encoder = new TextEncoder();
   2 | console.log(encoder);
     |             ^~~~~~~
   3 | 
 
-  hint: encoder.encode(s) compiles through this const; the codec object itself has no representation (the composed new TextEncoder().encode(s) form also compiles)
+text-codec-value.ts:9:1 - error SC2020: 'decode with a stream option' is part of the standard library types but has no scriptc lowering yet
 
-text-codec-value.ts:5:10 - error SC2020: 'TextEncoder.encode' is part of the standard library types but has no scriptc lowering yet
+   8 | const decoder = new TextDecoder();
+   9 | decoder.decode(new Uint8Array([0xc3]), { stream: true });
+     | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  10 | new TextDecoder("utf-8", { fatal: true });
 
-  4 | function encodeCaptured(s: string): Uint8Array {
-  5 |   return sharedEncoder.encode(s);
-    |          ^~~~~~~~~~~~~~~~~~~~
-  6 | }
+  hint: the type checker sees the full standard library, but only the supported surface compiles (https://scriptc.dev/limitations)
 
-  hint: the inline new TextEncoder().encode(s) form and same-scope const store-then-call (const encoder = new TextEncoder(); encoder.encode(s)) compile; captured/imported instances and other members need a runtime object representation
+text-codec-value.ts:10:1 - error SC2020: 'new TextDecoder with runtime-valued options or an unknown label' is part of the standard library types but has no scriptc lowering yet
 
-text-codec-value.ts:17:15 - error SC2020: 'TextEncoder.encode' is part of the standard library types but has no scriptc lowering yet
+   9 | decoder.decode(new Uint8Array([0xc3]), { stream: true });
+  10 | new TextDecoder("utf-8", { fatal: true });
+     | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  11 | encoder.encodeInto("hello", new Uint8Array(10));
 
-  16 |     const Encoded = class {
-  17 |       bytes = caseEncoder.encode("should fence");
-     |               ^~~~~~~~~~~~~~~~~~
-  18 |     };
+  hint: a recognized literal WHATWG label with default options compiles
 
-  hint: the inline new TextEncoder().encode(s) form and same-scope const store-then-call (const encoder = new TextEncoder(); encoder.encode(s)) compile; captured/imported instances and other members need a runtime object representation
+text-codec-value.ts:11:1 - error SC2020: 'TextEncoder.encodeInto' is part of the standard library types but has no scriptc lowering yet
 
-text-codec-value.ts:23:17 - error SC2020: 'TextEncoder.encode' is part of the standard library types but has no scriptc lowering yet
+  10 | new TextDecoder("utf-8", { fatal: true });
+  11 | encoder.encodeInto("hello", new Uint8Array(10));
+     | ^~~~~~~~~~~~~~~~~~
+  12 | const forged = JSON.parse("{}") as TextDecoder;
 
-  22 |     // @ts-expect-error -- dispatch can enter here while caseEncoder is in its TDZ
-  23 |     console.log(caseEncoder.encode("should fence directly").length);
-     |                 ^~~~~~~~~~~~~~~~~~
-  24 |     break;
+  hint: TextEncoder instances can be stored, passed, and captured; encode(string) and encode() compile, while encodeInto and other members have no static lowering
 
-  hint: the inline new TextEncoder().encode(s) form and same-scope const store-then-call (const encoder = new TextEncoder(); encoder.encode(s)) compile; captured/imported instances and other members need a runtime object representation
+text-codec-value.ts:12:16 - error SC1090: a checked cast of 'unknown' to 'TextDecoder' (a dynamic value can only be validated against JSON-representable types: number, string, boolean, records, arrays, and unions of those) is not supported yet
+
+  11 | encoder.encodeInto("hello", new Uint8Array(10));
+  12 | const forged = JSON.parse("{}") as TextDecoder;
+     |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  13 | console.log(forged.decode());
+
+text-codec-value.ts:17:5 - error SC2020: 'module-scope codec bindings that can hold undefined before initialization' is part of the standard library types but has no scriptc lowering yet
+
+  16 | // A module var's pre-initialization value is not a codec instance.
+  17 | var varEncoder = new TextEncoder();
+     |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  18 | let uninitializedDecoder: TextDecoder;
+
+  hint: use let or const with an initializer for TextEncoder/TextDecoder instances
+
+text-codec-value.ts:18:5 - error SC2020: 'module-scope codec bindings that can hold undefined before initialization' is part of the standard library types but has no scriptc lowering yet
+
+  17 | var varEncoder = new TextEncoder();
+  18 | let uninitializedDecoder: TextDecoder;
+     |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  19 | function earlyVarCapture(): Uint8Array {
+
+  hint: use let or const with an initializer for TextEncoder/TextDecoder instances
+
+text-codec-value.ts:20:21 - error SC1030: the reference to 'localEncoder' above its 'var' declaration (a read there would be 'undefined', which the binding's type cannot hold — annotate it '| undefined' or move the declaration up) is not supported yet
+
+  19 | function earlyVarCapture(): Uint8Array {
+  20 |   const use = () => localEncoder.encode("x");
+     |                     ^~~~~~~~~~~~
+  21 |   const bytes = use();
+
+text-codec-value.ts:34:15 - error SC1090: the reference to 'caseEncoder' (a binding form with no lowering) is not supported yet
+
+  33 |     const Encoded = class {
+  34 |       bytes = caseEncoder.encode("should fence");
+     |               ^~~~~~~~~~~
+  35 |     };
+
+text-codec-value.ts:40:17 - error SC1090: codec bindings read from another switch clause before initialization is proven is not supported yet
+
+  39 |     // @ts-expect-error -- dispatch can enter here while caseEncoder is in its TDZ
+  40 |     console.log(caseEncoder.encode("should fence directly").length);
+     |                 ^~~~~~~~~~~
+  41 |     break;

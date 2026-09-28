@@ -531,9 +531,9 @@
       "apiEntries": 92,
       "static": {
         "supported": 0,
-        "partial": 8,
+        "partial": 10,
         "refused": 0,
-        "not-implemented": 84,
+        "not-implemented": 82,
         "by-design": 0,
         "unreviewed": 0,
         "not-applicable": 0
@@ -1323,9 +1323,9 @@
       "apiEntries": 105,
       "static": {
         "supported": 0,
-        "partial": 5,
+        "partial": 9,
         "refused": 0,
-        "not-implemented": 100,
+        "not-implemented": 96,
         "by-design": 0,
         "unreviewed": 0,
         "not-applicable": 0
@@ -59422,10 +59422,12 @@
         "status": "partial",
         "evidence": "derived:descendants",
         "tests": [
+          "tests/corpus/1423-text-codec.ts",
           "tests/corpus/1804-timers-module.ts",
           "tests/corpus/1805-timer-callback-args.ts",
           "tests/corpus/2093-timers-promises.ts",
           "tests/corpus/2852-timers-promises-interval.ts",
+          "tests/corpus/text-codec-values/main.ts",
           "tests/harness/fetch-conformance.test.ts"
         ]
       },
@@ -60818,8 +60820,12 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:globals"
+        "status": "partial",
+        "evidence": "compiler-feature:globals.TextDecoder",
+        "tests": [
+          "tests/corpus/1423-text-codec.ts",
+          "tests/corpus/text-codec-values/main.ts"
+        ]
       },
       "dynamic": {
         "status": "partial",
@@ -60878,8 +60884,12 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:globals"
+        "status": "partial",
+        "evidence": "compiler-feature:globals.TextEncoder",
+        "tests": [
+          "tests/corpus/1423-text-codec.ts",
+          "tests/corpus/text-codec-values/main.ts"
+        ]
       },
       "dynamic": {
         "status": "partial",
@@ -110313,7 +110323,10 @@
           "tests/corpus/1473-promisify-execfile.ts",
           "tests/corpus/1573-promisify-execfile-env-spread.ts",
           "tests/corpus/2440-console-inspect-args.ts",
-          "tests/corpus/2912-promisify-fs-readfile.ts"
+          "tests/corpus/2912-promisify-fs-readfile.ts",
+          "tests/corpus/text-codec-values/main.ts",
+          "tests/fixtures/node-types/text-codecs.mts",
+          "tests/harness/project-config.test.ts"
         ]
       },
       "dynamic": {
@@ -110862,8 +110875,13 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:util"
+        "status": "partial",
+        "evidence": "compiler-feature:util.util.TextDecoder",
+        "tests": [
+          "tests/corpus/text-codec-values/main.ts",
+          "tests/fixtures/node-types/text-codecs.mts",
+          "tests/harness/project-config.test.ts"
+        ]
       },
       "dynamic": {
         "status": "partial",
@@ -111000,8 +111018,13 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:util"
+        "status": "partial",
+        "evidence": "compiler-feature:util.textDecoder.decode",
+        "tests": [
+          "tests/corpus/text-codec-values/main.ts",
+          "tests/fixtures/node-types/text-codecs.mts",
+          "tests/harness/project-config.test.ts"
+        ]
       },
       "dynamic": {
         "status": "not-implemented",
@@ -111108,8 +111131,13 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:util"
+        "status": "partial",
+        "evidence": "compiler-feature:util.util.TextEncoder",
+        "tests": [
+          "tests/corpus/text-codec-values/main.ts",
+          "tests/fixtures/node-types/text-codecs.mts",
+          "tests/harness/project-config.test.ts"
+        ]
       },
       "dynamic": {
         "status": "partial",
@@ -111138,8 +111166,13 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:util"
+        "status": "partial",
+        "evidence": "compiler-feature:util.textEncoder.encode",
+        "tests": [
+          "tests/corpus/text-codec-values/main.ts",
+          "tests/fixtures/node-types/text-codecs.mts",
+          "tests/harness/project-config.test.ts"
+        ]
       },
       "dynamic": {
         "status": "not-implemented",

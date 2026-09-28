@@ -14,7 +14,7 @@ import { PoisonError, dynFallbackType, dynUndefinedExpr, newFnCtx, own } from ".
 import { lowerArrayConstructor, lowerMapSeedArrayNew, strCharsCall } from "./lower-containers.js";
 import { bufEncoding } from "./containers/bytes.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
-import { lowerSearchParamsNew } from "./lower-builtins.js";
+import { lowerSearchParamsNew, lowerTextCodecNew } from "./lower-builtins.js";
 import { requiresDynamicPackageDiag, unsupportedDiag } from "../../diagnostics/diagnostic.js";
 import { STREAM_API_MEMBERS, STREAM_PROP_MEMBERS, UNDERSCORE_METHODS, lowerStreamNew, lowerStreamSuperCall, streamCtorShape } from "./lower-stream.js";
 import { emitOverrideShapeReason, emitSpecSuperForward, emitterRooted, lowerEmitterSuperCall, type EmitOverrideRec } from "./lower-event-emitter.js";
@@ -5166,19 +5166,8 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
           loc,
         };
       }
-      // Encoder objects likewise never exist: lowerTextCodecCall claims
-      // composed calls before the receiver lowers, while the same-scope
-      // const store-then-call declaration is erased before reaching here.
       if (symbol && (symbol.name === "TextDecoder" || symbol.name === "TextEncoder") && lowerer.isStdlibSymbol(symbol)) {
-        lowerer.noLowering(
-          `new ${symbol.name}`,
-          expr,
-          `${symbol.name} values have no representation — a same-scope const store-then-call or the composed form compiles: ` +
-            (symbol.name === "TextDecoder"
-              ? "new TextDecoder().decode(bytes)"
-              : "new TextEncoder().encode(s)"),
-          symbol,
-        );
+        return lowerTextCodecNew(lowerer, expr, symbol.name);
       }
       // `new Uint8Array(...)` / `new Uint32Array(...)` / `new
       // Float32Array(...)` / `new Float64Array(...)`: the typed-array

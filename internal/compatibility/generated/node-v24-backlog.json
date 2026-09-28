@@ -8,8 +8,8 @@
     "tiers": {
       "static": {
         "replace-refusal": 46,
-        "verify-gap": 2579,
-        "audit-partial": 587,
+        "verify-gap": 2573,
+        "audit-partial": 593,
         "classify": 2,
         "implement": 81
       },
@@ -44939,12 +44939,15 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:globals",
-          "tests": []
+          "status": "partial",
+          "action": "audit-partial",
+          "verification": "test-backed",
+          "confidence": "high",
+          "source": "compiler-feature:globals.TextDecoder",
+          "tests": [
+            "tests/corpus/1423-text-codec.ts",
+            "tests/corpus/text-codec-values/main.ts"
+          ]
         },
         "dynamic": {
           "status": "partial",
@@ -45009,12 +45012,15 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:globals",
-          "tests": []
+          "status": "partial",
+          "action": "audit-partial",
+          "verification": "test-backed",
+          "confidence": "high",
+          "source": "compiler-feature:globals.TextEncoder",
+          "tests": [
+            "tests/corpus/1423-text-codec.ts",
+            "tests/corpus/text-codec-values/main.ts"
+          ]
         },
         "dynamic": {
           "status": "partial",
@@ -93794,12 +93800,16 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:util",
-          "tests": []
+          "status": "partial",
+          "action": "audit-partial",
+          "verification": "test-backed",
+          "confidence": "high",
+          "source": "compiler-feature:util.util.TextDecoder",
+          "tests": [
+            "tests/corpus/text-codec-values/main.ts",
+            "tests/fixtures/node-types/text-codecs.mts",
+            "tests/harness/project-config.test.ts"
+          ]
         },
         "dynamic": {
           "status": "partial",
@@ -93862,12 +93872,16 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:util",
-          "tests": []
+          "status": "partial",
+          "action": "audit-partial",
+          "verification": "test-backed",
+          "confidence": "high",
+          "source": "compiler-feature:util.textDecoder.decode",
+          "tests": [
+            "tests/corpus/text-codec-values/main.ts",
+            "tests/fixtures/node-types/text-codecs.mts",
+            "tests/harness/project-config.test.ts"
+          ]
         },
         "dynamic": {
           "status": "not-implemented",
@@ -93994,12 +94008,16 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:util",
-          "tests": []
+          "status": "partial",
+          "action": "audit-partial",
+          "verification": "test-backed",
+          "confidence": "high",
+          "source": "compiler-feature:util.util.TextEncoder",
+          "tests": [
+            "tests/corpus/text-codec-values/main.ts",
+            "tests/fixtures/node-types/text-codecs.mts",
+            "tests/harness/project-config.test.ts"
+          ]
         },
         "dynamic": {
           "status": "partial",
@@ -94029,12 +94047,16 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:util",
-          "tests": []
+          "status": "partial",
+          "action": "audit-partial",
+          "verification": "test-backed",
+          "confidence": "high",
+          "source": "compiler-feature:util.textEncoder.encode",
+          "tests": [
+            "tests/corpus/text-codec-values/main.ts",
+            "tests/fixtures/node-types/text-codecs.mts",
+            "tests/harness/project-config.test.ts"
+          ]
         },
         "dynamic": {
           "status": "not-implemented",

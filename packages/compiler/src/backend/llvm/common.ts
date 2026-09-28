@@ -15,9 +15,15 @@ export function ffiNativeTypeLl(
   switch (cls) {
     case "f64":
       return "double";
+    case "f32":
+      return "float";
     case "bool":
     case "u8":
+    case "i8":
       return "i8";
+    case "u16":
+    case "i16":
+      return "i16";
     case "u32":
     case "i32":
       return "i32";
@@ -25,10 +31,28 @@ export function ffiNativeTypeLl(
       return "ptr";
     case "string":
     case "bytes":
+    case "mutable-bytes":
       throw new InternalCompilerError(`llvm emitter bug: span class '${cls}' has no scalar LLVM type`);
     case "void":
       return "void";
   }
+}
+
+export function ffiNativeParamLl(cls: Parameters<typeof ffiNativeTypeLl>[0], extend: boolean): string {
+  const attr = ffiExtensionLl(cls, extend);
+  return `${ffiNativeTypeLl(cls)}${attr ? ` ${attr}` : ""}`;
+}
+
+export function ffiNativeReturnLl(cls: Parameters<typeof ffiNativeTypeLl>[0], extend: boolean): string {
+  const attr = ffiExtensionLl(cls, extend);
+  return `${attr ? `${attr} ` : ""}${ffiNativeTypeLl(cls)}`;
+}
+
+function ffiExtensionLl(cls: Parameters<typeof ffiNativeTypeLl>[0], extend: boolean): string {
+  if (!extend) return "";
+  if (cls === "i8" || cls === "i16") return "signext";
+  if (cls === "bool" || cls === "u8" || cls === "u16") return "zeroext";
+  return "";
 }
 
 export function f64Lit(n: number): string {

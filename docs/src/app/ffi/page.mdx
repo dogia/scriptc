@@ -88,6 +88,13 @@ The manifest is the native ABI authority. TypeScript has only `number`, so its d
       <td>yes</td>
     </tr>
     <tr>
+      <td><code>f32</code> (format 6)</td>
+      <td><code>number</code></td>
+      <td><code>float</code>; rounds to IEEE-754 single precision on the native boundary, widens back to a JavaScript number on return</td>
+      <td>yes</td>
+      <td>yes</td>
+    </tr>
+    <tr>
       <td><code>bool</code></td>
       <td><code>boolean</code></td>
       <td><code>uint8_t</code>; inputs are 0 or 1, any nonzero return becomes <code>true</code></td>
@@ -109,6 +116,13 @@ The manifest is the native ABI authority. TypeScript has only `number`, so its d
       <td>yes</td>
     </tr>
     <tr>
+      <td><code>i8</code>, <code>u16</code>, <code>i16</code> (format 6)</td>
+      <td><code>number</code></td>
+      <td><code>int8_t</code>, <code>uint16_t</code>, <code>int16_t</code>; modulo conversion like the corresponding JavaScript typed array</td>
+      <td>yes</td>
+      <td>yes</td>
+    </tr>
+    <tr>
       <td><code>i32</code></td>
       <td><code>number</code></td>
       <td><code>int32_t</code>; inputs use <code>ToInt32</code></td>
@@ -119,21 +133,21 @@ The manifest is the native ABI authority. TypeScript has only `number`, so its d
       <td><code>cstring</code></td>
       <td><code>string</code></td>
       <td><code>const char *</code>; callback input only, copied through lossy UTF-8 decoding</td>
-      <td>callback only (formats 3–4)</td>
+      <td>callback only (formats 3–6)</td>
       <td>no</td>
     </tr>
     <tr>
       <td><code>string</code></td>
       <td><code>string</code></td>
       <td><code>const uint8_t *, size_t</code>; UTF-8 bytes, length-delimited</td>
-      <td>yes; callback input in formats 3–4</td>
+      <td>yes; callback input in formats 3–6</td>
       <td>no</td>
     </tr>
     <tr>
       <td><code>bytes</code></td>
       <td><code>Uint8Array</code> or <code>Buffer</code></td>
       <td><code>const uint8_t *, size_t</code>; raw bytes, length-delimited</td>
-      <td>yes; callback input in formats 3–4</td>
+      <td>yes; callback input in formats 3–6</td>
       <td>no</td>
     </tr>
     <tr>
@@ -143,10 +157,19 @@ The manifest is the native ABI authority. TypeScript has only `number`, so its d
       <td>no</td>
       <td>yes</td>
     </tr>
+    <tr>
+      <td><code>mutable-bytes</code> (format 6)</td>
+      <td><code>Uint8Array</code> or <code>Buffer</code></td>
+      <td><code>uint8_t *, size_t</code>; a writable borrow of the exact view, including its byte offset and length</td>
+      <td>outbound calls only</td>
+      <td>no</td>
+    </tr>
   </tbody>
 </table>
 
-For ordinary outbound parameters, string and byte pointers are borrowed only for the duration of the call. Native code must not mutate, free, or retain them. Strings may contain embedded NUL bytes, so always use the supplied length; an empty span may have a null pointer. The current formats deliberately have no pointer, string, or byte return because those need an explicit ownership and allocator contract.
+For ordinary outbound parameters, string and byte pointers are borrowed only for the duration of the call. Native code must not mutate <code>string</code> or <code>bytes</code> spans. Format 6's <code>mutable-bytes</code> permits in-place writes within the supplied length; mutations are visible through the original array and its aliases. Native code must not free or retain any borrowed pointer. Strings may contain embedded NUL bytes, so always use the supplied length; an empty span may have a null pointer. The current formats deliberately have no pointer, string, or byte return because those need an explicit ownership and allocator contract.
+
+Set <code>ffi_format</code> to <code>6</code> to use the additional scalar widths or writable spans. The new scalar classes also work in call-scoped, retained, and foreign-thread callback parameters, and in same-thread callback returns. Foreign-thread delivery widens their values before queueing them without losing precision. Formats 1–5 retain their original class sets.
 
 For C++, export the symbol with `extern "C"` so it keeps the manifest's unmangled C name.
 
@@ -302,7 +325,7 @@ If a script-thread callback throws, the adapter returns zero (or `void`) to nati
 
 <dl>
   <dt><code>ffi_format</code></dt>
-  <dd>Required. Format <code>1</code> supports value parameters; format <code>2</code> preserves them and adds callback/context entries; format <code>3</code> adds copy-in <code>cstring</code>, string-span, and byte-span callback parameters; format <code>4</code> adds retained registrations and release references; format <code>5</code> adds retained foreign-thread callbacks marshalled to the event loop.</dd>
+  <dd>Required. Format <code>1</code> supports value parameters; format <code>2</code> preserves them and adds callback/context entries; format <code>3</code> adds copy-in <code>cstring</code>, string-span, and byte-span callback parameters; format <code>4</code> adds retained registrations and release references; format <code>5</code> adds retained foreign-thread callbacks marshalled to the event loop; format <code>6</code> adds <code>f32</code>, <code>i8</code>, <code>u16</code>, <code>i16</code>, and outbound <code>mutable-bytes</code> spans.</dd>
 
   <dt><code>functions</code></dt>
   <dd>Required array. Every entry has exactly <code>name</code>, <code>symbol</code>, <code>params</code>, and <code>returns</code>. Binding names and symbols must be unique. Callback ids must be unique within a function and every context must match exactly one callback or release. A release references a retained <code>&lt;binding&gt;:&lt;callback-id&gt;</code> in the same manifest and inherits its callback ABI.</dd>

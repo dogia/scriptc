@@ -9,12 +9,29 @@ import {
   WASM32_WASI_TARGET,
   WINDOWS_X64_MSVC_TARGET,
   executableOptimizationLinkerArgs,
+  ffiExtendsNarrowIntegers,
   nativeCodegenTarget,
   nativeCodegenTargetRefusal,
   windowsSubsystemLinkerArgs,
 } from "./targets.js";
 
 describe("native code-generation targets", () => {
+  test("matches Clang's narrow integer ABI independently of the build host", () => {
+    for (const target of [MACOS_ARM64_TARGET, MACOS_X64_TARGET, LINUX_X64_GNU_TARGET, LINUX_X64_MUSL_TARGET, WASM32_WASI_TARGET]) {
+      expect(ffiExtendsNarrowIntegers(target.llvmTriple, "win32", "x64")).toBe(true);
+    }
+    for (const target of [LINUX_ARM64_GNU_TARGET, LINUX_ARM64_MUSL_TARGET, WINDOWS_X64_MSVC_TARGET]) {
+      expect(ffiExtendsNarrowIntegers(target.llvmTriple, "darwin", "arm64")).toBe(false);
+    }
+    expect(ffiExtendsNarrowIntegers("aarch64-apple-ios", "linux", "arm64")).toBe(true);
+    expect(ffiExtendsNarrowIntegers("aarch64-macos", "linux", "arm64")).toBe(true);
+    expect(ffiExtendsNarrowIntegers("aarch64-linux-android", "darwin", "arm64")).toBe(false);
+    expect(ffiExtendsNarrowIntegers(undefined, "darwin", "arm64")).toBe(true);
+    expect(ffiExtendsNarrowIntegers(undefined, "linux", "x64")).toBe(true);
+    expect(ffiExtendsNarrowIntegers(undefined, "linux", "arm64")).toBe(false);
+    expect(ffiExtendsNarrowIntegers(undefined, "win32", "x64")).toBe(false);
+  });
+
   test("selects only fully specified host-native targets", () => {
     expect(nativeCodegenTarget({}, "darwin", "arm64", "24.0.0")).toEqual(MACOS_ARM64_TARGET);
     expect(nativeCodegenTarget({}, "darwin", "x64", "24.0.0")).toEqual(MACOS_X64_TARGET);

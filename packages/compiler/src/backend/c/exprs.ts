@@ -7,7 +7,7 @@ import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM
 import { BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleClassNew, mangleClassRetain, mangleClassStruct, mangleField, mangleFnClosure, mangleFunction, mangleGlobal, mangleLocal, mangleRecordClone, mangleRecordNew, mangleRecordStruct, mangleVtStruct } from "../mangle.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
-import { readBox, writeBox } from "./bindings.js";
+import { checkGlobalTdz, readBox, writeBox } from "./bindings.js";
 import { dynDestrCheckHelper, dynIterNHelper, dynKeyGetHelper, unionWidenHelper } from "./walkers.js";
 import { collectFfiRetainedOps, parseFfiCallbackKey } from "../ffi-callbacks.js";
 import { genResultThunkFor } from "./async.js";
@@ -626,6 +626,7 @@ export function emitStableReceiver(emitter: CEmitter, receiver: IrExpr, followin
       return emitter.newBorrowedTemp(receiver.type, mangleLocal(receiver.localId));
     }
     if (!local && emitter.globalsById.has(receiver.localId)) {
+      checkGlobalTdz(emitter, emitter.globalsById.get(receiver.localId)!);
       return emitter.newBorrowedTemp(receiver.type, mangleGlobal(receiver.localId));
     }
   }
@@ -794,6 +795,7 @@ function emitLiteralExpr(
         if (integerLoopIndex !== null) return emitter.newTemp(e.type, `(double)${integerLoopIndex}`);
         const local = emitter.currentLocals.get(e.localId);
         if (!local && emitter.globalsById.has(e.localId)) {
+          checkGlobalTdz(emitter, emitter.globalsById.get(e.localId)!);
           const gname = mangleGlobal(e.localId);
           return emitter.newTemp(e.type, isRefCounted(e.type) ? retainCallC(e.type, gname) : gname);
         }
@@ -981,6 +983,7 @@ function emitOperatorExpr(
         if (!local && !emitter.globalsById.has(e.localId)) {
           throw new InternalCompilerError(`emitter bug: assignExpr to unknown binding ${e.localId}`);
         }
+        if (!local) checkGlobalTdz(emitter, emitter.globalsById.get(e.localId)!);
         const target = local ? mangleLocal(e.localId) : mangleGlobal(e.localId);
         if (isRefCounted(v.type)) {
           // Old-value release is NULL-tolerant for globals (statics start
@@ -2471,8 +2474,25 @@ function emitCallExpr(
           }
           const arg = sourceArgs.get(i)!;
           switch (param) {
+            case "mutable-bytes":
+              nativeArgs.push(`(uint8_t *)${arg.name}->data`, `${arg.name}->len`);
+              break;
             case "f64":
               nativeArgs.push(arg.name);
+              break;
+            case "f32":
+              nativeArgs.push(`(float)${arg.name}`);
+              break;
+            case "i8":
+            case "i16": {
+              const bits = param === "i8" ? 8 : 16;
+              const coerced = `sc_t${emitter.tempCounter++}`;
+              emitter.line(`uint32_t ${coerced} = (uint32_t)scr_bit_ushr(${arg.name}, 0.0) & ${(2 ** bits) - 1}u;`);
+              nativeArgs.push(`(int${bits}_t)(${coerced} < ${2 ** (bits - 1)}u ? (int32_t)${coerced} : (int32_t)${coerced} - ${2 ** bits})`);
+              break;
+            }
+            case "u16":
+              nativeArgs.push(`(uint16_t)(uint32_t)scr_bit_ushr(${arg.name}, 0.0)`);
               break;
             case "bool":
               nativeArgs.push(`(uint8_t)(${arg.name} ? 1 : 0)`);
@@ -2537,6 +2557,10 @@ function emitCallExpr(
             return result;
           }
           case "u8":
+          case "f32":
+          case "i8":
+          case "u16":
+          case "i16":
           case "u32":
           case "i32": {
             const result = emitter.newTemp(e.type, `(double)${call}`);

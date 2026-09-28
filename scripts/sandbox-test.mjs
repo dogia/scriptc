@@ -118,6 +118,7 @@ const remoteWorkspaceReset = workspaceResetCommand("/workspace");
 // to execute these macOS-specific contracts locally.
 const hostLaneContractFiles = [
   "tests/harness/ffi.test.ts",
+  "tests/harness/ffi-scalars.test.ts",
   "tests/harness/island.test.ts",
   "tests/harness/library-multi.test.ts",
   "tests/harness/differential.test.ts",
@@ -127,6 +128,7 @@ const hostLaneContractFiles = [
 ];
 const hostLaneContractPattern = [
   "calls the manifest-bound archive across every v1 ABI class",
+  "matches Node conversions through native calls",
   "a missing FFI symbol is an SC5004 diagnostic",
   "deep island recursion on a fiber is a catchable RangeError",
   "M1: external definitions equal the declared set exactly",

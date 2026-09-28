@@ -7,7 +7,7 @@ import { mangleClassNew, mangleClassRetain, mangleFnClosure, mangleFunction, man
 import { classStructSym } from "./classes.js";
 import { LlvmUnsupportedError } from "./unsupported.js";
 import type { LlvmEmitterContext, ExprOf, LlValue } from "./expr-context.js";
-import { f64Lit, ffiNativeTypeLl } from "./common.js";
+import { f64Lit, ffiNativeTypeLl, ffiNativeParamLl, ffiNativeReturnLl } from "./common.js";
 
 export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCall" | "closure" | "callValue" | "selfRef" | "new" | "classRef" | "newValue" | "instanceOfValue" | "promiseVoidWiden" | "upcast" | "downcast" | "instanceOf" | "virtualCall">): LlValue {
     const B = host.B;
@@ -244,25 +244,38 @@ export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCa
               nativeParamTypes.push("double");
               nativeArgs.push(`double ${arg.name}`);
               break;
+            case "f32": {
+              const value = B.tmp();
+              B.line(`${value} = fptrunc double ${arg.name} to float`);
+              nativeParamTypes.push("float");
+              nativeArgs.push(`float ${value}`);
+              break;
+            }
             case "bool": {
               const widened = B.tmp();
               B.line(`${widened} = zext i1 ${arg.name} to i8`);
-              nativeParamTypes.push("i8");
-              nativeArgs.push(`i8 ${widened}`);
+              const nativeParam = ffiNativeParamLl(param, host.ffiExtendNarrowIntegers);
+              nativeParamTypes.push(nativeParam);
+              nativeArgs.push(`${nativeParam} ${widened}`);
               break;
             }
             case "u8":
+            case "i8":
+            case "u16":
+            case "i16":
             case "u32": {
               host.declare(`declare double @scr_bit_ushr(double, double)`);
               const asDouble = B.tmp();
               const asU32 = B.tmp();
               B.line(`${asDouble} = call double @scr_bit_ushr(double ${arg.name}, double ${f64Lit(0)})`);
               B.line(`${asU32} = fptoui double ${asDouble} to i32`);
-              if (param === "u8") {
-                const asU8 = B.tmp();
-                B.line(`${asU8} = trunc i32 ${asU32} to i8`);
-                nativeParamTypes.push("i8");
-                nativeArgs.push(`i8 ${asU8}`);
+              if (param !== "u32") {
+                const narrow = B.tmp();
+                const nativeType = ffiNativeTypeLl(param);
+                B.line(`${narrow} = trunc i32 ${asU32} to ${nativeType}`);
+                const nativeParam = ffiNativeParamLl(param, host.ffiExtendNarrowIntegers);
+                nativeParamTypes.push(nativeParam);
+                nativeArgs.push(`${nativeParam} ${narrow}`);
               } else {
                 nativeParamTypes.push("i32");
                 nativeArgs.push(`i32 ${asU32}`);
@@ -290,7 +303,8 @@ export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCa
               nativeArgs.push(`ptr ${data}`, `i64 ${len}`);
               break;
             }
-            case "bytes": {
+            case "bytes":
+            case "mutable-bytes": {
               const lenPtr = B.tmp();
               const len = B.tmp();
               const dataPtr = B.tmp();
@@ -306,10 +320,11 @@ export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCa
           }
         });
         const retTy = ffiNativeTypeLl(entry.returns);
+        const retAbi = ffiNativeReturnLl(entry.returns, host.ffiExtendNarrowIntegers);
         host.declare(
-          `declare ${retTy} @${entry.symbol}(${nativeParamTypes.join(", ")})`,
+          `declare ${retAbi} @${entry.symbol}(${nativeParamTypes.join(", ")})`,
         );
-        const call = `call ${retTy} @${entry.symbol}(${nativeArgs.join(", ")})`;
+        const call = `call ${retAbi} @${entry.symbol}(${nativeArgs.join(", ")})`;
         const restoreRawContexts = (): void => {
           for (let i = rawContexts.length - 1; i >= 0; i--) {
             const saved = rawContexts[i]!;
@@ -360,7 +375,8 @@ export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCa
           return result;
         }
         const value = B.tmp();
-        const op = entry.returns === "i32" ? "sitofp" : "uitofp";
+        const op = entry.returns === "f32" ? "fpext"
+          : entry.returns === "i8" || entry.returns === "i16" || entry.returns === "i32" ? "sitofp" : "uitofp";
         B.line(`${value} = ${op} ${retTy} ${raw} to double`);
         const result = { name: value, type: e.type };
         if (callbacksMayThrow) host.emitPendingCheck();

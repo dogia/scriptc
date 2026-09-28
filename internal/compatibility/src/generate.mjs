@@ -598,6 +598,9 @@ function publicDetail(tier) {
   if (source.startsWith("surface-manifest:")) return "Implemented for the call shapes accepted by the compiler lowering.";
   if (source.startsWith("compiler-dedicated:")) return "Implemented by a dedicated static compiler/runtime path.";
   if (source.startsWith("compiler-feature:")) {
+    if (/^compiler-feature:(?:globals\.Text(?:Encoder|Decoder)|util\.(?:util\.Text(?:Encoder|Decoder)|text(?:Encoder\.encode|Decoder\.decode)))$/.test(source)) {
+      return "Native codec values support UTF-8 encoding and whole-buffer decoding with recognized literal labels and default options.";
+    }
     if (tier.status === "not-applicable") return "Node configuration or documentation that does not map to a compiled program API.";
     if (tier.status === "not-implemented") return "Not implemented in scriptc's static module-loader subset yet.";
     if (source.startsWith("compiler-feature:stream.") || source.startsWith("compiler-feature:webstreams.")) {

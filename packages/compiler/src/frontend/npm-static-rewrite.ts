@@ -79,6 +79,7 @@ import { bareRequireSpecOf, cjsLexedExportsOf, cjsLexerVisibleNames, isExportsId
 import { trackedDirectoryExists, trackedFileExists, trackedReadFile } from "./input-tracker.js";
 import { resolveExports } from "./resolve.js";
 import { packageNameOfSpecifier } from "./workspace-registry.js";
+import { rewriteBundledFunctionImports } from "./npm-static-bundled-cjs.js";
 
 const NODE_REQUIRE_CONDITIONS = new Set(["require", "node", "default"]);
 
@@ -666,22 +667,19 @@ export function rewriteBundlerCjsExports(
   // and the chase reads expression text through the tree
   const sf = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 
-  // ESM syntax → not CJS; leave alone — except when the ES module CALLS
-  // the __toESM interop helper (esbuild's ESM output around __require of
-  // an external): no static story respells that, and served untouched the
-  // helper's `var __create = Object.create;` chain fences at MODULE LOAD,
-  // so the honest answer is the per-package degrade.
-  for (const stmt of sf.statements) {
-    if (ts.isImportDeclaration(stmt) || ts.isExportDeclaration(stmt) || ts.isExportAssignment(stmt)) {
-      return source.includes("__toESM(")
+  // ESM bundles can contain closed CommonJS function factories. Recognize
+  // those before refusing interop that needs a dynamic module namespace.
+  if (ts.isExternalModule(sf)) {
+    const bundled = rewriteBundledFunctionImports(source, sf);
+    if (bundled !== null) return bundled;
+    return source.includes("__toESM(")
         ? {
             degrade:
               "its ES-module dist routes an external dependency through the __toESM " +
               "bundler-interop helper, which has no static story in ESM output — the " +
               "package serves from the island instead",
           }
-        : null;
-    }
+      : null;
   }
 
   // The __toESM interop pass (see the section header): wrapper call sites

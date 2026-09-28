@@ -218,7 +218,7 @@ test("an initialization marker cannot bypass an ordinary immutable binding", () 
   const mod = tdzModule(false);
   delete mod.functions[0]!.locals[0]!.tdz;
   const messages = validateModule(mod).map((error) => error.message);
-  expect(messages.some((message) => message.includes('initializing assign requires a TDZ local "value"'))).toBe(true);
+  expect(messages.some((message) => message.includes('initializing assign requires a TDZ binding "value"'))).toBe(true);
   expect(messages.some((message) => message.includes('assign to immutable local "value"'))).toBe(true);
 });
 
@@ -227,7 +227,23 @@ test("global assignments cannot masquerade as lexical initialization", () => {
   mod.globals = [{ id: "value", name: "value", type: F64, mutable: true }];
   mod.functions[0]!.locals = [];
   mod.functions[0]!.body.shift();
-  expect(validateModule(mod).some((error) => error.message.includes("initializing assign requires a TDZ local"))).toBe(true);
+  expect(validateModule(mod).some((error) => error.message.includes("initializing assign requires a TDZ binding"))).toBe(true);
+});
+
+test("TDZ globals require record storage and round-trip initialization", () => {
+  const mod = tdzModule();
+  const type = { kind: "record", shapeId: "codec" } as const;
+  mod.records = [{ id: "codec", fields: [{ name: "%TextEncoder", type: F64 }], declaredOrder: [] }];
+  mod.globals = [{ id: "%g.value", name: "value", type, mutable: false, tdz: true }];
+  mod.functions[0]!.locals = [];
+  mod.functions[0]!.body = [{
+    kind: "assign", localId: "%g.value", initializes: true, loc,
+    value: { kind: "recordLit", fields: [{ name: "%TextEncoder", value: { kind: "numLit", value: -1, type: F64, loc } }], type, loc },
+  }];
+  expect(validateModule(mod)).toEqual([]);
+  expect(deserializeModule(serializeModule(mod))).toEqual(mod);
+  mod.globals[0]!.type = F64;
+  expect(validateModule(mod).some((error) => error.message.includes('TDZ global "value" must have record storage'))).toBe(true);
 });
 
 test("legacy const TDZ declarations remain readable", () => {

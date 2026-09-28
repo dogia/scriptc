@@ -46,6 +46,7 @@ export function emitLiteralExpr(host: LlvmEmitterContext, e: ExprOf<"numLit" | "
           return { name: number, type: e.type };
         }
         const b = host.binding(e.localId);
+        if (b.kind === "global") host.checkGlobalTdz(e.localId);
         if (b.kind === "boxed") {
           // Reads go through the shared binding; ref kinds come out +1.
           // Forward-captured bindings (tdz) test the box's payload slot
@@ -212,6 +213,7 @@ export function emitOperatorExpr(host: LlvmEmitterContext, e: ExprOf<"bin" | "un
         }
         const b = host.binding(e.localId);
         const v = host.emitExpr(e.value);
+        if (b.kind === "global") host.checkGlobalTdz(e.localId);
         if (b.kind === "boxed") {
           // box_set takes ownership of the passed reference, so hand it a
           // retained copy and keep the temp's own reference for the yield.

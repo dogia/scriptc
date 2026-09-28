@@ -15,13 +15,14 @@ import type { CycleEdge } from "../program.js";
 import { invalidJsonModuleDiag, npmEmbedFailedDiag, requiresDynamicImportDiag } from "../../diagnostics/diagnostic.js";
 import { BOOL, DYN, F64, IrClassDef, IrExpr, IrFunction, IrGlobal, IrRecordShape, IrStmt, IrType, IrUnionDef, JSVAL, RUNTIME_ERROR_CLASSES, STRING, SrcLoc, VOID, arrayOf, canConvertToDyn, isUnitType } from "../../ir/ir.js";
 import { ENTRY_NAME, PoisonError, boundIdentifiersOf, dynFallbackType, dynUndefinedExpr, importCallHandleType, newFnCtx, staticImportNamespaceType, uncheckedOverloadHandleCall } from "./lowerer.js";
-import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRequireBindingDecl, createRequireNamespaceDecl, createRequireProgramModuleDecl, createRequireSpecOf, isPromisifyCall, registerBuiltinCallableAlias, textCodecBindingDecl } from "./lower-builtins.js";
+import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRequireBindingDecl, createRequireNamespaceDecl, createRequireProgramModuleDecl, createRequireSpecOf, isPromisifyCall, registerBuiltinCallableAlias } from "./lower-builtins.js";
 import { bindingContextualGenericFnNodeOf, bindingGenericFnAliasInfoOf, bindingGenericFnInfoOf, bindingGenericFnNodeOf, bindingNeverReassigned, deadUnmappableBinding, implicitLocalFnInfoOf, implicitLocalFnNodeOf, nullishGenericBindingUnitOf, registerOverloadedCallableAlias } from "./lower-calls.js";
 import { isVarDeclared, numericIteratorSourceOf, provenanceElidedConstDecl } from "./lower-stmts.js";
 import { streamClassAliasDecl } from "./lower-stream.js";
 import { stdlibGlobalAliasDecl, stdlibGlobalAliasNameOf } from "./surfaces.js";
 import { collectNamespaceStmt, nsPathPrefix, trapDeclRootOf } from "./lower-namespaces.js";
 import { collectExpandoMembers } from "./lower-expando.js";
+import { recordTextCodecClass } from "../../ir/ir.js";
 import { isUnitOnlyTsType, unitOnlyUnion } from "../type-mapper.js";
 import type { ClassInfo } from "./lower-classes.js";
 import { decoratorNodesOf, genericIfaceBindingKeepsClass, guaranteedDecorationThrow } from "./lower-classes.js";
@@ -1387,10 +1388,6 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             })()
           );
         if (stableStdlibAlias && stdlibGlobalAliasDecl(lowerer, decl.name, decl.initializer)) continue;
-        // Stored default TextEncoder/TextDecoder instances are the same
-        // compile-time alias plumbing as their statement lowering: calls
-        // trace this const initializer, so no module global exists.
-        if (isConst && textCodecBindingDecl(lowerer, decl.name, decl.initializer)) continue;
         // Destructuring declarations register EVERY bound identifier (the
         // desugar in the init function assigns the pre-registered globals,
         // exactly like plain declarations).
@@ -1607,6 +1604,14 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               const shape = lowerer.shapes.get(type.shapeId);
               if (shape && shape.fields.length === 0 && !shape.indexValue && !shape.tuple) type = DYN;
             }
+            // A module var starts as undefined, even when its declared type
+            // excludes it. Do not silently treat a NULL codec as a usable
+            // receiver during a closure's pre-initialization read.
+            const codec = type.kind === "record" && recordTextCodecClass(lowerer.shapes.get(type.shapeId)!) !== null;
+            if (codec && (isVarDeclared(decl) || !decl.initializer)) {
+              lowerer.noLowering("module-scope codec bindings that can hold undefined before initialization", decl,
+                "use let or const with an initializer for TextEncoder/TextDecoder instances");
+            }
             const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
             // Merged `var` redeclarations (`var y = 1; ...; var y = 2;` —
             // one symbol) register exactly one global; later declarations
@@ -1618,6 +1623,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               type,
               mutable: isLet,
               source: bindingSource(nameNode),
+              ...(codec ? { tdz: true as const } : {}),
             };
             lowerer.globalsBySymbol.set(symbol, g);
             lowerer.globalsList.push(g);

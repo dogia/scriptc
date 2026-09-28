@@ -39,6 +39,7 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
   const manifestHasRetainedCallback = hasRetainedFfiCallback(mod.ffiImports ?? []);
   // Method name → every class's implementation of it (virtualCall callees).
   const methodImpls = new Map<string, string[]>();
+  const tdzGlobals = (mod.globals ?? []).filter((g) => g.tdz).map((g) => g.id);
   for (const cls of mod.classes ?? []) {
     for (const m of cls.methods ?? []) {
       let list = methodImpls.get(m);
@@ -50,8 +51,8 @@ export function computeMayThrow(mod: IrModule): { fns: Set<string>; indirect: bo
     const f: Facts = { throws: false, callees: [], callsValue: false };
     // TDZ reads and non-initializing writes can throw ReferenceError.
     // Capture locals carry the same flag as the declaring binding.
-    const tdzIds = new Set(fn.locals.filter((l) => l.tdz).map((l) => l.id));
-    const mutableTdzIds = new Set(fn.locals.filter((l) => l.tdz && l.mutable).map((l) => l.id));
+    const tdzIds = new Set([...tdzGlobals, ...fn.locals.filter((l) => l.tdz).map((l) => l.id)]);
+    const mutableTdzIds = new Set([...tdzGlobals, ...fn.locals.filter((l) => l.tdz && l.mutable).map((l) => l.id)]);
     // Traverse typed executable nodes without copying the IR into unknown.
     const visit = (rec: IrExpr | IrStmt): boolean => {
       switch (rec.kind) {

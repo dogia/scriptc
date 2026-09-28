@@ -92,7 +92,8 @@ import { computeMayThrow } from "../c/may-throw.js";
 import { mangleArgPack, mangleAsyncSpawn, mangleClassObj, mangleFnClosure, mangleFunction, mangleGenDrop, mangleGenSpawn, mangleGlobal, mangleLocal, mangleRecordStruct, mangleTrampoline, mangleWrapper } from "../mangle.js";
 import { BlockBuilder } from "./blocks.js";
 import { LlvmDebugInfo } from "./debug-info.js";
-import { f64Lit, ffiNativeTypeLl, llvmCommentText } from "./common.js";
+import { f64Lit, ffiNativeTypeLl, ffiNativeParamLl, ffiNativeReturnLl, llvmCommentText } from "./common.js";
+import { ffiExtendsNarrowIntegers } from "../targets.js";
 import { emitLiteralExpr, emitOperatorExpr, emitStringExpr, emitContainerExpr, emitRecordExpr } from "./expr-primitives.js";
 import { emitControlExpr } from "./expr-control.js";
 import { emitCallExpr } from "./expr-calls.js";
@@ -154,9 +155,15 @@ function ffiCallbackDummyLl(callback: IrFfiCallbackParam["callback"]): string {
       return "void";
     case "f64":
       return "double 0.0";
+    case "f32":
+      return "float 0.0";
     case "bool":
     case "u8":
+    case "i8":
       return "i8 0";
+    case "u16":
+    case "i16":
+      return "i16 0";
     case "u32":
     case "i32":
       return "i32 0";
@@ -170,6 +177,8 @@ interface LlScopeEntry {
 }
 
 export interface LlvmTargetOptions {
+  /** C ABI target; omitted direct emission uses the host ABI. */
+  targetTriple?: string;
   /** Exact frontend sources for dev-build locations and variable metadata. */
   debugSources?: ReadonlyMap<string, string>;
   /** Pointer width of the target C ABI. Native targets are 64-bit today. */
@@ -197,6 +206,7 @@ class LlEmitter {
   private readonly debug: LlvmDebugInfo | null;
   private debugScope: string | null = null;
   readonly sizeType: "i32" | "i64";
+  readonly ffiExtendNarrowIntegers: boolean;
   readonly cycleColorOffset: number;
   private readonly wasi: boolean;
   private readonly emitLibraryIdentity: boolean;
@@ -252,6 +262,7 @@ class LlEmitter {
   private readonly ffiHasRetainedCallback: boolean;
   private readonly ffiHasForeignCallback: boolean;
   private readonly globalTypes = new Map<string, IrType>();
+  private readonly tdzGlobals = new Map<string, string>();
   private readonly constantNumericTables: ReadonlyMap<string, ConstantNumericTable>;
   /** May-throw analysis (the C emitter's computeMayThrow, shared): pending
    * checks are emitted only after calls that can actually raise. */
@@ -372,6 +383,7 @@ class LlEmitter {
     this.debug = options.debugSources === undefined ? null : new LlvmDebugInfo(mod.sourceFile, options.debugSources, options.pointerBits, mod.unions);
     this.constantNumericTables = findConstantNumericTables(mod);
     this.sizeType = options.pointerBits === 32 ? "i32" : "i64";
+    this.ffiExtendNarrowIntegers = options.wasi === true || ffiExtendsNarrowIntegers(options.targetTriple);
     this.wasi = options.wasi === true;
     this.emitLibraryIdentity = options.emitLibraryIdentity !== false;
     this.runtimeAbiMarker = options.runtimeAbiMarker === true;
@@ -412,6 +424,7 @@ class LlEmitter {
         throw err;
       }
       this.globalTypes.set(g.id, g.type);
+      if (g.tdz) this.tdzGlobals.set(g.id, g.name);
     }
     // User classes are IN the tier (phase 3), and so are the runtime
     // error classes and the runtime EventEmitter/stream classes (phase 6
@@ -510,9 +523,8 @@ class LlEmitter {
         if (param === "string" || param === "bytes") {
           return [`ptr %a${i}`, `${this.sizeType} %a${i}_len`];
         }
-        return [`${ffiNativeTypeLl(param)} %a${i}`];
+        return [`${ffiNativeParamLl(param, this.ffiExtendNarrowIntegers)} %a${i}`];
       });
-      const ret = ffiNativeTypeLl(cb.returns);
       if (cb.invoke === "foreign") {
         if (adapter.table === null || !cb.params.some(isFfiContextParam) || cb.returns !== "void") {
           throw new InternalCompilerError("llvm emitter bug: invalid foreign FFI callback descriptor");
@@ -530,6 +542,10 @@ class LlEmitter {
           if (isFfiContextParam(param)) continue;
           switch (param) {
             case "f64":
+            case "f32":
+            case "i8":
+            case "u16":
+            case "i16":
               this.declare(`declare double @scr_ffi_call_get_f64(ptr, ${this.sizeType})`);
               dispatchBody.push(`  %s${i} = call double @scr_ffi_call_get_f64(ptr %call, ${this.sizeType} ${i})`);
               scriptArgs.push(`double %s${i}`);
@@ -592,6 +608,14 @@ class LlEmitter {
           } else if (param === "string" || param === "bytes") {
             this.declare(`declare void @scr_ffi_call_copy_${param}(ptr, ${this.sizeType}, ptr, ${this.sizeType})`);
             defs.push(`  call void @scr_ffi_call_copy_${param}(ptr %call, ${this.sizeType} ${i}, ptr %a${i}, ${this.sizeType} %a${i}_len)`);
+          } else if (param === "f32" || param === "i8" || param === "u16" || param === "i16") {
+            const nativeTy = ffiNativeTypeLl(param);
+            const op = param === "f32" ? "fpext" : param === "u16" ? "uitofp" : "sitofp";
+            this.declare(`declare void @scr_ffi_call_set_f64(ptr, ${this.sizeType}, double)`);
+            defs.push(
+              `  %wide${i} = ${op} ${nativeTy} %a${i} to double`,
+              `  call void @scr_ffi_call_set_f64(ptr %call, ${this.sizeType} ${i}, double %wide${i})`,
+            );
           } else {
             const nativeTy = ffiNativeTypeLl(param);
             this.declare(`declare void @scr_ffi_call_set_${param}(ptr, ${this.sizeType}, ${nativeTy})`);
@@ -602,7 +626,7 @@ class LlEmitter {
         continue;
       }
       defs.push(
-        `define internal ${ret} @${adapter.symbol}(${params.join(", ")}) ${FN_ATTRS} {`,
+        `define internal ${ffiNativeReturnLl(cb.returns, this.ffiExtendNarrowIntegers)} @${adapter.symbol}(${params.join(", ")}) ${FN_ATTRS} {`,
         `entry:`,
         adapter.tls !== null
           ? `  %cb = load ptr, ptr @${adapter.tls}`
@@ -659,6 +683,16 @@ class LlEmitter {
           case "f64":
             scriptArgs.push(`double %a${i}`);
             break;
+          case "f32":
+          case "i8":
+          case "u16":
+          case "i16": {
+            const nativeTy = ffiNativeTypeLl(param);
+            const op = param === "f32" ? "fpext" : param === "u16" ? "uitofp" : "sitofp";
+            defs.push(`  %s${i} = ${op} ${nativeTy} %a${i} to double`);
+            scriptArgs.push(`double %s${i}`);
+            break;
+          }
           case "bool":
             defs.push(`  %s${i} = icmp ne i8 %a${i}, 0`);
             scriptArgs.push(`i1 %s${i}`);
@@ -726,18 +760,25 @@ class LlEmitter {
         case "f64":
           defs.push(`  ret double %result`);
           break;
+        case "f32":
+          defs.push(`  %out = fptrunc double %result to float`, `  ret float %out`);
+          break;
         case "bool":
           defs.push(`  %out = zext i1 %result to i8`, `  ret i8 %out`);
           break;
         case "u8":
+        case "i8":
+        case "u16":
+        case "i16":
         case "u32":
           this.declare(`declare double @scr_bit_ushr(double, double)`);
           defs.push(
             `  %coerced = call double @scr_bit_ushr(double %result, double ${f64Lit(0)})`,
             `  %wide = fptoui double %coerced to i32`,
           );
-          if (cb.returns === "u8") {
-            defs.push(`  %out = trunc i32 %wide to i8`, `  ret i8 %out`);
+          if (cb.returns !== "u32") {
+            const nativeTy = ffiNativeTypeLl(cb.returns);
+            defs.push(`  %out = trunc i32 %wide to ${nativeTy}`, `  ret ${nativeTy} %out`);
           } else {
             defs.push(`  ret i32 %wide`);
           }
@@ -2852,6 +2893,23 @@ class LlEmitter {
     B.line(`${slotp} = getelementptr inbounds %ScrBox, ptr ${box}, i64 0, i32 5`);
     B.line(`${slotv} = load i64, ptr ${slotp}`);
     B.line(`${empty} = icmp eq i64 ${slotv}, 0`);
+    this.throwIfUninitialized(empty, name);
+    return slotv;
+  }
+
+  private checkGlobalTdz(id: string): void {
+    const name = this.tdzGlobals.get(id);
+    if (name === undefined) return;
+    const B = this.B;
+    const value = B.tmp();
+    const empty = B.tmp();
+    B.line(`${value} = load ptr, ptr @${mangleGlobal(id)}`);
+    B.line(`${empty} = icmp eq ptr ${value}, null`);
+    this.throwIfUninitialized(empty, name);
+  }
+
+  private throwIfUninitialized(empty: string, name: string): void {
+    const B = this.B;
     const lt = B.newLabel("tdz.t");
     const lk = B.newLabel("tdz.k");
     B.condBr(empty, lt, lk);
@@ -2864,7 +2922,6 @@ class LlEmitter {
     B.line(`call void @scr_throw_error_named(ptr ${errName}, ptr ${msg})`);
     this.emitUnwind();
     B.startBlock(lk);
-    return slotv;
   }
 
   private tdzBoxRead(box: string, t: IrType, name: string): string {
@@ -3268,6 +3325,7 @@ class LlEmitter {
         }
         const b = this.binding(s.localId);
         const v = this.emitExpr(s.value);
+        if (b.kind === "global" && !s.initializes) this.checkGlobalTdz(s.localId);
         if (b.kind === "boxed") {
           this.writeBindingBox(this.loadBox(b.slot), b.local!, v.name, s.initializes);
           // The RHS remains frame-owned until a possible TDZ throw passes.

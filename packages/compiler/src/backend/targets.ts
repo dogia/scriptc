@@ -23,6 +23,20 @@ export type NativeTargetName =
 export type NativeObjectFormat = "macho" | "elf" | "coff" | "wasm";
 export type NativeTargetPlatform = "darwin" | "linux" | "win32" | "wasi";
 
+/** Clang's C ABI requires callers and callees to extend 8/16-bit integers
+ * on Darwin, SysV x86-64, and WebAssembly. AAPCS64 and Win64 instead leave
+ * the upper register bits unspecified. This is independent of whether a
+ * packaged codegen helper is available on the build host. */
+export function ffiExtendsNarrowIntegers(
+  triple: string | undefined,
+  hostPlatform: string = process.platform,
+  hostArch: string = process.arch,
+): boolean {
+  if (!triple) return hostPlatform === "darwin" || (hostArch === "x64" && hostPlatform !== "win32");
+  return triple.includes("apple") || triple.includes("darwin") || triple.includes("macos") || triple.startsWith("wasm32-")
+    || (triple.startsWith("x86_64-") && !triple.includes("windows"));
+}
+
 export type WindowsSubsystem = "console" | "gui";
 
 /** Select the PE subsystem through either supported compiler-driver route.

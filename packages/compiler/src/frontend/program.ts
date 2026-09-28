@@ -1132,7 +1132,11 @@ function isCreateRequireBinding7(program: ts.Program, callee: ts.Identifier): bo
   ) {
     return false;
   }
-  const init = stripRequireCasts7(decl.initializer);
+  return isCreateRequireBaseCall7(program, decl.initializer);
+}
+
+function isCreateRequireBaseCall7(program: ts.Program, expr: ts.Expression): boolean {
+  const init = stripRequireCasts7(expr);
   if (
     !ts.isCallExpression(init) ||
     init.questionDotToken !== undefined ||
@@ -1151,6 +1155,73 @@ function isCreateRequireBinding7(program: ts.Program, callee: ts.Identifier): bo
     base.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
     (base.name.text === "url" || base.name.text === "filename")
   );
+}
+
+/** A node:module import alone does not require an engine. Retain npm
+ * fallback for require indirection the lowering cannot erase, while
+ * admitting literal calls through the same const/inline shapes as program
+ * code. Inspect symbols, not names: nested shadows are unrelated bindings. */
+function npmStaticModuleImportReason7(program: ts.Program, stmt: ts.ImportDeclaration): string | null {
+  const clause = stmt.importClause;
+  if (!clause) return null;
+  const bindings = clause.namedBindings;
+  if (clause.name || (bindings && !ts.isNamedImports(bindings))) {
+    return "its node:module namespace or default import has no static createRequire usage proof";
+  }
+  if (!bindings || !ts.isNamedImports(bindings)) return null;
+  const checker = program.getTypeChecker();
+  const sf = stmt.getSourceFile();
+  for (const specifier of bindings.elements) {
+    if ((specifier.propertyName?.text ?? specifier.name.text) !== "createRequire") continue;
+    const imported = checker.getSymbolAtLocation(specifier.name);
+    if (!imported) return "its createRequire import could not be resolved";
+    checker.prefetchSymbolNodesExact(identifierOccurrences7(sf, specifier.name.text));
+    let reason: string | null = null;
+    const checkUse = (expr: ts.Expression): void => {
+      let use: ts.Node = expr;
+      while (ts.isParenthesizedExpression(use.parent)) use = use.parent;
+      // The supported require.resolve and require.resolve.paths calls also
+      // operate exclusively on literal specifiers.
+      if (ts.isPropertyAccessExpression(use.parent) && use.parent.expression === use && use.parent.name.text === "resolve") {
+        use = use.parent;
+        if (ts.isPropertyAccessExpression(use.parent) && use.parent.expression === use && use.parent.name.text === "paths") use = use.parent;
+      }
+      const call = use.parent;
+      if (!ts.isCallExpression(call) || call.expression !== use || call.questionDotToken
+        || call.arguments.length !== 1 || !ts.isStringLiteralLike(call.arguments[0]!)) {
+        reason = "its createRequire result escapes or is used with a computed specifier (static requires need literal specifiers)";
+      }
+    };
+    ts.walkPreorder(sf, (node) => {
+      if (reason || !ts.isIdentifier(node) || node.text !== specifier.name.text || node === specifier.name || checker.getSymbolAtLocation(node) !== imported) return;
+      const call = node.parent;
+      if (!ts.isCallExpression(call) || call.expression !== node || !isCreateRequireBaseCall7(program, call)) {
+        reason = "its createRequire import is used outside a supported call based on the current file";
+        return;
+      }
+      const decl = call.parent;
+      if (ts.isVariableDeclaration(decl) && decl.initializer === call && ts.isIdentifier(decl.name)) {
+        if ((ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Export) !== 0) {
+          reason = "its createRequire result escapes through an exported binding";
+          return;
+        }
+        if (!isCreateRequireBinding7(program, decl.name)) {
+          reason = `its createRequire result uses the mutable binding '${decl.name.text}' (static requires need a const binding)`;
+          return;
+        }
+        const sym = checker.getSymbolAtLocation(decl.name);
+        const name = decl.name.text;
+        checker.prefetchSymbolNodesExact(identifierOccurrences7(sf, name));
+        ts.walkPreorder(sf, (ref) => {
+          if (ts.isIdentifier(ref) && ref.text === name && ref !== decl.name && checker.getSymbolAtLocation(ref) === sym) checkUse(ref);
+        });
+      } else {
+        checkUse(call);
+      }
+    });
+    if (reason) return reason;
+  }
+  return null;
 }
 
 /** Classifies a require-shaped call as Node's ambient CommonJS global, the
@@ -2475,17 +2546,14 @@ function preflight7(load: LoadResult): {
       }
       const isRelative = isRelativeSpecifier(spec);
       const isBare = !isRelative && !ambientModules.has(spec);
-      // --npm-static: an opted-in package importing node:module admits
-      // for PROGRAM code (per-member fences, divergence 370) but marks
-      // the PACKAGE an offender — createRequire's static story covers
-      // only literal-specifier requires, and bundler banners (esbuild's
-      // __createRequire(import.meta.url) prologue) feed the returned
-      // require COMPUTED specifiers at module INIT, so a static compile
-      // would fence at load where the island runs the package as shipped.
+      // Npm packages can use the same static createRequire forms as program
+      // code. Preserve fallback for bundler banners that pass the require
+      // value around or feed it computed specifiers during initialization.
       if (canonicalBuiltinModule(spec) === "module") {
         const pkg = npmStaticPackageOfPath(sf.fileName);
         if (pkg !== null) {
-          reportNpmStaticOffender(pkg, "it imports node:module (bundler banners drive createRequire's require with computed specifiers; the island serves the package)");
+          const reason = npmStaticModuleImportReason7(program, stmt);
+          if (reason !== null) reportNpmStaticOffender(pkg, reason);
         }
       }
       // An import edge Node's own resolution refuses BEFORE any module

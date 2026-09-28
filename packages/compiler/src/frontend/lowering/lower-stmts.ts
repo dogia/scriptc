@@ -24,7 +24,7 @@ import type { ClassInfo, ClassIteratorInfo } from "./lower-classes.js";
 import { genericIfaceBindingKeepsClass } from "./lower-classes.js";
 import { lowerStreamUnderscoreAssign, streamClassAliasDecl } from "./lower-stream.js";
 import { lowerHttpResPropertyAssignment, lowerHttpServerTimeoutAssignment, lowerServerCloseOverrideAssignment } from "./lower-server.js";
-import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRequireBindingDecl, createRequireCalleeFileOf, createRequireNamespaceDecl, createRequireProgramModuleDecl, createRequireProgramModuleOf, lowerNodeModuleCall, registerBuiltinCallableAlias, textCodecBindingDecl } from "./lower-builtins.js";
+import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRequireBindingDecl, createRequireCalleeFileOf, createRequireNamespaceDecl, createRequireProgramModuleDecl, createRequireProgramModuleOf, lowerNodeModuleCall, registerBuiltinCallableAlias } from "./lower-builtins.js";
 import { lowerEnumDeclaration } from "./lower-enums.js";
 import { abstractPropertyDeclOf, aliasTypeofNarrows, isMatchSliceType, lowerAbsenceProbe, lowerElementCompound, lowerGroupsProjection, lowerOptionalNumber, matchResultNamedGroupsOf, runtimeOptionalTrueIds, symbolFieldInfo, withRuntimeOptionalNarrowed } from "./lower-exprs.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
@@ -3546,13 +3546,6 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
       );
     if (stableStdlibAlias && stdlibGlobalAliasDecl(lowerer, decl.name, decl.initializer)) return null;
 
-    // `const encoder = new TextEncoder()` and a statically-labelled
-    // TextDecoder twin: the codec has no general value representation, but calls
-    // through this stable binding resolve back to the initializer. The
-    // supported constructors are effect-free, so the declaration itself
-    // is compile-time alias plumbing with no storage or code.
-    if (!isLet && textCodecBindingDecl(lowerer, decl.name, decl.initializer)) return null;
-
     // `const f = <T>(x: T) => x` — a generic function value binding: the
     // initializer monomorphizes per call-site-resolved signature exactly
     // like a generic function declaration (bindingGenericFnInfoOf —
@@ -3668,7 +3661,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
         lowerer.runtimeOptionalArithmeticGlobals.add(g);
       }
       const init = lowerer.coerceInto(decl.initializer, raw, g.type);
-      return { kind: "assign", localId: g.id, value: init, loc: locOf(decl) };
+      return { kind: "assign", localId: g.id, value: init, ...(g.tdz ? { initializes: true as const } : {}), loc: locOf(decl) };
     }
 
     // A forward-captured binding pre-declared as a TDZ box (an earlier

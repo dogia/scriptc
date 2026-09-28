@@ -210,6 +210,17 @@ test("node-types: imported TypeScript sources can use the RequestInfo global", a
   expect(native.stderr).toBe(node.stderr);
 });
 
+test("node-types: global and node:util codec instances share the stored native representation", async () => {
+  const entry = join(nodeTypesDir, "text-codecs.mts");
+  const outDir = outDirFor("text-codecs");
+  const result = await compile(entry, { outPath: join(outDir, "text-codecs"), outDir, sanitize, dynamic: false });
+  expect(result.ok, !result.ok ? JSON.stringify(result.diagnostics, null, 2) : "").toBe(true);
+  if (!result.ok) return;
+  const [native, node] = await Promise.all([execFileAsync(result.binaryPath), execFileAsync(process.execPath, [entry])]);
+  expect(native.stdout).toBe(node.stdout);
+  expect(native.stderr).toBe(node.stderr);
+});
+
 test("node-types: declared-but-not-lowered surface fences, naming @types/node", async () => {
   const outDir = outDirFor("node-fenced");
   const result = await compile(join(nodeTypesDir, "fenced.ts"), {

@@ -1,15 +1,23 @@
 import type { CEmitter } from "./c-emitter.js";
-import type { IrLocal } from "../../ir/ir.js";
-import { mangleLocal } from "../mangle.js";
+import type { IrGlobal, IrLocal } from "../../ir/ir.js";
+import { mangleGlobal, mangleLocal } from "../mangle.js";
 import { boxAccess, cType } from "./types.js";
 
 /** The empty payload slot is the TDZ sentinel for both references and
  * scalar cells. Check before reading, or after evaluating a write's RHS. */
 export function checkTdz(emitter: CEmitter, local: IrLocal): void {
   const box = mangleLocal(local.id);
+  checkEmptyBinding(emitter, `${box}->slot == 0`, local.name);
+}
+
+export function checkGlobalTdz(emitter: CEmitter, global: IrGlobal): void {
+  if (global.tdz) checkEmptyBinding(emitter, `${mangleGlobal(global.id)} == NULL`, global.name);
+}
+
+function checkEmptyBinding(emitter: CEmitter, condition: string, name: string): void {
   const errName = emitter.internLiteral("ReferenceError");
-  const message = emitter.internLiteral(`Cannot access '${local.name}' before initialization`);
-  emitter.line(`if (${box}->slot == 0) { /* temporal dead zone */`);
+  const message = emitter.internLiteral(`Cannot access '${name}' before initialization`);
+  emitter.line(`if (${condition}) { /* temporal dead zone */`);
   emitter.indent++;
   emitter.line(`scr_throw_error_named((ScrStr *)&${errName}, (ScrStr *)&${message});`);
   emitter.emitUnwind();

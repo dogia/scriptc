@@ -1882,6 +1882,9 @@ export function validateModule(mod: IrModule): IrValidationError[] {
     }
   };
   for (const g of mod.globals ?? []) {
+    if (g.tdz && g.type.kind !== "record") {
+      errors.push({ message: `TDZ global "${g.name}" must have record storage`, loc: noLoc });
+    }
     if (isUnitType(g.type)) {
       errors.push({ message: `global "${g.name}" has bare unit type ${g.type.kind}`, loc: noLoc });
     }
@@ -5619,8 +5622,8 @@ function validateFunction(
       }
       case "assign": {
         const binding = locals.get(s.localId) ?? globals.get(s.localId);
-        if (s.initializes && !locals.get(s.localId)?.tdz) {
-          err(`initializing assign requires a TDZ local "${s.localId}"`, s.loc);
+        if (s.initializes && !binding?.tdz) {
+          err(`initializing assign requires a TDZ binding "${s.localId}"`, s.loc);
         }
         if (!binding) err(`assign to undeclared local/global "${s.localId}"`, s.loc);
         // Global initialization happens via assign inside %init functions,

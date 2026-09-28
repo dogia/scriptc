@@ -39,6 +39,7 @@ import { tryLowerExpression } from "./expressions/try-lower-expression.js";
 import { fenceNodeModuleMutation, isNodeModuleValue, lowerNodeModuleIdentifier, lowerNodeModuleProperty, lowerRequireCacheElement, lowerRequireCacheHas, lowerRequireMainProperty } from "./lower-node-module.js";
 import { lowerAbstractEquality } from "./abstract-equality.js";
 import { coerceStringSearchValue, defaultAfterUndefined, lowerStaticallyUndefinedArgument } from "./optional-arguments.js";
+import { recordTextCodecClass } from "../../ir/ir.js";
 
 /** An assignable `obj.field` target — a class field, a record field, or a
  * class ACCESSOR property (reads become getter calls, writes setter calls;
@@ -761,6 +762,21 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       // bridges the tagged representation with a unionNarrow.
         const local = lowerer.resolveLocal(expr);
         if (local) {
+          // A switch can dispatch past a lexical declaration. Keep this
+          // previously refused codec form out until switch-scope TDZ boxes
+          // model that skipped initialization, including value aliases.
+          if (local.type.kind === "record" && recordTextCodecClass(lowerer.shapes.get(local.type.shapeId)!) !== null) {
+            const symbol = lowerer.resolveValueSymbol(expr);
+            const decl = symbol ? lowerer.checker.valueDeclarationOf(symbol) : undefined;
+            if (decl && ts.isVariableDeclaration(decl) && ts.isVariableDeclarationList(decl.parent)
+              && (decl.parent.flags & ts.NodeFlags.BlockScoped) !== 0 && ts.isVariableStatement(decl.parent.parent)) {
+              const clause = decl.parent.parent.parent;
+              if ((ts.isCaseClause(clause) || ts.isDefaultClause(clause))
+                && !(expr.getStart() >= clause.getStart() && expr.end <= clause.end)) {
+                lowerer.unsupported("SC1090", expr, "codec bindings read from another switch clause before initialization is proven");
+              }
+            }
+          }
           if (local.type.kind === "caught") return lowerer.caughtRead(expr, local, loc);
           const symbol = lowerer.resolveValueSymbol(expr);
           const runtimeOptionalRoot = lowerer.runtimeOptionalRootOf(local);

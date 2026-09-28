@@ -9,7 +9,7 @@ import { mangleField, mangleGlobal, mangleLocal, mangleRawParam } from "../mangl
 import { BOOL, CAUGHT, IrExpr, IrStmt, RUNTIME_ERROR_CLASSES, isRefCounted } from "../../ir/ir.js";
 import { boxAccess, cDecl, cStringLiteral, elemAccess, vAdapters } from "./types.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
-import { writeBox } from "./bindings.js";
+import { checkGlobalTdz, writeBox } from "./bindings.js";
 import { emitStableReceiver } from "./exprs.js";
 import { matchIntegerBytesForLoop } from "../../ir/integer-loops.js";
 import { analyzeIntegerRanges } from "../../ir/integer-ranges.js";
@@ -273,6 +273,7 @@ function emitStmtBody(emitter: CEmitter, s: IrStmt): void {
           if (!g) throw new InternalCompilerError(`emitter bug: assign to unknown binding ${s.localId}`);
           const target = mangleGlobal(g.id);
           const v = emitter.emitExpr(s.value);
+          if (!s.initializes) checkGlobalTdz(emitter, g);
           emitter.moveTemp(v);
           if (isRefCounted(v.type)) emitter.releaseValue(target, v.type);
           emitter.line(`${target} = ${v.name};${emitter.srcComment(s.loc)}`);

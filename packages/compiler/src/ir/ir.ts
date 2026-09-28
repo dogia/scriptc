@@ -870,17 +870,21 @@ export interface IrModule {
   lib?: IrLibSection;
 }
 
-export type IrFfiValueParamClass = "f64" | "bool" | "u8" | "u32" | "i32" | "string" | "bytes";
+export type IrFfiValueParamClass = "f64" | "f32" | "bool" | "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "string" | "bytes" | "mutable-bytes";
 export type IrFfiCallbackParamClass =
   | "f64"
+  | "f32"
   | "bool"
   | "u8"
+  | "i8"
+  | "u16"
+  | "i16"
   | "u32"
   | "i32"
   | "cstring"
   | "string"
   | "bytes";
-export type IrFfiReturnClass = "f64" | "bool" | "u8" | "u32" | "i32" | "void";
+export type IrFfiReturnClass = "f64" | "f32" | "bool" | "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "void";
 
 export interface IrFfiContextParam {
   /** Manifest-local id of the callback whose ScrClosure* occupies this ABI slot. */
@@ -940,6 +944,7 @@ export function ffiClassType(
     case "string":
       return STRING;
     case "bytes":
+    case "mutable-bytes":
       return BYTES_U8;
     case "void":
       return VOID;
@@ -1268,6 +1273,14 @@ export interface IrRecordShape {
   declaredOrder?: string[];
 }
 
+/** Codec records have private native state, not a structurally checkable
+ * data surface. Reserve the same '%' namespace as other internal slots. */
+export function recordTextCodecClass(shape: IrRecordShape): "TextEncoder" | "TextDecoder" | null {
+  if (shape.fields.some((f) => f.name === "%TextEncoder")) return "TextEncoder";
+  if (shape.fields.some((f) => f.name === "%TextDecoder")) return "TextDecoder";
+  return null;
+}
+
 /** Object-literal ACCESSOR properties (`{ get x() {...}, set x(v) {...} }`)
  * live on the shape as reserved '%'-fields holding closures: `%get:x` a
  * `() => T` invoked once per property READ (side effects and all — JS's
@@ -1365,6 +1378,9 @@ export interface IrGlobal {
   name: string;
   type: IrType;
   mutable: boolean;
+  /** A lexical codec binding uses its initially-null record slot as the
+   * TDZ sentinel. Reads and later writes throw until initializing assign. */
+  tdz?: true;
   /** Original declaration and lexical scope, when this is a source binding. */
   source?: IrBindingSource;
 }
@@ -4489,10 +4505,9 @@ export type IrLibFn =
   /** WHATWG TextDecoder.decode over u8 bytes (scr_bytes.c): utf-8 with
    * default options — the same maximal-subpart replacement decode as
    * Buffer.toString("utf8"), with the leading BOM stripped (the one
-   * behavioral difference; ignoreBOM defaults to false). The composed
-   * `new TextDecoder().decode(bytes)` form and its same-scope const
-   * store-then-call twin lower — decoder values still have no general
-   * representation. TextEncoder.encode needs no libFn: its matching forms
+   * behavioral difference; ignoreBOM defaults to false). Inline calls
+   * lower directly; stored decoder records dispatch by encoding id.
+   * TextEncoder.encode needs no libFn: its matching forms
    * lower to buffer.fromStr(s, "utf8") (identical bytes — ScrStr storage
    * is well-formed UTF-8). Borrowed arg; owned (+1) string; never throws. */
   | "text.decode"
@@ -5794,6 +5809,7 @@ function isJsonSafeAt(
     case "record": {
       const shape = getRecord(t.shapeId);
       if (!shape) return false;
+      if (recordTextCodecClass(shape) !== null) return false;
       // The recursive knot: answer true and let the rest of the graph
       // decide (any unsafe constituent is found on its own path; a false
       // short-circuits every `every` up the walk).
@@ -6147,6 +6163,7 @@ function canBoxDynComposite(
     case "record": {
       const shape = getRecord(t.shapeId);
       if (!shape) return false;
+      if (recordTextCodecClass(shape) !== null) return false;
       // Recursive shapes answer coinductively, like isJsonSafeType.
       if (visiting.has(t.shapeId)) return true;
       visiting.add(t.shapeId);

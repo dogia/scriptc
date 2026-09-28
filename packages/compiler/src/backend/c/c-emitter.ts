@@ -114,9 +114,17 @@ function ffiNativeTypeC(
   switch (cls) {
     case "f64":
       return "double";
+    case "f32":
+      return "float";
     case "bool":
     case "u8":
       return "uint8_t";
+    case "i8":
+      return "int8_t";
+    case "u16":
+      return "uint16_t";
+    case "i16":
+      return "int16_t";
     case "u32":
       return "uint32_t";
     case "i32":
@@ -125,6 +133,7 @@ function ffiNativeTypeC(
       return "const char *";
     case "string":
     case "bytes":
+    case "mutable-bytes":
       throw new InternalCompilerError(`emitter bug: span class '${cls}' has no scalar C type`);
     case "void":
       return "void";
@@ -710,20 +719,10 @@ export class CEmitter {
           return [ffiCallbackPointerTypeC(param.callback)];
         }
         if (isFfiContextParam(param)) return ["void *"];
-        switch (param) {
-          case "f64":
-            return ["double"];
-          case "bool":
-          case "u8":
-            return ["uint8_t"];
-          case "u32":
-            return ["uint32_t"];
-          case "i32":
-            return ["int32_t"];
-          case "string":
-          case "bytes":
-            return ["const uint8_t *", "size_t"];
-        }
+        if (param === "mutable-bytes") return ["uint8_t *", "size_t"];
+        return param === "string" || param === "bytes"
+          ? ["const uint8_t *", "size_t"]
+          : [ffiNativeTypeC(param)];
       });
       const ret = ffiNativeTypeC(entry.returns);
       out.push(`extern ${ret} ${entry.symbol}(${params.length > 0 ? params.join(", ") : "void"});`);
@@ -1778,6 +1777,10 @@ export class CEmitter {
           if (isFfiContextParam(param)) return [];
           switch (param) {
             case "f64":
+            case "f32":
+            case "i8":
+            case "u16":
+            case "i16":
               return [`scr_ffi_call_get_f64(sc_call, ${i})`];
             case "bool":
               return [`scr_ffi_call_get_bool(sc_call, ${i})`];
@@ -1806,6 +1809,10 @@ export class CEmitter {
           if (isFfiContextParam(param)) return;
           switch (param) {
             case "f64":
+            case "f32":
+            case "i8":
+            case "u16":
+            case "i16":
               out.push(`  scr_ffi_call_set_f64(sc_call, ${i}, sc_a${i});`);
               break;
             case "bool":
@@ -1882,6 +1889,10 @@ export class CEmitter {
           case "bool":
             return [`(sc_a${i} != 0)`];
           case "u8":
+          case "f32":
+          case "i8":
+          case "u16":
+          case "i16":
           case "u32":
           case "i32":
             return [`(double)sc_a${i}`];
@@ -1913,6 +1924,19 @@ export class CEmitter {
       switch (cb.returns) {
         case "f64":
           out.push(`  return sc_result;`);
+          break;
+        case "f32":
+          out.push(`  return (float)sc_result;`);
+          break;
+        case "i8":
+        case "i16": {
+          const bits = cb.returns === "i8" ? 8 : 16;
+          out.push(`  uint32_t sc_bits = (uint32_t)scr_bit_ushr(sc_result, 0.0) & ${(2 ** bits) - 1}u;`);
+          out.push(`  return (${ffiNativeTypeC(cb.returns)})(sc_bits < ${2 ** (bits - 1)}u ? (int32_t)sc_bits : (int32_t)sc_bits - ${2 ** bits});`);
+          break;
+        }
+        case "u16":
+          out.push(`  return (uint16_t)(uint32_t)scr_bit_ushr(sc_result, 0.0);`);
           break;
         case "bool":
           out.push(`  return (uint8_t)(sc_result ? 1 : 0);`);

@@ -33,6 +33,21 @@
  * fetch/Request support remains governed by the lowering fences. */
 type RequestInfo = string | URL | Request;
 
+/* Node exposes the codec constructors globally, but older @types/node
+ * versions rely on lib.dom for their instance type names. Keep those types
+ * available in the ES-only program as well as the fallback type world. */
+interface TextEncoder {
+  readonly encoding: string;
+  encode(input?: string): Uint8Array;
+  encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
+}
+interface TextDecoder {
+  readonly encoding: string;
+  readonly fatal: boolean;
+  readonly ignoreBOM: boolean;
+  decode(input?: ArrayBuffer | DataView | Int8Array | Uint8Array | Uint8ClampedArray | Int16Array | Uint16Array | Int32Array | Uint32Array | Float32Array | Float64Array | BigInt64Array | BigUint64Array, options?: { stream?: boolean }): string;
+}
+
 /* The timer handle — setTimeout's return, mapped to the numeric timer id.
  * unref() drops it from the event loop's keep-alive set (the process may
  * exit with the timer still armed — it never fires then, exactly Node);
