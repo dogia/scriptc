@@ -77,7 +77,7 @@ hello.s
 
 Different output kinds accumulate in `.scriptc/`; rebuilding a kind updates its file.
 
-`--emit=obj` writes a relocatable program object, not a standalone library. It has undefined `scr_*` runtime references and a required `scr_runtime_abi_v2` marker; `scriptc build --lib --profile ...` remains the self-contained archive interface. The helper runs on macOS 15+ arm64 and emits artifacts with an `arm64-apple-macosx14.0.0` deployment target. Sanitized assembly/object emission is rejected until the helper's AddressSanitizer pipeline matches the executable path.
+`--emit=obj` writes a relocatable program object, not a standalone library. It has undefined `scr_*` runtime references and a required `scr_runtime_abi_v3` marker; `scriptc build --lib --profile ...` remains the self-contained archive interface. The helper runs on macOS 15+ arm64 and emits artifacts with an `arm64-apple-macosx14.0.0` deployment target. Sanitized assembly/object emission is rejected until the helper's AddressSanitizer pipeline matches the executable path.
 
 External object consumption is experimental. Use
 `--print=native-link-info` to emit the object and print a versioned JSON recipe

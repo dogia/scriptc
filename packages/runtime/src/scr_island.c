@@ -1775,7 +1775,9 @@ static JSValue isl_pending_to_value(JSContext *ctx) {
        * conversion failures at the typed-callback boundary rely on it.
        * Custom names ride an Error-rooted instance with the name set. */
       ScrError *err = (ScrError *)cell->payload;
-      static const char *const builtins[] = {"Error", "TypeError", "RangeError", "SyntaxError"};
+      static const char *const builtins[] = {
+          "Error", "TypeError", "RangeError", "SyntaxError",
+          "ReferenceError", "EvalError", "URIError"};
       v = JS_UNDEFINED;
       for (size_t i = 0; i < sizeof builtins / sizeof builtins[0]; i++) {
         if (strlen(builtins[i]) == err->name->len &&

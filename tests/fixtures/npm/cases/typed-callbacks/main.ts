@@ -6,8 +6,8 @@
 // ignored), `T | undefined` taking the undefined arm when the argument is
 // absent, surplus arguments dropped (JS call semantics). Async callbacks
 // return a real thenable the package can await; a rejection crosses as a
-// real engine Error. Differential vs Node byte-for-byte.
-import { catching, chainCatchLog, chainLog, collectTwice, extraArgs, fire, maybe, withBool, withNumbers, withOptions, withString } from "typedcb";
+// real engine Error. Results are compared with Node.
+import { catching, chainCatchLog, chainLog, classifyCaught, collectTwice, extraArgs, fire, maybe, withBool, withNumbers, withOptions, withString } from "typedcb";
 
 interface Opts {
   name: string;
@@ -48,6 +48,19 @@ const thrown: string = catching((n: number) => {
   return n;
 }, 5);
 console.log(thrown);
+
+console.log("reference", classifyCaught((n: number) => {
+  if (n > 0) throw new ReferenceError("missing");
+  return n;
+}, 1));
+console.log("eval", classifyCaught((n: number) => {
+  if (n > 0) throw new EvalError("eval");
+  return n;
+}, 1));
+console.log("uri", classifyCaught((n: number) => {
+  if (n > 0) throw new URIError("uri");
+  return n;
+}, 1));
 
 // A function with a DEFAULTED parameter as a value (commander's
 // option-collector pattern): the completed signature's `string[] |
