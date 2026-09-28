@@ -59,6 +59,11 @@ static void test_construction(void) {
   check_f64(scr_bytes_len(b), 3, "new(3) length");
   check_f64(scr_bytes_byte_len(b), 3, "u8 byteLength == length");
   check_f64(scr_bytes_get(b, 0), 0, "zero-filled");
+  check(b->data == (uint8_t *)(b + 1), "owner data is contiguous with struct");
+  ScrBytes *sub = scr_bytes_subarray(b, 1, 2);
+  check(sub->data != (uint8_t *)(sub + 1), "view data points into owner, not contiguous");
+  check(sub->backing == b, "view references backing owner");
+  scr_bytes_release(sub);
   scr_bytes_release(b);
 
   /* ToIndex: 3.5 truncates to 3, NaN is 0 — no throw (Node-exact). */

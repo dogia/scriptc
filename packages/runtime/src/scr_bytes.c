@@ -32,13 +32,16 @@ size_t scr_bytes_elem_size(ScrBytesElem elem) {
 /* ── lifecycle ─────────────────────────────────────────────────────────── */
 
 static ScrBytes *scr_bytes_alloc(ScrBytesElem elem, size_t len) {
-  ScrBytes *b = malloc(sizeof(ScrBytes));
+  size_t esz = scr_bytes_elem_size(elem);
+  size_t count = len ? len : 1;
+  if (count > (SIZE_MAX - sizeof(ScrBytes)) / esz) scr_bytes_oom();
+  size_t datasz = count * esz;
+  ScrBytes *b = calloc(1, sizeof(ScrBytes) + datasz);
   if (!b) scr_bytes_oom();
   b->rc = 1;
   b->len = len;
   b->elem = elem;
-  b->data = calloc(len ? len : 1, scr_bytes_elem_size(elem));
-  if (!b->data) scr_bytes_oom();
+  b->data = (uint8_t *)(b + 1);
   b->backing = NULL;
 #ifdef SCR_RC_AUDIT
   scr_live_bytes++;
@@ -90,7 +93,7 @@ void scr_bytes_release(ScrBytes *b) {
   if (--b->rc == 0) {
     if (b->backing) {
       scr_bytes_release(b->backing); /* a view: data points into the owner */
-    } else {
+    } else if (b->data != (uint8_t *)(b + 1)) {
       free(b->data);
     }
 #ifdef SCR_RC_AUDIT
