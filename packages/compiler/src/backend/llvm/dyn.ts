@@ -19,8 +19,8 @@ import { InternalCompilerError } from "../../errors.js";
  *            v.arr { len +16, cap +24, items +32 };
  *            v.obj { len +16, cap +24, entries +32 };
  *            v.fn  { clo +16, thunk +24, sig +32, name +40, arity +48 }.
- *   ScrDynEntry { char *key; size_t key_len; ScrDyn *value; bool writable,
- *                 enumerable, configurable; } — 32 bytes on 64-bit.
+ *   ScrDynEntry { key, key_len, value, getter, setter, accessor, writable,
+ *                 enumerable, configurable } — 48 bytes on 64-bit, 24 on 32-bit.
  *   ScrDynKind: NULL=0 BOOL=1 NUM=2 STR=3 ARR=4 OBJ=5 UNDEF=6 BYTES=7
  *               FUNC=8 HANDLE=9.
  *   ScrBytes { rc +0; len +8; elem +16; data +24 }.
@@ -186,12 +186,12 @@ export class LlDyn {
     return e;
   }
 
-  /** Object entry field addresses: entries + i*24 (+0 key, +8 key_len,
-   * +16 value). */
+  /** Object entry field addresses: entries + i*sizeof(ScrDynEntry), with
+   * key, key_len, and value at offsets 0, 8, and 16 on 64-bit targets. */
   private entryAt(B: BlockBuilder, entries: string, i: string): { key: string; keyLen: string; value: string } {
     const off = B.tmp();
     const base = B.tmp();
-    B.line(`${off} = mul ${this.S} ${i}, ${this.abiOffset(32, 16)} ; sizeof(ScrDynEntry)`);
+    B.line(`${off} = mul ${this.S} ${i}, ${this.abiOffset(48, 24)} ; sizeof(ScrDynEntry)`);
     B.line(`${base} = getelementptr inbounds i8, ptr ${entries}, ${this.S} ${off}`);
     const key = B.tmp();
     B.line(`${key} = load ptr, ptr ${base}`);
