@@ -33,6 +33,8 @@ import { lowerStreamProperty, lowerStreamStateProperty, streamSidesOf } from "./
 import { countedFor, numLit, varRef } from "../../ir/build.js";
 import { unionWideningTags } from "../../ir/analysis.js";
 import { isSafeToDiscard, isSafeToMoveConditionEarlier, isSafeToRepeat } from "./expressions/evaluation-safety.js";
+import { globalSymbolKey } from "./expressions/global-symbols.js";
+import { lowerNullishAssignment } from "./expressions/nullish-assignment.js";
 import { hasOptionalChainGuard, isOptionalChainTail, isRequireMainFilename } from "./expressions/optional-chains.js";
 import { conditionalSpreadOf, foldedStringKeyOf } from "./expressions/object-literals.js";
 import { tryLowerExpression } from "./expressions/try-lower-expression.js";
@@ -2068,6 +2070,17 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
             },
             expr,
           );
+        }
+        // An inferred package-JS call specializes a parameter to the
+        // caller's own record shape. Optional option names omitted by that
+        // caller read undefined; the missing field is not a failed type
+        // assertion. Known prototype members were handled/fenced above.
+        if (recvShape && !recvShape.tuple && lowerer.implicitParamTypes !== null &&
+            isJsSourceFile(expr.getSourceFile()) && npmStaticPackageOfPath(expr.getSourceFile().fileName) !== null) {
+          return {
+            kind: "seqExpr", stmts: [{ kind: "exprStmt", expr: recvLowered, loc }],
+            result: dynUndefinedExpr(loc), type: DYN, loc,
+          };
         }
       }
       // An ABSTRACT property through an abstract-typed receiver: the
@@ -4303,6 +4316,8 @@ export function lowerOptionalNumber(
     // the PROPERTY spelling answers the identity token instead — see
     // lowerPropertyAccess's globalThis rule).
     if (!expr.questionDotToken && stdlibGlobalNameOf(lowerer, expr.expression) === "globalThis") {
+      const symbol = globalSymbolKey(lowerer, expr.expression, expr.argumentExpression);
+      if (symbol) return { kind: "libCall", fn: "dyn.globalSymbolGet", args: [symbol], type: DYN, loc: locOf(expr) };
       return { kind: "unitLit", unit: "undefined", type: UNDEFINED_T, loc: locOf(expr) };
     }
     // `req.headers["x-name"]` — the computed twin of `req.headers.host`
@@ -5136,6 +5151,12 @@ export function lowerElementCompound(lowerer: Lowerer, expr: ts.BinaryExpression
   export function lowerElementWrite(lowerer: Lowerer, expr: ts.BinaryExpression): IrStmt {
     const target = expr.left as ts.ElementAccessExpression;
     fenceNodeModuleMutation(lowerer, target, "assignment");
+    const globalKey = globalSymbolKey(lowerer, target.expression, target.argumentExpression);
+    if (globalKey) {
+      const value = lowerer.lowerExprExpecting(expr.right, DYN);
+      const loc = locOf(expr);
+      return { kind: "exprStmt", expr: { kind: "libCall", fn: "dyn.globalSymbolSet", args: [globalKey, value], type: VOID, loc }, loc };
+    }
     // `process.env[key] = v` — the computed twin of the dotted env write:
     // setenv(3), string keys and string values only.
     if (lowerer.isProcessEnv(target.expression) && !target.questionDotToken) {
@@ -6123,6 +6144,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     if (cacheHas) return cacheHas;
 
     if (op === ts.SyntaxKind.EqualsToken || (op >= ts.SyntaxKind.FirstCompoundAssignment && op <= ts.SyntaxKind.LastCompoundAssignment)) {
+      if (op === ts.SyntaxKind.QuestionQuestionEqualsToken) return lowerNullishAssignment(lowerer, expr);
       if (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left)) {
         fenceNodeModuleMutation(lowerer, expr.left, "assignment");
       }
@@ -6147,6 +6169,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
       }
       const indexedCompound = COMPOUND_ASSIGN_OPS[op];
       if (indexedCompound !== undefined && ts.isElementAccessExpression(expr.left)) {
+        if (symbolFieldInfo(lowerer, expr.left)) return lowerFieldCompoundValue(lowerer, expr.left, indexedCompound, expr.right, loc);
         return lowerElementCompound(lowerer, expr, indexedCompound);
       }
       if (indexedCompound !== undefined && ts.isIdentifier(expr.left)) {
@@ -6169,6 +6192,7 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
           const value = lowerCompoundValueToTarget(lowerer, expr, indexedCompound, target);
           return { kind: "assignExpr", localId: target.id, value, type: target.type, loc };
         }
+        return lowerFieldCompoundValue(lowerer, expr.left, indexedCompound, expr.right, loc);
       }
       // `events.defaultMaxListeners = v` — the module-property write
       // Node validates (validateNumber(n, 'defaultMaxListeners', 0)):
@@ -6292,6 +6316,22 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
               result: valRef(),
               type: rhsVal.type,
               loc,
+            };
+          }
+          const field = lowerer.fieldTarget(expr.left);
+          if (field) {
+            const recvTmp = lowerer.declareHiddenLocal("%setReceiver", field.obj.type);
+            const receiver = field.obj;
+            field.obj = varRef(recvTmp.id, receiver.type, loc);
+            const value = lowerer.lowerExprExpecting(expr.right, field.fieldType);
+            const valTmp = lowerer.declareHiddenLocal("%setValue", value.type);
+            const result = varRef(valTmp.id, value.type, loc);
+            return {
+              kind: "seqExpr", stmts: [
+                { kind: "varDecl", localId: recvTmp.id, init: receiver, loc },
+                { kind: "varDecl", localId: valTmp.id, init: value, loc },
+                lowerer.fieldSetStmt(field, result, loc, expr.left),
+              ], result, type: result.type, loc,
             };
           }
         }
@@ -8257,6 +8297,8 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
    * and dyn/unknown stay fenced. Keys are literal strings — a computed key
    * over a shape would need the runtime key table. */
   function lowerInExpression(lowerer: Lowerer, expr: ts.BinaryExpression, loc: SrcLoc): IrExpr {
+    const globalKey = globalSymbolKey(lowerer, expr.right, expr.left);
+    if (globalKey) return { kind: "libCall", fn: "dyn.globalSymbolHas", args: [globalKey], type: BOOL, loc };
     // `#name in obj` — the ergonomic brand check (ES2022) — resolves
     // before any string-key machinery: the left operand is a private
     // NAME, not a value.
@@ -9903,6 +9945,13 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     op: CompoundOp,
     rhsNode: ts.Expression | null,
     loc: SrcLoc,): IrStmt {
+    return { kind: "exprStmt", expr: lowerFieldCompoundValue(lowerer, access, op, rhsNode, loc), loc };
+  }
+
+  function lowerFieldCompoundValue(lowerer: Lowerer, access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+    op: CompoundOp,
+    rhsNode: ts.Expression | null,
+    loc: SrcLoc,): IrExpr {
     if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
       lowerer.unsupported("SC1090", access, "compound assignment through 'super' (read and write separately)");
     }
@@ -9933,14 +9982,14 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
           ? { kind: "dynCheck", value: rhs, type: F64, loc: rhs.loc }
           : lowerOptionalNumber(lowerer, rhs, loc);
         if (numericRhs.type.kind !== "f64") lowerer.unsupported("SC1043", access);
-        const value: IrExpr = { kind: "bin", op, left: cur, right: numericRhs, type: F64, loc };
+        const value = save({ kind: "bin", op, left: cur, right: numericRhs, type: F64, loc }, "%compoundResult");
         const boxed: IrExpr = { kind: "dynFrom", value, type: DYN, loc };
         body.push({
           kind: "exprStmt",
           expr: { kind: "libCall", fn: "dyn.keySet", args: [receiver, { ...key }, boxed], type: VOID, loc },
           loc,
         });
-        return { kind: "block", body, loc };
+        return { kind: "seqExpr", stmts: body, result: value, type: value.type, loc };
       }
     }
     const targetOf = (): FieldTarget | null =>
@@ -9996,8 +10045,9 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     } else {
       lowerer.unsupported("SC1043", access);
     }
-    body.push(lowerer.fieldSetStmt(target, value, loc, access));
-    return { kind: "block", body, loc };
+    const result = save(value, "%compoundResult");
+    body.push(lowerer.fieldSetStmt(target, result, loc, access));
+    return { kind: "seqExpr", stmts: body, result, type: result.type, loc };
   }
 
 /** Stream-rooted receivers' property surface (readableEnded, destroyed,

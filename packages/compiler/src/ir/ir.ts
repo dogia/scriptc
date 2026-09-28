@@ -2035,6 +2035,11 @@ export type IrLibFn =
   /** Delete an ordinary checked-native object's own key. Borrows both
    * arguments; other receiver representations retain a runtime refusal. */
   | "dyn.keyDelete"
+  /** Native own properties on globalThis keyed by symbol identity. */
+  | "dyn.globalSymbolGet"
+  | "dyn.globalSymbolSet"
+  | "dyn.globalSymbolHas"
+  | "dyn.globalSymbolDelete"
   /** Destructuring pack over a dyn source — `const [a, b] = d`, a
    * destructured dyn callback param (args: the source and the STATIC
    * TypeError spelling, "" when the source has none — both borrowed;

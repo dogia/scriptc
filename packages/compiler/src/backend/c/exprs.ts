@@ -4448,6 +4448,14 @@ function emitDynamicLibCall(state: LibCallState): Temp {
             return finish(`scr_dyn_key_set(${arg(0)}, ${arg(1)}, ${arg(2)})`);
           case "dyn.keyDelete":
             return finish(`scr_dyn_key_delete(${arg(0)}, ${arg(1)})`);
+          case "dyn.globalSymbolGet":
+            return finish(`scr_dyn_global_symbol_get(${arg(0)})`);
+          case "dyn.globalSymbolSet":
+            return finish(`scr_dyn_global_symbol_set(${arg(0)}, ${arg(1)})`);
+          case "dyn.globalSymbolHas":
+            return finish(`scr_dyn_global_symbol_has(${arg(0)})`);
+          case "dyn.globalSymbolDelete":
+            return finish(`scr_dyn_global_symbol_delete(${arg(0)})`);
           case "dyn.iterPack":
             // Destructuring/for-of pack over a dyn source: both borrowed,
             // fresh array +1; throws V8's not-iterable TypeError on

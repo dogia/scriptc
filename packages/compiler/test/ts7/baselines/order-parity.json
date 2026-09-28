@@ -10679,6 +10679,25 @@
     "<repo>/tests/corpus/async-local-typed-results.ts"
    ],
    "diags": []
+  },
+  "<repo>/tests/corpus/global-symbol-cache/main.js": {
+   "order": [
+    "<repo>/tests/corpus/global-symbol-cache/remote.js",
+    "<repo>/tests/corpus/global-symbol-cache/main.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/nullish-assignment-values.ts": {
+   "order": [
+    "<repo>/tests/corpus/nullish-assignment-values.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/field-assignment-values.ts": {
+   "order": [
+    "<repo>/tests/corpus/field-assignment-values.ts"
+   ],
+   "diags": []
   }
  }
 }

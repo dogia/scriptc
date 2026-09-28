@@ -3618,6 +3618,10 @@ void scr_dyn_obj_set(ScrDyn *obj, const char *key, size_t key_len, ScrDyn *value
  * wording). All three operands BORROWED (the value is retained in). */
 void scr_dyn_key_set(ScrDyn *recv, ScrStr *key, ScrDyn *value);
 void scr_dyn_key_delete(ScrDyn *recv, const ScrStr *key);
+ScrDyn *scr_dyn_global_symbol_get(ScrSym *key); /* borrowed key; +1 value */
+void scr_dyn_global_symbol_set(ScrSym *key, ScrDyn *value); /* both borrowed */
+bool scr_dyn_global_symbol_has(ScrSym *key);
+void scr_dyn_global_symbol_delete(ScrSym *key);
 /* `key in v` with a runtime key — the dynHasKey fold per value (OBJ own
  * members, ARR length/valid indices, false elsewhere). Never throws. */
 bool scr_dyn_has_key(const ScrDyn *v, const ScrStr *key);

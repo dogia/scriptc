@@ -28,6 +28,8 @@ import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRe
 import { lowerEnumDeclaration } from "./lower-enums.js";
 import { abstractPropertyDeclOf, aliasTypeofNarrows, isMatchSliceType, lowerAbsenceProbe, lowerCompoundValueToTarget, lowerElementCompound, lowerGroupsProjection, matchResultNamedGroupsOf, runtimeOptionalTrueIds, symbolFieldInfo, withRuntimeOptionalNarrowed } from "./lower-exprs.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
+import { globalSymbolKey } from "./expressions/global-symbols.js";
+import { lowerNullishAssignment } from "./expressions/nullish-assignment.js";
 import { tryLowerExpression } from "./expressions/try-lower-expression.js";
 import { lowerUnionFieldWrite } from "./expressions/union-field-write.js";
 import { UNSUPPORTED, checkerPanicDiag, isCheckerPanic, requiresDynamicDiag } from "../../diagnostics/diagnostic.js";
@@ -4382,6 +4384,8 @@ function lowerBranchSwitch(
       lowerer.unsupported("SC1090", expr, "'delete' of non-property expressions");
     }
     fenceNodeModuleMutation(lowerer, target, "delete");
+    const globalKey = ts.isElementAccessExpression(target) ? globalSymbolKey(lowerer, target.expression, target.argumentExpression) : null;
+    if (globalKey) return { kind: "exprStmt", expr: { kind: "libCall", fn: "dyn.globalSymbolDelete", args: [globalKey], type: VOID, loc }, loc };
     const lowerKey = (): IrExpr => {
       if (ts.isPropertyAccessExpression(target)) {
         return { kind: "strLit", value: target.name.text, type: STRING, loc: locOf(target.name) };
@@ -5255,34 +5259,7 @@ function lowerBranchSwitch(
         return { kind: "assign", localId: target.id, value, loc: locOf(expr) };
       }
       if (opKind === ts.SyntaxKind.QuestionQuestionEqualsToken) {
-        // `x ??= e` on a VARIABLE, statement position: desugar to
-        // `x = x ?? e` (x read once, e lazy). For a plain variable JS's
-        // assign-only-when-nullish is unobservable — the value written back
-        // on the non-nullish path is the same box. Property targets keep a
-        // distinct fence: accessors would make the always-write observable.
-        if (!ts.isIdentifier(expr.left)) {
-          lowerer.unsupported(
-            "SC1090",
-            expr.left,
-            "'??=' on non-variable targets (write it out: if (o.f === undefined) o.f = v)",
-          );
-        }
-        const target = lowerer.resolveWritable(expr.left);
-        if (!target) lowerer.rejectUnresolved(expr.left, `assignment to '${expr.left.text}' (not a writable local or module global)`);
-        const loc = locOf(expr);
-        if (target.type.kind !== "union") {
-          // The checker says never nullish: JS neither evaluates e nor
-          // assigns — the statement is a no-op (lowerNullishCoalesce's
-          // trust-the-checker fold, statement form).
-          return { kind: "block", body: [], loc };
-        }
-        const def = lowerer.unions.get(target.type.unionId);
-        if (!def) lowerer.badType(expr.left, lowerer.typeOf(expr.left));
-        if (!def.arms.some(isUnitType)) return { kind: "block", body: [], loc };
-        const read: IrExpr = { kind: "varRef", localId: target.id, type: target.type, loc: locOf(expr.left) };
-        const right = lowerer.lowerExprExpecting(expr.right, target.type);
-        const value: IrExpr = { kind: "nullish", left: read, right, type: target.type, loc };
-        return { kind: "assign", localId: target.id, value, loc };
+        return { kind: "exprStmt", expr: lowerNullishAssignment(lowerer, expr), loc: locOf(expr) };
       }
       const compound = COMPOUND_ASSIGN_OPS[opKind];
       if (compound !== undefined) {

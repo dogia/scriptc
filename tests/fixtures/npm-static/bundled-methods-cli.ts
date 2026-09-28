@@ -1,4 +1,4 @@
-import { Base, FactoryInput, Input, Metrics, View } from "bundled-methods";
+import { Base, FactoryInput, Input, Metrics, View, describeOptions } from "bundled-methods";
 
 const view = new View("selected");
 const base: Base = view;
@@ -51,3 +51,5 @@ factory.close();
 console.log(factory.read(), saved?.describe());
 factory.open("replacement");
 console.log(factory.read(), factory.save() === saved);
+console.log(describeOptions({ name: "omitted" }));
+console.log(describeOptions({ name: "present", required: false, default: 0, type: "number" }));

@@ -2869,6 +2869,72 @@ void scr_dyn_key_delete(ScrDyn *recv, const ScrStr *key) {
   scr_throw_error_msg_code(SCR_ERR_ERROR, message, strlen(message), "SC2020");
 }
 
+typedef struct ScrGlobalSymbolProperty {
+  ScrSym *key;
+  ScrDyn *value;
+  struct ScrGlobalSymbolProperty *next;
+} ScrGlobalSymbolProperty;
+
+static SCR_TL ScrGlobalSymbolProperty *scr_global_symbols = NULL;
+static SCR_TL bool scr_global_symbols_cleanup_registered = false;
+
+static void scr_global_symbols_cleanup(void) {
+  while (scr_global_symbols) {
+    ScrGlobalSymbolProperty *entry = scr_global_symbols;
+    scr_global_symbols = entry->next;
+    scr_sym_release(entry->key);
+    scr_dyn_release(entry->value);
+    free(entry);
+  }
+}
+
+ScrDyn *scr_dyn_global_symbol_get(ScrSym *key) {
+  for (ScrGlobalSymbolProperty *entry = scr_global_symbols; entry; entry = entry->next) {
+    if (entry->key == key) return scr_dyn_retain(entry->value);
+  }
+  return scr_dyn_retain(scr_dyn_undefined());
+}
+
+void scr_dyn_global_symbol_set(ScrSym *key, ScrDyn *value) {
+  for (ScrGlobalSymbolProperty *entry = scr_global_symbols; entry; entry = entry->next) {
+    if (entry->key != key) continue;
+    ScrDyn *previous = entry->value;
+    entry->value = scr_dyn_retain(value);
+    scr_dyn_release(previous);
+    return;
+  }
+  if (!scr_global_symbols_cleanup_registered) {
+    scr_atexit(scr_global_symbols_cleanup);
+    scr_global_symbols_cleanup_registered = true;
+  }
+  ScrGlobalSymbolProperty *entry = malloc(sizeof *entry);
+  if (!entry) scr_json_oom();
+  entry->key = scr_sym_retain(key);
+  entry->value = scr_dyn_retain(value);
+  entry->next = scr_global_symbols;
+  scr_global_symbols = entry;
+}
+
+bool scr_dyn_global_symbol_has(ScrSym *key) {
+  for (ScrGlobalSymbolProperty *entry = scr_global_symbols; entry; entry = entry->next) {
+    if (entry->key == key) return true;
+  }
+  return false;
+}
+
+void scr_dyn_global_symbol_delete(ScrSym *key) {
+  ScrGlobalSymbolProperty **slot = &scr_global_symbols;
+  while (*slot) {
+    ScrGlobalSymbolProperty *entry = *slot;
+    if (entry->key != key) { slot = &entry->next; continue; }
+    *slot = entry->next;
+    scr_sym_release(entry->key);
+    scr_dyn_release(entry->value);
+    free(entry);
+    return;
+  }
+}
+
 static ScrDyn *scr_json_revive(ScrDyn *holder, const ScrStr *key,
                               const ScrDyn *reviver, size_t depth) {
   if (!scr_json_callback_depth(depth)) return NULL;
