@@ -8186,12 +8186,12 @@ function emitErrorsEventsLibCall(state: LibCallState): Temp {
               : `scr_error_init(${arg(0)}, ${rec.kind}, ${arg(1)})`);
           }
           case "error.cause":
-            return finish(`scr_error_cause(${arg(0)})`);
+            return finish(`scr_error_cause((ScrError *)${arg(0)})`);
           case "error.hasCause":
-            return finish(`scr_error_has_cause(${arg(0)})`);
+            return finish(`scr_error_has_cause((ScrError *)${arg(0)})`);
           case "error.toString":
             // Borrowed receiver; +1 "name: message" (Node's toString rules).
-            return finish(`scr_error_to_string(${arg(0)})`);
+            return finish(`scr_error_to_string((ScrError *)${arg(0)})`);
           case "error.newDom":
             // new DOMException(message?, nameOrOptions?) — both dyn args
             // borrowed (WebIDL resolution runs in the runtime); +1

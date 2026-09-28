@@ -2500,7 +2500,11 @@ export function isParseArgsDynCheckerType(lowerer: Lowerer, type: ts.Type): bool
       return { kind: "ternary", cond: isUndef, then: dflt, else_: value, type: bodyT, loc };
     }
     let present: IrExpr | null = null;
-    if (bodyT.kind === "union") {
+    if (bodyT.kind === "dyn" && lowerer.dynConvertible(fieldType)) {
+      // The undefined arm is handled by the ternary. A present JSON-safe
+      // union can cross into the binding's checked-dynamic slot.
+      present = lowerer.coerceInto(blame, value, bodyT);
+    } else if (bodyT.kind === "union") {
       const retag = lowerer.unionRetagHelper(fieldType.unionId, bodyT.unionId, loc);
       if (retag) present = { kind: "call", callee: retag, args: [value], type: bodyT, loc };
     } else {
@@ -6604,10 +6608,11 @@ function lowerBranchSwitch(
     // desugars drop them — a labeled jump naming those loops fences at the
     // jump site (no label point exists in their desugared shape).
     const labels = lowerer.takeLabels();
-    // `for await` is ASYNC ITERATION, not the shipped async/await. Typed
-    // async generators use the generic request protocol; process.stdin
-    // and readable streams retain their dedicated next-chunk paths.
-    if (stmt.awaitModifier) {
+    // A synchronous array iterator is also valid in `for await`. Its values
+    // take the async-from-sync path below; other async sources retain their
+    // dedicated request protocols.
+    const awaitArray = !!stmt.awaitModifier && lowerer.mapTypeOf(lowerer.typeOf(stmt.expression))?.kind === "array";
+    if (stmt.awaitModifier && !awaitArray) {
       {
         const genT = lowerer.mapTypeOf(lowerer.typeOf(stmt.expression));
         if (genT?.kind === "generator" && genT.async) {
@@ -6630,6 +6635,9 @@ function lowerBranchSwitch(
         stmt,
         "'for await' over this value (supported: typed async generators, represented class async iterators, process.stdin, and Node/Web readable streams)",
       );
+    }
+    if (awaitArray && !lowerer.ctx.isAsync) {
+      lowerer.unsupported("SC1090", stmt, "top-level 'for await' (await outside async functions)");
     }
     lowerer.fenceStaticHeadersIteration(stmt.expression);
     // A stored numeric value iterator declared in this function keeps its
@@ -6906,29 +6914,127 @@ function lowerBranchSwitch(
         lowerer.badType(stmt.expression, lowerer.typeOf(stmt.expression));
       }
     }
-    const elemValueT = arrayValueType(lowerer, iterable.type.elem);
+    const yieldedT = arrayValueType(lowerer, iterable.type.elem);
+    let elemValueT = yieldedT;
+    let awaitPromiseTag: number | null = null;
+    if (awaitArray) {
+      let promiseElem: (IrType & { kind: "promise" }) | null = null;
+      if (iterable.type.elem.kind === "promise") {
+        promiseElem = iterable.type.elem;
+      } else if (iterable.type.elem.kind === "union") {
+        const arms = lowerer.unions.get(iterable.type.elem.unionId)?.arms;
+        if (arms?.length === 2 && arms.some((arm) => arm.kind === "undefinedT")) {
+          const arm = arms.find((candidate) => candidate.kind === "promise");
+          if (arm?.kind === "promise") promiseElem = arm;
+        }
+      }
+      const nonThenable = (type: IrType): boolean => {
+        if (type.kind === "union") {
+          const arms = lowerer.unions.get(type.unionId)?.arms;
+          return arms !== undefined && arms.every(nonThenable);
+        }
+        if (type.kind === "record") {
+          const shape = lowerer.shapes.get(type.shapeId);
+          return shape !== undefined && !shape.indexValue && !shape.fields.some((field) => field.name === "then");
+        }
+        return type.kind === "f64" || type.kind === "bigint" || type.kind === "string" ||
+          type.kind === "bool" || type.kind === "symbol" || type.kind === "array" ||
+          type.kind === "undefinedT" || type.kind === "nullT";
+      };
+      if (promiseElem && yieldedT.kind === "union" &&
+        !["void", "union", "dyn", "jsval", "undefinedT", "nullT"].includes(promiseElem.inner.kind)) {
+        awaitPromiseTag = lowerer.armTag(yieldedT.unionId, promiseElem);
+        elemValueT = lowerer.withUndefinedArm(promiseElem.inner);
+      } else if (!nonThenable(iterable.type.elem)) {
+        lowerer.unsupported("SC1070", stmt.expression, "for-await over array values that may be promises or thenables");
+      }
+    }
     // Native arrays retain their payload ABI; the loop binds the value yielded
     // by Get, which is undefined for both holes and present undefined slots.
     const sourceT = iterable.type;
     const source = lowerer.declareHiddenLocal("%arrayIterator", sourceT);
     const cursor = lowerer.declareHiddenLocal("%arrayCursor", F64);
     cursor.mutable = true;
-    const forValues = (localId: string, body: IrStmt[]): IrStmt => ({
-      kind: "block",
-      body: [
-        { kind: "varDecl", localId: source.id, init: iterable, loc: locOf(stmt) },
-        {
-          kind: "for",
-          init: { kind: "varDecl", localId: cursor.id, init: numLit(0, locOf(stmt)), loc: locOf(stmt) },
-          cond: { kind: "bin", op: "<", left: varRef(cursor.id, F64, locOf(stmt)), right: { kind: "arrIntrinsic", method: "length", receiver: varRef(source.id, sourceT, locOf(stmt)), args: [], type: F64, loc: locOf(stmt) }, type: BOOL, loc: locOf(stmt) },
-          update: { kind: "assign", localId: cursor.id, value: { kind: "bin", op: "+", left: varRef(cursor.id, F64, locOf(stmt)), right: numLit(1, locOf(stmt)), type: F64, loc: locOf(stmt) }, loc: locOf(stmt) },
-          body: [{ kind: "varDecl", localId, init: arrayValueRead(lowerer, varRef(source.id, sourceT, locOf(stmt)), varRef(cursor.id, F64, locOf(stmt)), sourceT.elem, locOf(stmt)), loc: locOf(stmt) }, ...body],
-          ...(labels && { labels }),
-          loc: locOf(stmt),
-        },
-      ],
-      loc: locOf(stmt),
-    });
+    const forValues = (localId: string, body: IrStmt[]): IrStmt => {
+      const loc = locOf(stmt);
+      const needsClose = awaitArray ? lowerer.declareHiddenLocal("%arrayIteratorNeedsClose", BOOL) : null;
+      if (needsClose) needsClose.mutable = true;
+      const yielded = arrayValueRead(lowerer, varRef(source.id, sourceT, loc), varRef(cursor.id, F64, loc), sourceT.elem, loc);
+      const init: IrExpr = awaitPromiseTag === null ? yielded : {
+        kind: "awaitUnionExpr", value: yielded, promiseTag: awaitPromiseTag, type: elemValueT, loc,
+      };
+      const hops = awaitArray ? (awaitPromiseTag === null ? 2 : 1) : 0;
+      const hop = (): IrStmt => ({
+        kind: "exprStmt", expr: { kind: "libCall", fn: "async.hop", args: [], type: VOID, loc }, loc,
+      });
+      const nextError = awaitPromiseTag !== null ? lowerer.declareHiddenLocal("%arrayIteratorNextError", CAUGHT) : null;
+      const awaitedValue = nextError ? lowerer.declareHiddenLocal("%arrayIteratorValue", elemValueT) : null;
+      if (awaitedValue) awaitedValue.mutable = true;
+      const readValue: IrStmt = awaitedValue
+        ? { kind: "assign", localId: awaitedValue.id, value: init, loc }
+        : { kind: "varDecl", localId, init, loc };
+      const nextValue: IrStmt = nextError ? {
+        kind: "tryCatch",
+        tryBody: [readValue],
+        // Async-from-sync iteration has a continuation reaction between a
+        // rejected element promise and the loop's rejected next result.
+        catchBody: [hop(), { kind: "rethrow", localId: nextError.id, loc }],
+        catchLocalId: nextError.id,
+        finallyBody: null,
+        loc,
+      } : readValue;
+      const length = (): IrExpr => ({
+        kind: "arrIntrinsic", method: "length", receiver: varRef(source.id, sourceT, loc), args: [], type: F64, loc,
+      });
+      const loop: IrStmt = {
+        kind: "for",
+        init: { kind: "varDecl", localId: cursor.id, init: numLit(0, loc), loc },
+        cond: awaitArray
+          ? { kind: "boolLit", value: true, type: BOOL, loc }
+          : { kind: "bin", op: "<", left: varRef(cursor.id, F64, loc), right: length(), type: BOOL, loc },
+        update: { kind: "assign", localId: cursor.id, value: { kind: "bin", op: "+", left: varRef(cursor.id, F64, loc), right: numLit(1, loc), type: F64, loc }, loc },
+        body: [
+          ...(needsClose ? [{
+            kind: "assign" as const, localId: needsClose.id,
+            value: { kind: "boolLit" as const, value: false, type: BOOL, loc }, loc,
+          }] : []),
+          ...(needsClose ? [{
+            kind: "if" as const,
+            cond: { kind: "bin" as const, op: ">=" as const, left: varRef(cursor.id, F64, loc), right: length(), type: BOOL, loc },
+            then: [hop(), hop(), { kind: "break" as const, loc }],
+            else_: null,
+            loc,
+          }] : []),
+          ...(awaitedValue ? [{ kind: "varDecl" as const, localId: awaitedValue.id, init: null, loc }] : []),
+          nextValue,
+          ...(awaitedValue ? [{ kind: "varDecl" as const, localId, init: varRef(awaitedValue.id, elemValueT, loc), loc }] : []),
+          ...Array.from({ length: hops }, hop),
+          // A rejected next value has no iterator close. Once a value has
+          // arrived, an abrupt completion in the body does await close.
+          ...(needsClose ? [{
+            kind: "assign" as const, localId: needsClose.id,
+            value: { kind: "boolLit" as const, value: true, type: BOOL, loc }, loc,
+          }] : []),
+          ...body,
+        ],
+        ...(labels && { labels }),
+        loc,
+      };
+      return {
+        kind: "block",
+        body: [
+          { kind: "varDecl", localId: source.id, init: iterable, loc },
+          ...(needsClose ? [{ kind: "varDecl" as const, localId: needsClose.id, init: { kind: "boolLit" as const, value: false, type: BOOL, loc }, loc }] : []),
+          needsClose ? {
+            kind: "tryCatch",
+            tryBody: [loop], catchBody: null, catchLocalId: null,
+            finallyBody: [{ kind: "if", cond: varRef(needsClose.id, BOOL, loc), then: [hop()], else_: null, loc }],
+            loc,
+          } : loop,
+        ],
+        loc,
+      };
+    };
     if (!ts.isVariableDeclarationList(stmt.initializer)) {
       // `for (x of xs)` over a PRE-DECLARED writable binding: JS assigns
       // the existing binding once per pass — one shared binding across

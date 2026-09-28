@@ -378,6 +378,9 @@ export interface GenericInstance {
       return { type: abi, mode: "omittable", bodyType };
     }
     const type = lowerer.runtimeOptionalBindingType(param.name, lowerer.irTypeOf(param.name));
+    if (type.kind === "void") {
+      lowerer.unsupported("SC1090", param, "function parameters with void type");
+    }
     if (param.questionToken && !lowerer.bareUndefinedArmedUnion(type) && type.kind !== "dyn" && type.kind !== "jsval") {
       // `x?: unknown` where unknown came from an annotation: undefined is
       // absorbed into the hole type, so no undefined ARM exists — but a
