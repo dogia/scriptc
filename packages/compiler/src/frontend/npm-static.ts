@@ -12,8 +12,9 @@
  * a declaration is a CLAIM about the body, and the compiled artifact must
  * be built from what the body provably is, not from declaration-only
  * values. One bounded part of that claim survives: complete non-generic
- * overload groups over representation-safe types project as JSDoc onto
- * their matching exported runtime class. Calls retain authored overload
+ * overload groups over representation-safe types and zero-argument
+ * string/number/boolean return contracts project as JSDoc onto their
+ * matching exported runtime class. Calls retain authored overload
  * precision while the implementation body, its union ABI, and every
  * runtime fence still come from JavaScript.
  *
@@ -29,7 +30,8 @@
  *   - Before that shadow is enabled, the package's own declaration entry
  *     and relative declaration barrels are scanned for safe overload groups.
  *     The runtime entry binds each class to its direct or one-hop re-export
- *     file; only that file receives the generated JSDoc projection.
+ *     file, including named ESM aliases; only that class in that file
+ *     receives the generated JSDoc projection.
  *   - scriptc's own resolver (resolve.ts) mirrors the same answer: for an
  *     opted-in package the types pass is skipped, the "types" export
  *     condition is dropped, and the @types mangling never runs.

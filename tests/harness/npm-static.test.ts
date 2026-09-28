@@ -99,6 +99,42 @@ async function buildStatic(entry: string, npmStatic: string[] | "auto"): Promise
 }
 
 describe(`npm-static pilots${sanitize ? " (sanitized)" : ""}`, () => {
+  test.each(["c", "llvm"] as const)("bundled class aliases preserve declared scalar method returns (%s)", async (backend) => {
+    const entry = join(pilotRoot, "bundled-methods-cli.ts");
+    const { coverage } = analyze(entry, { npmStatic: "auto" });
+    expect(coverage.npmStatic).toEqual([{ package: "bundled-methods", status: "static" }]);
+    expect(coverage.diagnostics).toHaveLength(0);
+    expect(coverage.runtimeFences ?? []).toHaveLength(0);
+    const outDir = join(cacheDir, "bundled-methods", sanitize ? "san" : "plain", backend);
+    const result = await compile(entry, { backend, dynamic: false, npmStatic: "auto", sanitize, outDir, outPath: join(outDir, "program") });
+    if (!result.ok) throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+    const [nodeRes, nativeRes] = await Promise.all([runBinary(process.execPath, [entry]), runBinary(result.binaryPath, [])]);
+    expect(nativeRes.stdout).toEqual(nodeRes.stdout);
+    expect(comparableStderr(nativeRes.stderr)).toEqual(nodeRes.stderr);
+    expect(nativeRes.exitCode).toBe(nodeRes.exitCode);
+  });
+
+  test("conflicting public class aliases keep the JavaScript return inference", () => {
+    const dir = mkdtempSync(join(tmpdir(), "scriptc-class-alias-conflict-"));
+    try {
+      const pkg = join(dir, "node_modules", "alias-conflict");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(join(dir, "package.json"), '{"type":"module"}');
+      writeFileSync(join(pkg, "package.json"), '{"name":"alias-conflict","type":"module","main":"index.js","types":"index.d.ts"}');
+      writeFileSync(join(pkg, "index.d.ts"), 'export class Text { read(): string; } export class Count { read(): number; }');
+      writeFileSync(join(pkg, "index.js"), 'export { Value as Text } from "./chunk.js"; export { Value as Count } from "././chunk.js";');
+      writeFileSync(join(pkg, "chunk.js"), 'export class Value { read() { return "unchanged"; } }');
+      const entry = join(dir, "main.ts");
+      writeFileSync(entry, 'import { Text, Count } from "alias-conflict"; const first: string = new Text().read(); const second: string = new Count().read(); console.log(first, second);');
+      const { coverage } = analyze(entry, { npmStatic: ["alias-conflict"] });
+      expect(coverage.npmStatic).toEqual([{ package: "alias-conflict", status: "static" }]);
+      expect(coverage.diagnostics).toHaveLength(0);
+      expect(coverage.runtimeFences ?? []).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test.each(["c", "llvm"] as const)("untyped package methods preserve virtual overrides (%s)", async (backend) => {
     const entry = join(pilotRoot, "virtual-classes-cli.ts");
     const { coverage } = analyze(entry, { npmStatic: "auto" });

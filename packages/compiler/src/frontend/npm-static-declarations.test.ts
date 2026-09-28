@@ -54,7 +54,7 @@ class Choices {
   test("extracts only complete representation-safe overload groups", () => {
     const overloads = parseNpmStaticDeclarationOverloads("index.d.ts", declarations);
     expect([...overloads.keys()]).toEqual(["Chainy"]);
-    expect([...overloads.get("Chainy")!.keys()]).toEqual(["name", "description", "tag", "aliases", "helpOption"]);
+    expect([...overloads.get("Chainy")!.keys()]).toEqual(["name", "description", "tag", "aliases", "helpOption", "single"]);
     expect(overloads.get("Chainy")!.get("name")).toEqual([
       { parameters: [], returnType: "string" },
       { parameters: [{ name: "value", type: "string", optional: false }], returnType: "this" },
@@ -154,8 +154,8 @@ module.exports = { Chainy };
       exports.Alias = Alias;
       exports.Local = Local;
     `, new Set(["Command", "Alias", "Local"]))).toEqual(new Map([
-      ["Command", "./lib/command.js"],
-      ["Local", null],
+      ["Command", { specifier: "./lib/command.js", localName: "Command" }],
+      ["Local", { specifier: null, localName: "Local" }],
     ]));
   });
 
@@ -165,8 +165,65 @@ module.exports = { Chainy };
       class Local {}
       export { Command, Alias, Local };
     `, new Set(["Command", "Alias", "Local"]))).toEqual(new Map([
-      ["Command", "./lib/command.js"],
-      ["Local", null],
+      ["Command", { specifier: "./lib/command.js", localName: "Command" }],
+      ["Alias", { specifier: "./lib/command.js", localName: "Other" }],
+      ["Local", { specifier: null, localName: "Local" }],
     ]));
+  });
+
+  test("binds bundled ESM export aliases to their implementation names", () => {
+    expect(npmStaticRuntimeClassTargets("index.js", `
+      import { View2 as LocalView } from "./chunk.js";
+      class Renderer2 {}
+      export { LocalView as View, Renderer2 as Renderer };
+      export { Buffer2 as Buffer } from "./buffer.js";
+      export type { Hidden } from "./hidden.js";
+      import type { TypeOnly } from "./types.js";
+      export { TypeOnly };
+      const { Other: Mutable } = require("./other.cjs");
+      export { Mutable as RequiredAlias };
+    `, new Set(["View", "Renderer", "Buffer", "Hidden", "TypeOnly", "RequiredAlias"]))).toEqual(new Map([
+      ["View", { specifier: "./chunk.js", localName: "View2" }],
+      ["Renderer", { specifier: null, localName: "Renderer2" }],
+      ["Buffer", { specifier: "./buffer.js", localName: "Buffer2" }],
+    ]));
+  });
+
+  test("projects zero-argument scalar returns without replacing implementation JSDoc", () => {
+    const signatures = parseNpmStaticDeclarationOverloads("index.d.ts", `
+      export class View {
+        text(): string;
+        count(): number;
+        active(): boolean;
+        token(): bigint;
+        withArgument(value: string): string;
+        values(): string[];
+        erase(): void;
+        documented(): string;
+        staticOnly(): string;
+        asyncOnly(): string;
+        generatorOnly(): string;
+      }
+    `);
+    expect([...signatures.get("View")!.keys()]).toEqual(["text", "count", "active", "documented", "staticOnly", "asyncOnly", "generatorOnly"]);
+    const rewritten = applyNpmStaticDeclarationOverloads("index.js", `
+      export class View {
+        text() { return this.source.text(); }
+        count() { return this.source.count(); }
+        active() { return this.source.active(); }
+        token() { return this.source.token(); }
+        /** @returns {number} */
+        documented() { return 4; }
+        static staticOnly() { return "static"; }
+        async asyncOnly() { return "async"; }
+        *generatorOnly() { yield "generator"; }
+      }
+    `, signatures);
+    expect(rewritten!.insertions).toHaveLength(3);
+    expect(rewritten!.text).toContain("@returns {string} */ text()");
+    expect(rewritten!.text).toContain("@returns {number} */ count()");
+    expect(rewritten!.text).toContain("@returns {boolean} */ active()");
+    expect(rewritten!.text).not.toContain("@returns {bigint}");
+    expect(rewritten!.text).toContain("/** @returns {number} */\n        documented()");
   });
 });

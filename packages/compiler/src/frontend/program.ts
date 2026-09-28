@@ -666,6 +666,7 @@ export function loadProgram(
   // or executable module edges.
   const declarationOverloads = new Map<string, NpmStaticDeclarationOverloads>();
   const declarationProperties = new Map<string, NpmStaticDeclarationProperties>();
+  const projectionOwners = new Map<string, string | null>();
   for (const pkg of npmStaticPackages) {
     const resolved = resolveBareModule(entryPath, pkg, "types-only");
     if (
@@ -684,7 +685,7 @@ export function loadProgram(
     const runtimeSource = trackedReadFile(runtime.typesFile);
     if (runtimeSource === null) continue;
     const targets = npmStaticRuntimeClassTargets(runtime.typesFile, runtimeSource, classNames);
-    for (const [className, specifier] of targets) {
+    for (const [className, { specifier, localName }] of targets) {
       const methods = overloads.get(className);
       const fields = properties.get(className);
       if (methods === undefined && fields === undefined) continue;
@@ -695,14 +696,35 @@ export function loadProgram(
       const insideWorkspace = runtime.workspaceDir !== undefined &&
         targetNorm.startsWith(runtime.workspaceDir.split("\\").join("/") + "/");
       if (targetPackage !== pkg && !insideWorkspace) continue;
+      const projectionKey = JSON.stringify([targetNorm, localName]);
+      const previousOwner = projectionOwners.get(projectionKey);
+      if (previousOwner !== undefined && previousOwner !== className) {
+        // Two public class declarations naming one runtime class are
+        // ambiguous. Keep inference instead of choosing one alias's ABI.
+        projectionOwners.set(projectionKey, null);
+        const priorMethods = new Map(declarationOverloads.get(targetNorm) ?? []);
+        priorMethods.delete(localName);
+        declarationOverloads.set(targetNorm, priorMethods);
+        const priorFields = new Map(declarationProperties.get(targetNorm) ?? []);
+        priorFields.delete(localName);
+        declarationProperties.set(targetNorm, priorFields);
+        continue;
+      }
+      projectionOwners.set(projectionKey, className);
+      // The safe declaration grammar can name only its own class. Bind
+      // that type to the actual runtime class after a named ESM alias.
+      const renameSelf = (type: string): string => type.split(/([\s[\]<>()|,]+)/).map((name) => name === className ? localName : name).join("");
       if (methods !== undefined) {
         const byClass = new Map(declarationOverloads.get(targetNorm) ?? []);
-        byClass.set(className, methods);
+        byClass.set(localName, new Map([...methods].map(([name, signatures]) => [name, signatures.map((signature) => ({
+          parameters: signature.parameters.map((parameter) => ({ ...parameter, type: renameSelf(parameter.type) })),
+          returnType: renameSelf(signature.returnType),
+        }))])));
         declarationOverloads.set(targetNorm, byClass);
       }
       if (fields !== undefined) {
         const byClass = new Map(declarationProperties.get(targetNorm) ?? []);
-        byClass.set(className, fields);
+        byClass.set(localName, new Map([...fields].map(([name, type]) => [name, renameSelf(type)])));
         declarationProperties.set(targetNorm, byClass);
       }
     }

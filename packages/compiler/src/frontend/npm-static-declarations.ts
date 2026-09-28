@@ -6,7 +6,9 @@
  * groups and respells them as JSDoc immediately before the matching
  * exported JavaScript class method. TypeScript 7 then checks and lowers one
  * world: implementation bodies remain the runtime truth, while overload
- * calls get the package author's more precise signature. */
+ * calls get the package author's more precise signature. Zero-argument
+ * string/number/boolean methods retain their own declared return contract
+ * too; inferred checked values validate at the ordinary return boundary. */
 
 import ts from "typescript5";
 
@@ -30,6 +32,13 @@ export type NpmStaticDeclarationProperties = ReadonlyMap<
   string,
   ReadonlyMap<string, string>
 >;
+
+const SCALAR_METHOD_RETURNS = new Set(["string", "number", "boolean"]);
+
+export interface NpmStaticRuntimeClassTarget {
+  specifier: string | null;
+  localName: string;
+}
 
 export interface NpmStaticOverloadRewrite {
   text: string;
@@ -176,7 +185,8 @@ function overloadSignature(
   return { parameters, returnType };
 }
 
-/** Extracts complete safe overload groups from exported non-generic classes. */
+/** Extracts complete safe overload groups and zero-argument scalar-return
+ * contracts from exported non-generic classes. */
 export function parseNpmStaticDeclarationOverloads(
   declarationPath: string,
   source: string,
@@ -207,7 +217,9 @@ export function parseNpmStaticDeclarationOverloads(
       // A partial set could select the wrong branch. Keep inference when
       // any authored signature is outside the projection's safe grammar.
       if (signatures.some((signature) => signature === null)) continue;
-      if (signatures.length === 1 && !signatures[0]!.parameters.some((parameter) => parameter.optional)) continue;
+      if (signatures.length === 1 &&
+          !signatures[0]!.parameters.some((parameter) => parameter.optional) &&
+          !(signatures[0]!.parameters.length === 0 && SCALAR_METHOD_RETURNS.has(signatures[0]!.returnType))) continue;
       overloads.set(name, signatures as NpmStaticOverloadSignature[]);
     }
     if (overloads.size > 0) classes.set(className, overloads);
@@ -295,22 +307,21 @@ function requireSpecifier(expression: ts.Expression | undefined): string | null 
     : null;
 }
 
-/** Maps declaration class names to their implementation edge from one
- * runtime package entry. Null means the class is declared in the entry;
- * a string is a relative re-export target. Multi-hop and aliased class
- * re-exports stay out of the first safe slice. */
+/** Maps declaration class names to one implementation edge and binding.
+ * Named ESM aliases preserve the implementation's exported name, including
+ * bundler-renamed classes. Multi-hop re-exports remain outside this slice. */
 export function npmStaticRuntimeClassTargets(
   sourcePath: string,
   source: string,
   classNames: ReadonlySet<string>,
-): ReadonlyMap<string, string | null> {
+): ReadonlyMap<string, NpmStaticRuntimeClassTarget> {
   const sourceFile = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const localClasses = new Set(
     sourceFile.statements.flatMap((statement) =>
       ts.isClassDeclaration(statement) && statement.name !== undefined ? [statement.name.text] : []
     ),
   );
-  const linked = new Map<string, { imported: string; specifier: string }>();
+  const linked = new Map<string, { imported: string; specifier: string; esm?: true }>();
   for (const statement of sourceFile.statements) {
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
@@ -330,27 +341,31 @@ export function npmStaticRuntimeClassTargets(
       ts.isImportDeclaration(statement) &&
       ts.isStringLiteral(statement.moduleSpecifier) &&
       statement.moduleSpecifier.text.startsWith(".") &&
+      !statement.importClause?.isTypeOnly &&
       statement.importClause?.namedBindings !== undefined &&
       ts.isNamedImports(statement.importClause.namedBindings)
     ) {
       for (const element of statement.importClause.namedBindings.elements) {
+        if (element.isTypeOnly) continue;
         linked.set(element.name.text, {
           imported: element.propertyName?.text ?? element.name.text,
           specifier: statement.moduleSpecifier.text,
+          esm: true,
         });
       }
     }
   }
-  const targets = new Map<string, string | null>();
-  const record = (exported: string, local: string, specifier?: string): void => {
-    if (!classNames.has(exported) || exported !== local || targets.has(exported)) return;
+  const targets = new Map<string, NpmStaticRuntimeClassTarget>();
+  const record = (exported: string, local: string, specifier?: string, esmAlias = false): void => {
+    if (!classNames.has(exported) || (!esmAlias && exported !== local) || targets.has(exported)) return;
     if (specifier !== undefined) {
-      targets.set(exported, specifier);
+      targets.set(exported, { specifier, localName: local });
       return;
     }
     const imported = linked.get(local);
-    if (imported !== undefined && imported.imported === exported) targets.set(exported, imported.specifier);
-    else if (localClasses.has(local)) targets.set(exported, null);
+    if (imported !== undefined && ((esmAlias && imported.esm) || imported.imported === exported)) {
+      targets.set(exported, { specifier: imported.specifier, localName: imported.imported });
+    } else if (localClasses.has(local)) targets.set(exported, { specifier: null, localName: local });
   };
   for (const statement of sourceFile.statements) {
     if (
@@ -367,7 +382,9 @@ export function npmStaticRuntimeClassTargets(
         : undefined;
       if (specifier !== undefined && !specifier.startsWith(".")) continue;
       for (const element of statement.exportClause.elements) {
-        record(element.name.text, element.propertyName?.text ?? element.name.text, specifier);
+        if (!statement.isTypeOnly && !element.isTypeOnly) {
+          record(element.name.text, element.propertyName?.text ?? element.name.text, specifier, true);
+        }
       }
       continue;
     }
@@ -555,6 +572,7 @@ export function applyNpmStaticDeclarationOverloads(
       if (!ts.isMethodDeclaration(member) || !ts.isIdentifier(member.name) || member.body === undefined) continue;
       const signatures = classOverloads.get(member.name.text);
       if (signatures === undefined) continue;
+      if (hasModifier(member, ts.SyntaxKind.StaticKeyword) || hasModifier(member, ts.SyntaxKind.AsyncKeyword) || member.asteriskToken !== undefined) continue;
       const backing = overloadArrayBackingField(member, signatures);
       if (backing !== null && constructor?.body !== undefined && !projectedFields.has(backing.field)) {
         for (const bodyStatement of constructor.body.statements) {
@@ -587,6 +605,9 @@ export function applyNpmStaticDeclarationOverloads(
             (parameter) => parameter.optional && !existing.includes(`[${parameter.name}]`),
           );
           if (missingOptional) inserts.push({ offset: member.getStart(sourceFile), text: `${implementation} ` });
+          else if (jsDocs.length === 0 && member.parameters.length === 0 && SCALAR_METHOD_RETURNS.has(signatures[0]!.returnType)) {
+            inserts.push({ offset: member.getStart(sourceFile), text: `${implementation} ` });
+          }
         }
         continue;
       }
