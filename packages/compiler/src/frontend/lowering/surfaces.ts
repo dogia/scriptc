@@ -1392,6 +1392,9 @@ const ASSERT_MODULE_HINTS: Record<string, string | undefined> = {
 };
 
 export const BUILTIN_MODULE_FENCE_HINTS: Record<string, Record<string, string | undefined> | undefined> = {
+  console: {
+    Console: "custom Console instances are not supported yet; direct node:console log/info/debug/error/warn calls use the process output streams",
+  },
   assert: ASSERT_MODULE_HINTS,
   // The strict module's equal/notEqual/deepEqual/notDeepEqual ARE the
   // strict comparisons (aliased in the spoke) — only the members with no
@@ -1417,7 +1420,7 @@ export const BUILTIN_MODULE_FENCE_HINTS: Record<string, Record<string, string | 
   },
   module: {
     createRequire:
-      "the lowered shape is a const binding over createRequire(import.meta.url) (or __filename) " +
+      "the lowered shape is a const binding (or a proven stable top-level let/var) over createRequire(import.meta.url) (or __filename) " +
       "whose require calls take STATIC string literals — builtins, project modules (including #imports), " +
       "relative .json documents, --npm-static packages, and installed npm packages under --dynamic resolve at build time; " +
       "dynamic specifiers cannot exist in a compiled binary's fixed module graph",

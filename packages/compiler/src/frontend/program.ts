@@ -1011,7 +1011,9 @@ function requireTdzRisk7(
     // this scan must survive it so the nesting fence can answer later.
     ts.walkPreorder(root, (n) => {
       if (ts.isIdentifier(n)) {
-        const sym = checker.getSymbolAtLocation(n);
+        const sym = ts.isShorthandPropertyAssignment(n.parent)
+          ? checker.getShorthandAssignmentValueSymbol(n.parent)
+          : checker.getSymbolAtLocation(n);
         if (sym) {
           const name = bindings.get(sym);
           if (name !== undefined) {
@@ -1114,11 +1116,10 @@ function isCreateRequireImport7(program: ts.Program, ident: ts.Identifier): bool
   return false;
 }
 
-/** True only for the createRequire binding shape the lowering recognizes:
- * a const initialized from node:module's createRequire with a base naming
- * the current file. Arbitrary source declarations named `require` must not
- * ride the module-edge lowering, which would erase their calls. */
-function isCreateRequireBinding7(program: ts.Program, callee: ts.Identifier): boolean {
+/** True only for createRequire bindings the lowering can erase. Mutable
+ * declaration syntax needs a whole-file proof: no writes or escapes, and
+ * no code before initialization can reach the binding. */
+export function isCreateRequireBinding7(program: ts.Program, callee: ts.Identifier): boolean {
   const checker = program.getTypeChecker();
   const symbol = checker.getSymbolAtLocation(callee);
   const decl = symbol
@@ -1127,12 +1128,68 @@ function isCreateRequireBinding7(program: ts.Program, callee: ts.Identifier): bo
   if (
     decl === undefined ||
     decl.initializer === undefined ||
-    !ts.isVariableDeclarationList(decl.parent) ||
-    (decl.parent.flags & ts.NodeFlags.Const) === 0
+    !ts.isVariableDeclarationList(decl.parent)
   ) {
     return false;
   }
-  return isCreateRequireBaseCall7(program, decl.initializer);
+  return isCreateRequireBaseCall7(program, decl.initializer) && (
+    (decl.parent.flags & ts.NodeFlags.Const) !== 0 ||
+    stableCreateRequireBindingReason7(program, decl) === null
+  );
+}
+
+/** Only literal calls and literal resolution queries can erase the loader
+ * value. In particular, assignments, exported aliases, shorthand properties,
+ * optional calls, and passing the loader to user code cannot pass this test. */
+function staticCreateRequireUse7(expr: ts.Expression): boolean {
+  let use: ts.Node = expr;
+  while (ts.isParenthesizedExpression(use.parent)) use = use.parent;
+  if (ts.isPropertyAccessExpression(use.parent) && use.parent.expression === use && use.parent.name.text === "resolve" && !use.parent.questionDotToken) {
+    use = use.parent;
+    if (ts.isPropertyAccessExpression(use.parent) && use.parent.expression === use && use.parent.name.text === "paths" && !use.parent.questionDotToken) use = use.parent;
+  }
+  const call = use.parent;
+  return ts.isCallExpression(call) && call.expression === use && !call.questionDotToken &&
+    call.arguments.length === 1 && ts.isStringLiteralLike(call.arguments[0]!);
+}
+
+const stableCreateRequireReasons7 = new WeakMap<ts.Program, Map<ts.VariableDeclaration, string | null>>();
+
+function stableCreateRequireBindingReason7(program: ts.Program, decl: ts.VariableDeclaration): string | null {
+  let cache = stableCreateRequireReasons7.get(program);
+  if (!cache) stableCreateRequireReasons7.set(program, cache = new Map());
+  if (cache.has(decl)) return cache.get(decl)!;
+  const check = (): string | null => {
+    const stmt = decl.parent.parent;
+    if (!ts.isIdentifier(decl.name) || !ts.isVariableStatement(stmt) || !ts.isSourceFile(stmt.parent)) {
+      return "its mutable createRequire binding is outside the module's top level";
+    }
+    const checker = program.getTypeChecker();
+    const symbol = checker.getSymbolAtLocation(decl.name);
+    if (!symbol || checker.declarationsOf(symbol).length !== 1) return "its createRequire binding is redeclared";
+    if ((ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Export) !== 0) return "its createRequire result escapes through an exported binding";
+    const sf = decl.getSourceFile();
+    const refs = identifierOccurrences7(sf, decl.name.text);
+    checker.prefetchSymbolNodesExact(refs);
+    for (const ref of refs) {
+      if (ref === decl.name || inTypePosition7(ref)) continue;
+      let target = ts.isShorthandPropertyAssignment(ref.parent)
+        ? checker.getShorthandAssignmentValueSymbol(ref.parent)
+        : checker.getSymbolAtLocation(ref);
+      if (target && (target.flags & ts.SymbolFlags.Alias) !== 0) target = checker.getAliasedSymbol(target);
+      if (target === symbol && !staticCreateRequireUse7(ref)) {
+        return "its createRequire binding is reassigned, escapes, or uses a computed specifier";
+      }
+    }
+    const preceding = stmt.declarationList.declarations.slice(0, stmt.declarationList.declarations.indexOf(decl));
+    if (requireTdzRisk7(program, sf, sf.statements.indexOf(stmt), decl, preceding) !== null) {
+      return "its createRequire binding can be used before initialization";
+    }
+    return null;
+  };
+  const reason = check();
+  cache.set(decl, reason);
+  return reason;
 }
 
 function isCreateRequireBaseCall7(program: ts.Program, expr: ts.Expression): boolean {
@@ -1147,7 +1204,7 @@ function isCreateRequireBaseCall7(program: ts.Program, expr: ts.Expression): boo
     return false;
   }
   const base = stripRequireCasts7(init.arguments[0]!);
-  if (ts.isIdentifier(base) && base.text === "__filename") return true;
+  if (ts.isIdentifier(base) && base.text === "__filename") return !sourceBinding7(program, base);
   return (
     ts.isPropertyAccessExpression(base) &&
     base.questionDotToken === undefined &&
@@ -1159,7 +1216,7 @@ function isCreateRequireBaseCall7(program: ts.Program, expr: ts.Expression): boo
 
 /** A node:module import alone does not require an engine. Retain npm
  * fallback for require indirection the lowering cannot erase, while
- * admitting literal calls through the same const/inline shapes as program
+ * admitting literal calls through the same stable/inline shapes as program
  * code. Inspect symbols, not names: nested shadows are unrelated bindings. */
 function npmStaticModuleImportReason7(program: ts.Program, stmt: ts.ImportDeclaration): string | null {
   const clause = stmt.importClause;
@@ -1178,17 +1235,7 @@ function npmStaticModuleImportReason7(program: ts.Program, stmt: ts.ImportDeclar
     checker.prefetchSymbolNodesExact(identifierOccurrences7(sf, specifier.name.text));
     let reason: string | null = null;
     const checkUse = (expr: ts.Expression): void => {
-      let use: ts.Node = expr;
-      while (ts.isParenthesizedExpression(use.parent)) use = use.parent;
-      // The supported require.resolve and require.resolve.paths calls also
-      // operate exclusively on literal specifiers.
-      if (ts.isPropertyAccessExpression(use.parent) && use.parent.expression === use && use.parent.name.text === "resolve") {
-        use = use.parent;
-        if (ts.isPropertyAccessExpression(use.parent) && use.parent.expression === use && use.parent.name.text === "paths") use = use.parent;
-      }
-      const call = use.parent;
-      if (!ts.isCallExpression(call) || call.expression !== use || call.questionDotToken
-        || call.arguments.length !== 1 || !ts.isStringLiteralLike(call.arguments[0]!)) {
+      if (!staticCreateRequireUse7(expr)) {
         reason = "its createRequire result escapes or is used with a computed specifier (static requires need literal specifiers)";
       }
     };
@@ -1206,7 +1253,7 @@ function npmStaticModuleImportReason7(program: ts.Program, stmt: ts.ImportDeclar
           return;
         }
         if (!isCreateRequireBinding7(program, decl.name)) {
-          reason = `its createRequire result uses the mutable binding '${decl.name.text}' (static requires need a const binding)`;
+          reason = stableCreateRequireBindingReason7(program, decl);
           return;
         }
         const sym = checker.getSymbolAtLocation(decl.name);

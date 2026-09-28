@@ -167,7 +167,7 @@ export const UNSUPPORTED: Record<string, UnsupportedEntry> = {
       "util/types, string_decoder, querystring, readline, events, stream, " +
       "stream/promises, stream/consumers, buffer, assert, assert/strict, worker_threads, " +
       "cluster, tty, async_hooks, timers, timers/promises, " +
-      "diagnostics_channel, perf_hooks, and module modules (bare or " +
+      "diagnostics_channel, perf_hooks, module, and console modules (bare or " +
       "node:-prefixed) and node:test (node:-prefixed only, like in Node) " +
       "are supported",
   },

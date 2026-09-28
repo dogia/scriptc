@@ -86,6 +86,8 @@ A static-tier program otherwise produces byte-identical stdout and the same exit
 
 **Foreign native callbacks are asynchronous and not real-time capable.** FFI format 5 accepts retained, context-bearing, `void` callbacks invoked by library-owned threads, but the native trampoline only copies arguments and enqueues work. The closure runs on the script event loop at least one turn later. Value-returning foreign callbacks and direct execution on the library thread are refused: waiting for the loop is deadlock-prone, while scriptc's reference counting and exception state are thread-confined.
 
+**Console output uses the process streams.** Direct `log`, `info`, and `debug` calls write to stdout; `error` and `warn` write to stderr. These methods work through the global `console` and `node:console` imports. Custom `Console` instances and replacing the global console are not supported yet.
+
 **Process shape** — `process.argv[0]` is `"scriptc"` and `argv[1]` is the binary's path (positions line up with Node; `argv[2]` onward are your args). The uncaught-exception stderr line reads `Uncaught <value>` instead of Node's stack-trace block (exit code and pre-throw stdout are identical). Runtime errors carry `message` and Node's `code`, but not `errno`/`syscall`/`path`.
 
 **Comparator call sequences differ in `sort` and `toSorted`** (scriptc uses a stable bottom-up merge sort, while V8 uses TimSort). Sorted results are byte-identical for consistent comparators. Ordered inputs use a linear number of comparator calls, but merge-buffer movement remains O(n log n) even when every boundary is already ordered. **`localeCompare` compares code units**, not ICU collation.

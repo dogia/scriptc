@@ -7,8 +7,8 @@
     "tierItemCount": 6663,
     "tiers": {
       "static": {
-        "replace-refusal": 46,
-        "verify-gap": 2573,
+        "replace-refusal": 47,
+        "verify-gap": 2572,
         "audit-partial": 593,
         "classify": 2,
         "implement": 81
@@ -8106,11 +8106,11 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:console",
+          "status": "refused",
+          "action": "replace-refusal",
+          "verification": "explicit-refusal",
+          "confidence": "high",
+          "source": "surface-manifest:unsupported:node-builtin.console.Console",
           "tests": []
         },
         "dynamic": {
@@ -8288,7 +8288,9 @@
           "source": "compiler-dedicated:console.debug",
           "tests": [
             "tests/corpus/1460-console-error-warn.ts",
-            "tests/corpus/2440-console-inspect-args.ts"
+            "tests/corpus/2440-console-inspect-args.ts",
+            "tests/corpus/2631-create-require/main.ts",
+            "tests/harness/npm-static.test.ts"
           ]
         },
         "dynamic": {
@@ -8394,7 +8396,9 @@
           "source": "compiler-dedicated:console.error",
           "tests": [
             "tests/corpus/1460-console-error-warn.ts",
-            "tests/corpus/2440-console-inspect-args.ts"
+            "tests/corpus/2440-console-inspect-args.ts",
+            "tests/corpus/2631-create-require/main.ts",
+            "tests/harness/npm-static.test.ts"
           ]
         },
         "dynamic": {
@@ -8535,7 +8539,9 @@
           "source": "compiler-dedicated:console.info",
           "tests": [
             "tests/corpus/1460-console-error-warn.ts",
-            "tests/corpus/2440-console-inspect-args.ts"
+            "tests/corpus/2440-console-inspect-args.ts",
+            "tests/corpus/2631-create-require/main.ts",
+            "tests/harness/npm-static.test.ts"
           ]
         },
         "dynamic": {
@@ -8573,7 +8579,9 @@
           "source": "compiler-dedicated:console.log",
           "tests": [
             "tests/corpus/1460-console-error-warn.ts",
-            "tests/corpus/2440-console-inspect-args.ts"
+            "tests/corpus/2440-console-inspect-args.ts",
+            "tests/corpus/2631-create-require/main.ts",
+            "tests/harness/npm-static.test.ts"
           ]
         },
         "dynamic": {
@@ -8784,7 +8792,9 @@
           "source": "compiler-dedicated:console.warn",
           "tests": [
             "tests/corpus/1460-console-error-warn.ts",
-            "tests/corpus/2440-console-inspect-args.ts"
+            "tests/corpus/2440-console-inspect-args.ts",
+            "tests/corpus/2631-create-require/main.ts",
+            "tests/harness/npm-static.test.ts"
           ]
         },
         "dynamic": {

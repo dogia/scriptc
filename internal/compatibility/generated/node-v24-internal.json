@@ -268,8 +268,8 @@
       "static": {
         "supported": 0,
         "partial": 6,
-        "refused": 0,
-        "not-implemented": 18,
+        "refused": 1,
+        "not-implemented": 17,
         "by-design": 0,
         "unreviewed": 0,
         "not-applicable": 0
@@ -22571,7 +22571,9 @@
         "evidence": "derived:descendants",
         "tests": [
           "tests/corpus/1460-console-error-warn.ts",
-          "tests/corpus/2440-console-inspect-args.ts"
+          "tests/corpus/2440-console-inspect-args.ts",
+          "tests/corpus/2631-create-require/main.ts",
+          "tests/harness/npm-static.test.ts"
         ]
       },
       "dynamic": {
@@ -22709,8 +22711,8 @@
         "inherited": true
       },
       "static": {
-        "status": "not-implemented",
-        "evidence": "compiler-unmatched:console"
+        "status": "refused",
+        "evidence": "surface-manifest:unsupported:node-builtin.console.Console"
       },
       "dynamic": {
         "status": "partial",
@@ -22863,7 +22865,9 @@
         "evidence": "compiler-dedicated:console.debug",
         "tests": [
           "tests/corpus/1460-console-error-warn.ts",
-          "tests/corpus/2440-console-inspect-args.ts"
+          "tests/corpus/2440-console-inspect-args.ts",
+          "tests/corpus/2631-create-require/main.ts",
+          "tests/harness/npm-static.test.ts"
         ]
       },
       "dynamic": {
@@ -22954,7 +22958,9 @@
         "evidence": "compiler-dedicated:console.error",
         "tests": [
           "tests/corpus/1460-console-error-warn.ts",
-          "tests/corpus/2440-console-inspect-args.ts"
+          "tests/corpus/2440-console-inspect-args.ts",
+          "tests/corpus/2631-create-require/main.ts",
+          "tests/harness/npm-static.test.ts"
         ]
       },
       "dynamic": {
@@ -23075,7 +23081,9 @@
         "evidence": "compiler-dedicated:console.info",
         "tests": [
           "tests/corpus/1460-console-error-warn.ts",
-          "tests/corpus/2440-console-inspect-args.ts"
+          "tests/corpus/2440-console-inspect-args.ts",
+          "tests/corpus/2631-create-require/main.ts",
+          "tests/harness/npm-static.test.ts"
         ]
       },
       "dynamic": {
@@ -23109,7 +23117,9 @@
         "evidence": "compiler-dedicated:console.log",
         "tests": [
           "tests/corpus/1460-console-error-warn.ts",
-          "tests/corpus/2440-console-inspect-args.ts"
+          "tests/corpus/2440-console-inspect-args.ts",
+          "tests/corpus/2631-create-require/main.ts",
+          "tests/harness/npm-static.test.ts"
         ]
       },
       "dynamic": {
@@ -23290,7 +23300,9 @@
         "evidence": "compiler-dedicated:console.warn",
         "tests": [
           "tests/corpus/1460-console-error-warn.ts",
-          "tests/corpus/2440-console-inspect-args.ts"
+          "tests/corpus/2440-console-inspect-args.ts",
+          "tests/corpus/2631-create-require/main.ts",
+          "tests/harness/npm-static.test.ts"
         ]
       },
       "dynamic": {

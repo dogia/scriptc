@@ -9,7 +9,7 @@ import type { Lowerer } from "./lowerer.js";
 import { lowerGenMethodCall } from "./lower-generators.js";
 import { BIGINT_T, BOOL, CAUGHT, DYN, F64, IrExpr, IrFunction, IrLocal, IrParam, IrStmt, IrType, JSVAL, STRING, SYMBOL_T, SrcLoc, UNDEFINED_T, VOID, arrayOf, canBoxFuncIntoDyn, canConvertToDyn, canDynCheckTo, canMarshalTypedFuncIntoIsland, ffiClassType, ffiSourceParamTypes, funcOf, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isUnitType, shapeHasAccessorSlots, typeEquals } from "../../ir/ir.js";
 import type { IrFfiCallbackParam, IrFfiCallbackParamClass, IrFfiImport, IrFfiReleaseParam } from "../../ir/ir.js";
-import { isJsSourceFile, isNodeEsmFile, locOf } from "../program.js";
+import { isJsSourceFile, isNodeEsmFile, locOf, requireSpecOf } from "../program.js";
 import { genResultRecord, isGenericCallableMemberType, typeKey } from "../type-mapper.js";
 import { PoisonError, dynFallbackType, dynUndefinedExpr, importCallHandleType, jsFuncNameOf, newFnCtx, nodeThrowExpr, staticImportNamespaceType } from "./lowerer.js";
 import { enforceLibBoundary } from "./lib-boundary.js";
@@ -20,7 +20,7 @@ import { mixinFnShapeOf } from "./lower-mixins.js";
 import { dynStringReceiver, lowerArrayConstructor, lowerArrayFromCall, lowerArrayOfCall, lowerDynArrayFilterCall, lowerDynArrayFlatMapCall, lowerGroupByStaticCall, lowerIteratorHelperCall, lowerObjectAssignIndexShape, lowerObjectFromEntriesCall, lowerObjectIterOverIndexShape, lowerTupleReadMethodCall } from "./lower-containers.js";
 import { bufEncoding } from "./containers/bytes.js";
 import { lowerRegexMethodCall, lowerStringIndexCall, lowerStringMethodCall, lowerStringPaddingCall, lowerStringSplitCall } from "./containers/string-and-regexp.js";
-import { lowerChildStreamMethodCall, lowerChildWriterMethodCall, lowerCreateRequireCall, lowerCryptoHashMethodCall, lowerDirentMethodCall, lowerFileHandleMethodCall, lowerImportMetaResolveCall, lowerNodeModuleCall, lowerPerfHooksCall, lowerProcStreamMethodCall, lowerReflectApplyCall, lowerRequireResolveCall, lowerWatcherMethodCall } from "./lower-builtins.js";
+import { createRequireSpecOf, lowerChildStreamMethodCall, lowerChildWriterMethodCall, lowerCreateRequireCall, lowerCryptoHashMethodCall, lowerDirentMethodCall, lowerFileHandleMethodCall, lowerImportMetaResolveCall, lowerNodeModuleCall, lowerPerfHooksCall, lowerProcStreamMethodCall, lowerReflectApplyCall, lowerRequireResolveCall, lowerWatcherMethodCall } from "./lower-builtins.js";
 import { lowerAbsenceProbe, lowerPromiseAllTupleCall, lowerPromiseRejectCall, stringWrapperToString, templateRawTextOf } from "./lower-exprs.js";
 import { isSafeToDiscard } from "./expressions/evaluation-safety.js";
 import { tryLowerExpression } from "./expressions/try-lower-expression.js";
@@ -3507,6 +3507,18 @@ export function lowerCall(lowerer: Lowerer, expr: ts.CallExpression): IrExpr {
 
     const consoleMember = lowerer.consoleCallMember(expr);
     if (consoleMember !== null) {
+      // A namespace returned by user code must evaluate before the log
+      // arguments. Only the global and literal builtin require plumbing
+      // have no receiver evaluation to preserve.
+      const access = ts.isPropertyAccessExpression(expr.expression) ? expr.expression : null;
+      const created = access && ts.isCallExpression(access.expression) ? createRequireSpecOf(lowerer, access.expression) : null;
+      const receiver = access && !lowerer.isStdlibGlobal(access.expression, "console") &&
+        requireSpecOf(access.expression) === null &&
+        created?.spec !== "node:console" && created?.spec !== "console"
+        ? lowerer.lowerExpr(access.expression) : null;
+      const withReceiver = (result: IrExpr): IrExpr => receiver === null ? result : {
+        kind: "seqExpr", stmts: [{ kind: "exprStmt", expr: receiver, loc }], result, type: result.type, loc,
+      };
       // console.log/info/debug write stdout; console.error and console.warn
       // are one stream in Node (warn IS error, info and debug ARE log) and
       // write stderr with the exact same formatting. Node's formatter is
@@ -3530,13 +3542,13 @@ export function lowerCall(lowerer: Lowerer, expr: ts.CallExpression): IrExpr {
         /%[sdifjoOc%]/.test(expr.arguments[0].text)
       ) {
         const formatted = lowerFormatCall(lowerer, expr, loc, false);
-        return {
+        return withReceiver({
           kind: "intrinsic",
           name: stdoutMember ? "console.log" : "console.error",
           args: [formatted],
           type: VOID,
           loc,
-        };
+        });
       }
       const args = expr.arguments.map((a) => {
         const lowered = lowerer.lowerExpr(a);
@@ -3603,13 +3615,13 @@ export function lowerCall(lowerer: Lowerer, expr: ts.CallExpression): IrExpr {
         // render fence honestly with the reason.
         return lowerConsoleInspectArg(lowerer, a, lowered, surface, loc);
       });
-      return {
+      return withReceiver({
         kind: "intrinsic",
         name: stdoutMember ? "console.log" : "console.error",
         args,
         type: VOID,
         loc,
-      };
+      });
     }
 
     // The timer globals — setTimeout/clearTimeout, setInterval/

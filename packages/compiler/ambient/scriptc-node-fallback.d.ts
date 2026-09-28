@@ -110,6 +110,42 @@ declare const console: {
   trace(...data: unknown[]): void;
 };
 
+// node:console exports the global instance's bound methods. The constructor
+// and remaining methods are declared so unsupported uses reach named fences.
+type ScriptcConsoleMethods = typeof console;
+declare module "node:console" {
+  export class Console {
+    constructor(stdout: unknown, stderr?: unknown, ignoreErrors?: boolean);
+  }
+  export interface Console extends ScriptcConsoleMethods {}
+  export const log: ScriptcConsoleMethods["log"];
+  export const info: ScriptcConsoleMethods["info"];
+  export const debug: ScriptcConsoleMethods["debug"];
+  export const error: ScriptcConsoleMethods["error"];
+  export const warn: ScriptcConsoleMethods["warn"];
+  export const assert: ScriptcConsoleMethods["assert"];
+  export const clear: ScriptcConsoleMethods["clear"];
+  export const count: ScriptcConsoleMethods["count"];
+  export const countReset: ScriptcConsoleMethods["countReset"];
+  export const dir: ScriptcConsoleMethods["dir"];
+  export const dirxml: ScriptcConsoleMethods["dirxml"];
+  export const group: ScriptcConsoleMethods["group"];
+  export const groupCollapsed: ScriptcConsoleMethods["groupCollapsed"];
+  export const groupEnd: ScriptcConsoleMethods["groupEnd"];
+  export const table: ScriptcConsoleMethods["table"];
+  export const time: ScriptcConsoleMethods["time"];
+  export const timeEnd: ScriptcConsoleMethods["timeEnd"];
+  export const timeLog: ScriptcConsoleMethods["timeLog"];
+  export const timeStamp: ScriptcConsoleMethods["timeStamp"];
+  export const trace: ScriptcConsoleMethods["trace"];
+  const defaultConsole: ScriptcConsoleMethods & { Console: typeof Console };
+  export default defaultConsole;
+}
+declare module "console" {
+  export * from "node:console";
+  export { default } from "node:console";
+}
+
 /* The process global (Node-like, deliberately tiny). Every member lowers to
  * a `libCall` and is implemented in the runtime's scr_lib.c. `argv` is one
  * interned array (identity and mutation semantics match Node's stable

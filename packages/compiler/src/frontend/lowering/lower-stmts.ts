@@ -3513,7 +3513,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     // plumbing: each call through the binding resolves per site
     // (lowerCreateRequireCall); no storage, no code (collectGlobals
     // skipped its global by the same test).
-    if (!isLet && createRequireBindingDecl(lowerer, decl.name, decl.initializer)) return null;
+    if (createRequireBindingDecl(lowerer, decl.name, decl.initializer)) return null;
 
     // `const fs = require("node:fs")` through that binding — a builtin
     // namespace import in const clothing: alias plumbing, no storage

@@ -20,6 +20,7 @@ import { STREAM_API_MEMBERS, STREAM_PROP_MEMBERS, UNDERSCORE_METHODS, lowerStrea
 import { emitOverrideShapeReason, emitSpecSuperForward, emitterRooted, lowerEmitterSuperCall, type EmitOverrideRec } from "./lower-event-emitter.js";
 import { declSymbolOf } from "./lower-modules.js";
 import { uniqueSymbolKeyOf } from "./lower-exprs.js";
+import { builtinFenceHintOf } from "./surfaces.js";
 import { lowerHttpAgentNew, lowerHttpServerNew } from "./lower-server.js";
 import { ambientNsRootOf, ambientUndefReadType, ambientUndefVarRootOf, ambientUndefinedFnSymbolOf, fenceEarlyAliasUse, fenceEarlyNsMemberRef, nsMemberIdentOf, nsUndefRead } from "./lower-namespaces.js";
 import { mixinResultBindingClassOf, type MixinInstanceInfo } from "./lower-mixins.js";
@@ -4807,6 +4808,15 @@ function assignedThisFieldType(lowerer: Lowerer, expr: ts.NewExpression): IrType
 
 export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
     const loc = locOf(expr);
+    const consoleCtor = ts.isIdentifier(expr.expression)
+      ? lowerer.builtinImportOf(expr.expression)
+      : ts.isPropertyAccessExpression(expr.expression) &&
+          lowerer.builtinNamespaceModuleOf(expr.expression.expression) === "console"
+        ? { module: "console", member: expr.expression.name.text }
+        : null;
+    if (consoleCtor?.module === "console" && consoleCtor.member === "Console") {
+      lowerer.noLowering("new console.Console", expr, builtinFenceHintOf("console", "Console"));
+    }
     // `new X(...)` where X is a package-declared class, in a static build:
     // the per-package requires-dynamic diagnostic (the constructor runs in
     // the embedded engine). Under --dynamic, X is jsval-typed and lowers

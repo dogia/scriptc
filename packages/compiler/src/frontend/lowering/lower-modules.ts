@@ -1349,7 +1349,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
         // `const require = createRequire(import.meta.url)` at file scope:
         // compile-time plumbing — no global storage; the statement
         // lowering skips it by the same test.
-        if (isConst && createRequireBindingDecl(lowerer, decl.name, decl.initializer)) continue;
+        if (createRequireBindingDecl(lowerer, decl.name, decl.initializer)) continue;
         // `const fs = require("node:fs")` through that binding at file
         // scope — a namespace import in const clothing, same story.
         if (isConst && createRequireNamespaceDecl(lowerer, decl.name, decl.initializer)) continue;

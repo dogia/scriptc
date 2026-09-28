@@ -117,7 +117,19 @@ describe(`npm-static pilots${sanitize ? " (sanitized)" : ""}`, () => {
   test.each([
     ["computed specifier", 'const spec = "node:path"; const path = load(spec);', "computed specifier"],
     ["escaped require", 'const alias = load; const path = alias("node:path");', "escapes"],
-    ["mutable require", 'let load = createLoader(import.meta.url); const path = load("node:path");', "mutable binding"],
+    ["reassigned require", 'let load = createLoader(import.meta.url); load = () => ({}); const path = load("node:path");', "reassigned"],
+    ["redeclared require", 'var load = createLoader(import.meta.url); var load = () => ({}); const path = load("node:path");', "redeclared"],
+    ["exported mutable require", 'export let load = createLoader(import.meta.url); const path = load("node:path");', "exported binding"],
+    ["exported mutable alias", 'let load = createLoader(import.meta.url); export { load as exported }; const path = load("node:path");', "escapes"],
+    ["escaped mutable shorthand", 'var load = createLoader(import.meta.url); const alias = { load }; const path = load("node:path");', "escapes"],
+    ["destructured reassignment", 'var load = createLoader(import.meta.url); ({ load } = { load: () => ({}) }); const path = load("node:path");', "reassigned"],
+    ["early var call", 'const path = load("node:path"); var load = createLoader(import.meta.url);', "before initialization"],
+    ["early let call", 'const path = load("node:path"); let load = createLoader(import.meta.url);', "before initialization"],
+    ["early hoisted call", 'const path = read(); var load = createLoader(import.meta.url); function read() { return load("node:path"); }', "before initialization"],
+    ["early shorthand call", 'const callbacks = { read }; const path = callbacks.read(); var load = createLoader(import.meta.url); function read() { return load("node:path"); }', "before initialization"],
+    ["early declarator call", 'var path = read(), load = createLoader(import.meta.url); function read() { return load("node:path"); }', "before initialization"],
+    ["optional resolution", 'var load = createLoader(import.meta.url); load?.resolve("node:path"); const path = load("node:path");', "escapes"],
+    ["shadowed filename", 'const __filename = "/tmp/other.js"; var load = createLoader(__filename); const path = load("node:path");', "current file"],
     ["foreign base", 'const load = createLoader("/tmp/other.js"); const path = load("node:path");', "current file"],
   ])("a package's %s preserves createRequire fallback", (_name, source, reason) => {
     const dir = mkdtempSync(join(tmpdir(), "scriptc-module-loader-"));
@@ -130,6 +142,23 @@ describe(`npm-static pilots${sanitize ? " (sanitized)" : ""}`, () => {
       cpSync(join(pilotRoot, "module-loader-cli.ts"), join(dir, "main.ts"));
       const { coverage } = analyze(join(dir, "main.ts"), { npmStatic: "auto" });
       expect(coverage.npmStatic).toEqual([{ package: "module-loader", status: "fallback", detail: expect.stringContaining(reason!) }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    'import { Console as Logger } from "node:console"; new Logger({ stdout: process.stdout });',
+    'import * as output from "console"; new output.Console(process.stdout);',
+    'import { table } from "node:console"; table([1, 2]);',
+  ])("unsupported console members retain a use-site diagnostic: %s", (source) => {
+    const dir = mkdtempSync(join(tmpdir(), "scriptc-console-import-"));
+    try {
+      writeFileSync(join(dir, "main.ts"), source);
+      const { coverage } = analyze(join(dir, "main.ts"));
+      expect(coverage.preflightFailed).toBe(false);
+      expect(coverage.diagnostics.some((d) => d.code === "SC2020" && d.message.includes("console."))).toBe(true);
+      expect(coverage.diagnostics.some((d) => d.code === "SC1010")).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -14,7 +14,7 @@ create-require.ts:13:13 - error SC2020: 'module.createRequire' is part of the st
      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   14 | console.log(String(req("./config.cjs")));
 
-  hint: the lowered shape is a const binding over createRequire(import.meta.url) (or __filename) whose require calls take STATIC string literals — builtins, project modules (including #imports), relative .json documents, --npm-static packages, and installed npm packages under --dynamic resolve at build time; dynamic specifiers cannot exist in a compiled binary's fixed module graph
+  hint: the lowered shape is a const binding (or a proven stable top-level let/var) over createRequire(import.meta.url) (or __filename) whose require calls take STATIC string literals — builtins, project modules (including #imports), relative .json documents, --npm-static packages, and installed npm packages under --dynamic resolve at build time; dynamic specifiers cannot exist in a compiled binary's fixed module graph
 
 create-require.ts:14:20 - error SC2004: uses of 'req' inherit the blocker on its declaration
 

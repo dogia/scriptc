@@ -8,7 +8,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as ts from "../ts7/adapter.js";
 import type { Lowerer } from "./lowerer.js";
 import { PoisonError, dynUndefinedExpr, ladderFenceExpr, nodeThrowExpr, own } from "./lowerer.js";
-import { canonicalBuiltinModule, isJsSourceFile, isNodeEsmFile, locOf, npmStaticDepSf7, requireSpecOf, resolveImport } from "../program.js";
+import { canonicalBuiltinModule, isCreateRequireBinding7, isJsSourceFile, isNodeEsmFile, locOf, npmStaticDepSf7, requireSpecOf, resolveImport } from "../program.js";
 import { isRelativeSpecifier } from "../workspace-registry.js";
 import { probeNodeRequireRefusal } from "../npm.js";
 import { isNpmStaticPackage } from "../npm-static.js";
@@ -403,7 +403,7 @@ function lowerBuiltinOptionalDefault(
     if (!bi || bi.module !== "module" || bi.member !== "createRequire") return null;
     if (e.arguments.length !== 1) return null;
     const base = stripTypeCasts(e.arguments[0]!);
-    if (ts.isIdentifier(base) && base.text === "__filename") return e;
+    if (ts.isIdentifier(base) && lowerer.isStdlibGlobal(base, "__filename")) return e;
     if (
       ts.isPropertyAccessExpression(base) &&
       !base.questionDotToken &&
@@ -419,15 +419,21 @@ function lowerBuiltinOptionalDefault(
 /** True for `const require = createRequire(import.meta.url)` — the
    * binding is compile-time plumbing (each call through it resolves per
    * site) with no storage and no code; both declaration walks skip by
-   * this test. A reassignable (let/var) binding never matches — callers
-   * gate on constness like the other alias decls. */
+   * this test. Top-level let/var bindings also qualify when preflight's
+   * shared proof rules out writes, escapes, and use before initialization. */
   export function createRequireBindingDecl(lowerer: Lowerer, nameNode: ts.Node, init: ts.Expression | undefined): boolean {
-    if (!ts.isIdentifier(nameNode) || init === undefined) return false;
-    return createRequireBaseCallOf(lowerer, init) !== null;
+    if (!ts.isIdentifier(nameNode) || init === undefined || createRequireBaseCallOf(lowerer, init) === null) return false;
+    // Preserve const loaders acquired through CommonJS member/destructure
+    // aliases, which builtinImportOf also recognizes. Mutable syntax uses
+    // preflight's narrower import provenance and whole-file stability proof.
+    const decl = nameNode.parent;
+    if (ts.isVariableDeclaration(decl) && ts.isVariableDeclarationList(decl.parent) &&
+        (decl.parent.flags & ts.NodeFlags.Const) !== 0) return true;
+    return isCreateRequireBinding7(lowerer.program, nameNode);
   }
 
 /** The declaring source file when `callee` denotes a createRequire-made
-   * require: a CONST binding over createRequire(import.meta.url) (the
+   * require: a stable binding over createRequire(import.meta.url) (the
    * binding's own file anchors resolution) or the inline
    * `createRequire(import.meta.url)(...)` spelling (the call's file).
    * Null off the pattern, so call chains keep trying. */
@@ -440,8 +446,7 @@ function lowerBuiltinOptionalDefault(
     const symbol = lowerer.checker.getSymbolAtLocation(e);
     const decl = symbol ? lowerer.checker.declarationsOf(symbol)[0] : undefined;
     if (!decl || !ts.isVariableDeclaration(decl) || decl.initializer === undefined) return null;
-    if (!ts.isVariableDeclarationList(decl.parent) || (decl.parent.flags & ts.NodeFlags.Const) === 0) return null;
-    return createRequireBaseCallOf(lowerer, decl.initializer) !== null ? decl.getSourceFile() : null;
+    return createRequireBindingDecl(lowerer, decl.name, decl.initializer) ? decl.getSourceFile() : null;
   }
 
 /** The static require of `R("spec")` through a createRequire binding:
@@ -9529,10 +9534,20 @@ export function isConsoleLog(lowerer: Lowerer, call: ts.CallExpression): boolean
     lowerer: Lowerer,
     call: ts.CallExpression,
   ): "log" | "info" | "debug" | "error" | "warn" | null {
+    if (call.questionDotToken) return null;
+    if (ts.isIdentifier(call.expression)) {
+      const imported = builtinImportOf(lowerer, call.expression);
+      return imported?.module === "console" && isConsoleOutputMember(imported.member) ? imported.member : null;
+    }
     if (!ts.isPropertyAccessExpression(call.expression)) return null;
     const access = call.expression;
     if (access.questionDotToken || call.questionDotToken) return null;
     const name = access.name.text;
-    if (name !== "log" && name !== "info" && name !== "debug" && name !== "error" && name !== "warn") return null;
-    return lowerer.isStdlibGlobal(access.expression, "console") ? name : null;
+    if (!isConsoleOutputMember(name)) return null;
+    return lowerer.isStdlibGlobal(access.expression, "console") ||
+      lowerer.builtinNamespaceModuleOf(access.expression) === "console" ? name : null;
+  }
+
+  function isConsoleOutputMember(name: string): name is "log" | "info" | "debug" | "error" | "warn" {
+    return name === "log" || name === "info" || name === "debug" || name === "error" || name === "warn";
   }
