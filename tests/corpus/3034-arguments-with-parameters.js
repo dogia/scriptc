@@ -38,3 +38,43 @@ const mutableUnit = { value: null };
 console.log('unit through value', readThroughValue(mutableUnit));
 mutableUnit.value = 'changed';
 console.log('updated through value', readThroughValue(mutableUnit));
+
+// Saved arguments readers keep the implementation's return ABI even when
+// JavaScript inference sees only a null/undefined field initializer.
+class ArgumentState {
+  nullable = null;
+  missing = undefined;
+  set(value) { this.nullable = value; this.missing = value; }
+}
+const argumentState = new ArgumentState();
+function readNullable(first) {
+  console.log('null args', arguments.length, first);
+  return argumentState.nullable;
+}
+function readMissing(first) {
+  console.log('undefined args', arguments.length, first);
+  return argumentState.missing;
+}
+const savedNullable = readNullable;
+const savedMissing = readMissing;
+console.log('initial returns', savedNullable('a', 'b'), savedMissing());
+argumentState.set('updated');
+console.log('updated returns', savedNullable(), savedMissing('c', 'd'));
+/** @returns {null} */
+function literalNull(first) {
+  console.log('literal args', arguments.length, first);
+  return null;
+}
+class ArgumentReaders {
+  nullReader = literalNull;
+  undefinedReader = function (first) {
+    console.log('literal undefined args', arguments.length, first);
+    return undefined;
+  };
+  mutableReader = readNullable;
+}
+const argumentReaders = new ArgumentReaders();
+const fieldNull = argumentReaders.nullReader;
+const fieldUndefined = argumentReaders.undefinedReader;
+const fieldMutable = argumentReaders.mutableReader;
+console.log('field returns', fieldNull(4, 5), fieldUndefined(6), fieldMutable());
