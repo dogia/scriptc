@@ -158,3 +158,37 @@ console.log(positioned.left);
 positioned.x = 3;
 console.log(positioned.left);
 stringView(positioned);
+
+// Empty object inference leaves these mutable slots open to new properties
+// and replacement objects. Accessors and aliases retain the same object.
+const TRAITS = Symbol("traits");
+class Traits {
+  value = {};
+  #private = {};
+  [TRAITS] = {};
+  static shared = {};
+  static listener = undefined;
+  constructor() { this.implicit = {}; }
+  get current() { return this.value; }
+  set current(value) { this.value = value; }
+  get privateValue() { return this.#private; }
+  set privateValue(value) { this.#private = value; }
+  readSymbol() { return this[TRAITS]; }
+  writeSymbol(value) { this[TRAITS] = value; }
+}
+const traits = new Traits();
+const otherTraits = new Traits();
+traits.value.enabled = true;
+console.log(traits.current.enabled, otherTraits.current.enabled);
+const replacement = { name: "replacement" };
+traits.current = replacement;
+console.log(traits.current === replacement, Object.keys(traits.current).join(","));
+replacement.name = "updated";
+console.log(traits.current.name);
+traits.privateValue = replacement;
+traits.writeSymbol(replacement);
+traits.implicit = replacement;
+console.log(traits.privateValue === replacement, traits.readSymbol() === replacement, traits.implicit === replacement);
+Traits.shared = replacement;
+Traits.listener = "ready";
+console.log(Traits.shared === replacement, Traits.shared.name, Traits.listener);

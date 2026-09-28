@@ -84,7 +84,7 @@ import {
   formatIrType,
   ISLAND_AMBIENT_TYPES,
   isUnitOnlyTsType,
-  jsDefaultParameterType,
+  jsOpenObjectType,
   mapType,
   ShapeRegistry,
   type DeclaredOrderPriorityRef,
@@ -919,7 +919,7 @@ function jsFallbackFunctionType(lowerer: Lowerer, node: ts.Node, t: ts.Type): Ir
     // `enabled = true`) rather than that call-site type, so recover the
     // syntactic optionality from the parameter declaration.
     const decl = lowerer.checker.valueDeclarationOf(p);
-    mapped = jsDefaultParameterType(decl, mapped, lowerer.shapes, lowerer.unions);
+    mapped = jsOpenObjectType(decl, mapped, lowerer.shapes, lowerer.unions);
     const optional =
       decl !== undefined &&
       ts.isParameter(decl) &&
@@ -4999,7 +4999,7 @@ export class Lowerer {
       if (dyn) return dyn;
       this.badType(node, t);
     }
-    return mapped;
+    return jsOpenObjectType(node, mapped, this.shapes, this.unions);
   }
 
   /** Exact-shape enforcement (SC2002). Records are monomorphic structs, so

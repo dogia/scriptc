@@ -8,7 +8,7 @@ import * as ts from "../ts7/adapter.js";
 import type { Lowerer } from "./lowerer.js";
 import { BOOL, DATE_T, DYN, F64, bytesOf, IrClassDef, IrExpr, IrFunction, IrLocal, IrParam, IrStmt, IrType, JSVAL, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, STRING, SrcLoc, UNDEFINED_T, URL_T, VOID, arrayOf, isSupportedMapKey, isSupportedMapValue, isSupportedSetElem, isUnitType, typeEquals } from "../../ir/ir.js";
 import { MAX_GENERIC_INSTANCES, appendImplicitUndefinedReturn, bodyReadsArguments, generatorMeta, genericCallInstance, implicitAnyParamSymbolsOf, implicitCallInstance, implicitMonoFile, omittedArgFor, type GenericFnInfo, type ParamShape } from "./lower-calls.js";
-import { isGenericCallableMemberType, typeKey } from "../type-mapper.js";
+import { isGenericCallableMemberType, jsOpenObjectType, typeKey } from "../type-mapper.js";
 import { cjsClassExprWholeExportOf, isCjsJsFile, isJsSourceFile, isModuleExportsAccess, isNodeTypesPath, locOf } from "../program.js";
 import { PoisonError, dynFallbackType, dynUndefinedExpr, newFnCtx, own } from "./lowerer.js";
 import { lowerArrayConstructor, lowerMapSeedArrayNew, strCharsCall } from "./lower-containers.js";
@@ -1308,7 +1308,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
           ) {
             const type = lowerer.irTypeOf(member.name);
             if (type.kind === "void") lowerer.badType(member.name, lowerer.typeOf(member.name));
-            if (type.kind === "dyn") {
+            if (type.kind === "dyn" && !isJsSourceFile(member.getSourceFile())) {
               lowerer.unsupported("SC1090", member.name, "'unknown'-typed static fields");
             }
             staticFields.push({
@@ -1508,8 +1508,9 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
             }
             const declared = lowerer.typeOf(member);
             const inferred = member.type ? declared : lowerer.checker.getBaseTypeOfLiteralType(lowerer.typeOf(member.initializer));
-            const type = lowerer.mapTypeOf(inferred);
-            if (!type || type.kind === "void" || type.kind === "dyn") lowerer.badType(member, inferred);
+            const mapped = lowerer.mapTypeOf(inferred);
+            const type = mapped ? jsOpenObjectType(member, mapped, lowerer.shapes, lowerer.unions) : null;
+            if (!type || type.kind === "void" || (type.kind === "dyn" && !isJsSourceFile(member.getSourceFile()))) lowerer.badType(member, inferred);
             const previous = fields.get(key.fieldName);
             if (previous) {
               if (!symbolFields.has(key.identity)) {
@@ -2182,6 +2183,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               // TS-annotated `unknown` fields keep their fence (KEEP NARROW
               // applies where an annotation could say better).
               let type = t ? (lowerer.mapTypeOf(t) ?? dynFallbackType(lowerer, assign, t)) : null;
+              if (type) type = jsOpenObjectType(assign, type, lowerer.shapes, lowerer.unions);
               if (type?.kind === "dyn") {
                 type = inferredEmptyCollectionFieldType(lowerer, decl, name, rhs) ?? type;
               }
@@ -2252,7 +2254,8 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
                 : rhs
                   ? lowerer.checker.getBaseTypeOfLiteralType(lowerer.checker.getTypeAtLocation(rhs))
                   : undefined;
-              const type = t ? (lowerer.mapTypeOf(t) ?? dynFallbackType(lowerer, lhs, t)) : null;
+              let type = t ? (lowerer.mapTypeOf(t) ?? dynFallbackType(lowerer, lhs, t)) : null;
+              if (type) type = jsOpenObjectType(lhs, type, lowerer.shapes, lowerer.unions);
               if (!type || type.kind === "void") lowerer.badType(lhs, t ?? lowerer.typeOf(lhs));
               fields.set(key.fieldName, type);
               symbolFields.set(key.identity, key.fieldName);

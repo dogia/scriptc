@@ -12,15 +12,15 @@ import { accessorSlotProp, recordTextCodecClass } from "../ir/ir.js";
 // import path.
 export { typeKey };
 
-/** Empty JS default objects describe no fixed layout. Keep the same checked
- * value ABI for declarations, instantiated signatures and function values. */
-export function jsDefaultParameterType(
+/** Empty JS object inference describes no fixed layout. Keep these values
+ * in checked storage across fields, parameters and function signatures. */
+export function jsOpenObjectType(
   decl: ts.Node | undefined,
   type: IrType,
   shapes: ShapeRegistry,
   unions: UnionRegistry,
 ): IrType {
-  if (!decl || !ts.isParameter(decl) || !decl.initializer || !isJsSourceFile(decl.getSourceFile())) return type;
+  if (!decl || !isJsSourceFile(decl.getSourceFile())) return type;
   const arms = type.kind === "union" ? unions.get(type.unionId)?.arms : [type];
   const present = arms?.filter((arm) => arm.kind !== "undefinedT");
   if (present?.length !== 1 || present[0]!.kind !== "record") return type;
@@ -2702,7 +2702,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
         ts.isParameter(decl) &&
         (decl.questionToken !== undefined || decl.initializer !== undefined);
       let pt = mapType(checker.getTypeOfSymbol(p), ctx);
-      if (pt) pt = jsDefaultParameterType(decl, pt, ctx.shapes, ctx.unions);
+      if (pt) pt = jsOpenObjectType(decl, pt, ctx.shapes, ctx.unions);
       // Belt and braces for non-strict type worlds: an optional param's
       // ABI slot is always the undefined-armed union (strictNullChecks
       // already spells it that way; arm it here if the world didn't).
