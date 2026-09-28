@@ -549,7 +549,11 @@ static ScrDyn *scr_dyn_invoke_impl(
         return scr_dyn_new_num(-1);
       }
       for (size_t i = 0; i < len; i++) {
-        if (scr_dyn_strict_eq(recv->v.arr.items[i], needle)) {
+        const ScrDyn *item = recv->v.arr.items[i];
+        bool nan_match = dyn_name_is(method, "includes") &&
+          item->kind == SCR_DYN_NUM && needle->kind == SCR_DYN_NUM &&
+          item->v.num != item->v.num && needle->v.num != needle->v.num;
+        if (nan_match || scr_dyn_strict_eq(item, needle)) {
           return dyn_name_is(method, "includes") ? scr_dyn_new_bool(true) : scr_dyn_new_num((double)i);
         }
       }

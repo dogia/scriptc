@@ -24,6 +24,9 @@ beforeAll(async () => {
     // scr_str_split returns a real string[]: the array module and its
     // own dependencies join the link (the array.test.ts set).
     join(testDir, "../src/scr_array.c"),
+    // Checked-value collection equality shares the native JSON value runtime.
+    join(testDir, "../src/scr_json.c"),
+    join(testDir, "../src/scr_closure.c"),
     join(testDir, "../src/scr_bytes.c"),
     join(testDir, "../src/scr_error.c"),
     join(testDir, "../src/scr_exception.c"),

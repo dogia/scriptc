@@ -8590,6 +8590,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/js-static-registries.cjs": {
+   "order": [
+    "<repo>/tests/corpus/js-static-registries.cjs"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/static-field-updates/main.ts": {
    "order": [
     "<repo>/tests/corpus/static-field-updates/counter.ts",
@@ -8615,6 +8621,12 @@
     "<repo>/tests/corpus/text-codec-values/shared.ts",
     "<repo>/tests/corpus/text-codec-values/user.ts",
     "<repo>/tests/corpus/text-codec-values/main.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/unknown-collections.ts": {
+   "order": [
+    "<repo>/tests/corpus/unknown-collections.ts"
    ],
    "diags": []
   },

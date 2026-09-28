@@ -567,6 +567,19 @@ export function emitMapLikeIntrinsic(host: LlvmEmitterContext,
         // instance. When V is itself a union, the stored box IS the
         // result (`undefined` sorts last in canonical arm order).
         const k = host.emitExpr(e.args[0]!);
+        if (value.kind === "dyn") {
+          host.declare(`declare ptr @scr_map_get_${kAcc}_ref(ptr, ${kTy})`);
+          host.declare(`declare ptr @scr_dyn_undefined()`);
+          const raw = B.tmp();
+          const absent = B.tmp();
+          const isnull = B.tmp();
+          const result = B.tmp();
+          B.line(`${raw} = call ptr @scr_map_get_${kAcc}_ref(ptr ${r.name}, ${kTy} ${k.name})`);
+          B.line(`${absent} = call ptr @scr_dyn_undefined()`);
+          B.line(`${isnull} = icmp eq ptr ${raw}, null`);
+          B.line(`${result} = select i1 ${isnull}, ptr ${absent}, ptr ${raw}`);
+          return host.own({ name: result, type: e.type });
+        }
         if (e.type.kind !== "union") throw new InternalCompilerError("llvm emitter bug: map get result is not a union");
         const def = host.unionsById.get(e.type.unionId);
         const undefTag = undefinedArmTag(e.type, host.unionsById);

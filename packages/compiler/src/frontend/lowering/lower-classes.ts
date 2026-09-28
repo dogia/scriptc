@@ -5341,7 +5341,9 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
           if (!entriesLit) return { kind: "mapNew", type: mapped, loc };
           const seed = entriesLit.map((pair) => ({
             key: lowerer.lowerCollectionKey(pair.elements[0]!, mapped.key),
-            value: lowerer.lowerExprExpecting(pair.elements[1]!, mapped.value),
+            value: mapped.value.kind === "dyn"
+              ? lowerer.lowerCollectionKey(pair.elements[1]!, mapped.value)
+              : lowerer.lowerExprExpecting(pair.elements[1]!, mapped.value),
           }));
           return { kind: "mapNew", seed, type: mapped, loc };
         }

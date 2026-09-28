@@ -666,6 +666,11 @@ function emitMapLikeIntrinsic(
       // in canonical arm order, so V's tags coincide with the result
       // union's and no re-tag exists (validated).
       const k = emitter.emitExpr(e.args[0]!);
+      if (value.kind === "dyn") {
+        const t = emitter.newTemp(e.type, `(ScrDyn *)scr_map_get_${kAcc}_ref(${r.name}, ${k.name})`);
+        emitter.line(`if (!${t.name}) ${t.name} = scr_dyn_undefined();`);
+        return t;
+      }
       if (e.type.kind !== "union") throw new InternalCompilerError("emitter bug: map get result is not a union");
       const def = emitter.unionsById.get(e.type.unionId);
       const undefTag = undefinedArmTag(e.type, emitter.unionsById);

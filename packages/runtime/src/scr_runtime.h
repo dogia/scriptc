@@ -1244,8 +1244,10 @@ ScrArr *scr_regex_match_all_into(ScrStr *s, ScrRegex *re, ScrArr *indices);
 /* REF keys hash/compare pointer identity and carry their own RC adapters.
  * UNION_REF owns the union wrapper but hashes/compares its reference payload;
  * the frontend permits only unions of reference-identity arms for this kind.
- * Both key kinds serve Maps and Sets. */
-typedef enum { SCR_MAP_KEY_F64, SCR_MAP_KEY_STR, SCR_MAP_KEY_REF, SCR_MAP_KEY_UNION_REF } ScrMapKeyKind;
+ * DYN owns a checked-value box and compares its JavaScript value using
+ * SameValueZero, including reference identity for object payloads.
+ * These key kinds serve both Maps and Sets. */
+typedef enum { SCR_MAP_KEY_F64, SCR_MAP_KEY_STR, SCR_MAP_KEY_REF, SCR_MAP_KEY_UNION_REF, SCR_MAP_KEY_DYN } ScrMapKeyKind;
 typedef enum { SCR_MAP_VAL_F64, SCR_MAP_VAL_BOOL, SCR_MAP_VAL_REF } ScrMapValKind;
 
 typedef struct {
@@ -1263,7 +1265,7 @@ typedef struct ScrMap {
   void *(*val_retain)(void *);
   void (*val_release)(void *);
   ScrTraceFn val_trace;
-  /* SCR_MAP_KEY_REF and SCR_MAP_KEY_UNION_REF only; NULL otherwise. */
+  /* SCR_MAP_KEY_REF, SCR_MAP_KEY_UNION_REF and SCR_MAP_KEY_DYN only. */
   void *(*key_retain)(void *);
   void (*key_release)(void *);
   ScrTraceFn key_trace;

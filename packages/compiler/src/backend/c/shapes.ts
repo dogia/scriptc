@@ -763,6 +763,7 @@ function emitRecordCloneC(
       // — the `_v` adapters and scr_promise_trace_v ride the same REF
       // machinery as record/object/union elements.
       elem.kind === "promise" ||
+      elem.kind === "dyn" || // native collection seeds/drains: scr_dyn_* adapters
       elem.kind === "jsval" || // island handles: scr_jsval_* adapters, no trace
       elem.kind === "regex" || // RegExp values: scr_regex_* adapters, no trace (no refs inside)
       elem.kind === "child" || // spawned child handles: scr_child_* adapters, no trace

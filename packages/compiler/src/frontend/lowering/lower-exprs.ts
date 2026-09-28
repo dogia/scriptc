@@ -3908,6 +3908,13 @@ function lowerPromiseThenPresence(
       // to DYN wholesale now (mapType's dyn-element array rule), so the
       // literal IS the dyn array.
       if (isJsSourceFile(expr.getSourceFile()) || mapped?.kind === "dyn") {
+        if (expr.elements.some(ts.isSpreadElement)) {
+          // Native collection drains return vectors of retained dyn
+          // elements. Reuse the ordinary spread builder, then expose the
+          // resulting array through the established unknown[] representation.
+          const vector = lowerArrayLiteral(lowerer, expr, arrayOf(DYN) as IrType & { kind: "array" });
+          return lowerer.coerceInto(expr, vector, DYN);
+        }
         const elems = expr.elements.map((el): IrExpr => {
           if (ts.isSpreadElement(el)) {
             lowerer.unsupported("SC1090", el, "spread elements in a dynamic (unknown[]) array literal");
@@ -6600,6 +6607,23 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
         // answers false). dyn vs dyn keeps the fence below.
         const dynSide = left.type.kind === "dyn" ? left : right;
         const scalarSide = dynSide === left ? right : left;
+        const reference = scalarSide.type;
+        if ((isDynTypedRefType(reference) || reference.kind === "record" || reference.kind === "array" ||
+             reference.kind === "bytes" || reference.kind === "func" || DYN_HANDLE_KINDS.has(reference.kind)) &&
+            lowerer.dynConvertible(reference)) {
+          const boxed: IrExpr = {
+            kind: "dynFrom", value: scalarSide, type: DYN, loc: scalarSide.loc,
+            ...(reference.kind === "record" || reference.kind === "array" || reference.kind === "bytes" ? { liveRef: true as const } : {}),
+          };
+          return {
+            kind: "dynScalarEq",
+            left: scalarSide === left ? boxed : left,
+            right: scalarSide === right ? boxed : right,
+            ...(negated ? { negated: true as const } : {}),
+            type: BOOL,
+            loc,
+          };
+        }
         if (
           dynSide.type.kind === "dyn" &&
           (scalarSide.type.kind === "f64" || scalarSide.type.kind === "string" || scalarSide.type.kind === "bool" ||

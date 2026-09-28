@@ -212,6 +212,7 @@ export function arrNewCall(host: ShapeHost, elem: IrType, capText: string): stri
     elem.kind === "child" || // spawned child handles: scr_child_* adapters, no trace
     elem.kind === "netServer" || // server handles ([...set] drains): REF, no trace
     elem.kind === "jsval" || // island handles (`any[]` under --dynamic): REF, no trace
+    elem.kind === "dyn" || // native collection seeds/drains: REF, no trace
     elem.kind === "regex" || // RegExp values: scr_regex_* adapters, no trace (no refs inside)
     (elem.kind === "array" && traceAdapter(host, elem) !== null);
   if (!useRef) {
@@ -294,12 +295,13 @@ export function llFieldType(t: IrType): "double" | "i8" | "ptr" {
 export function mapKeyAccess(key: IrType): "f64" | "str" | "ref" {
   if (key.kind === "f64") return "f64";
   if (key.kind === "string") return "str";
-  if (isIdentityCollectionKey(key) || key.kind === "union") return "ref";
+  if (isIdentityCollectionKey(key) || key.kind === "union" || key.kind === "dyn") return "ref";
   throw new LlvmUnsupportedError(`mapKey:${key.kind}`);
 }
 
 /** The ScrMapKeyKind / ScrMapValKind constants for scr_map_new. */
 export function mapKeyKindNum(key: IrType): number {
+  if (key.kind === "dyn") return 4;
   const acc = mapKeyAccess(key);
   return key.kind === "union" ? 3 : acc === "f64" ? 0 : acc === "str" ? 1 : 2;
 }

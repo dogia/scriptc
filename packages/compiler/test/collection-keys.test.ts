@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
-import { BOOL, F64, STRING, UNDEFINED_T, VOID, arrayOf, isIdentityCollectionKey, isSupportedMapKey, isSupportedSetElem, mapOf, setOf, type IrExpr, type IrModule, type IrType } from "../src/ir/ir.js";
+import { analyze } from "../src/index.js";
+import { BOOL, DYN, F64, STRING, UNDEFINED_T, VOID, arrayOf, isIdentityCollectionKey, isSupportedMapKey, isSupportedSetElem, mapOf, setOf, type IrExpr, type IrModule, type IrType } from "../src/ir/ir.js";
 import { validateModule } from "../src/ir/validate.js";
 import { IR_VERSION } from "../src/ir/serialize.js";
 import { mapKeyAccess, mapKeyKindC } from "../src/backend/c/types.js";
@@ -8,6 +12,34 @@ import { mapKeyAccess as llvmAccess, mapKeyKindNum } from "../src/backend/llvm/s
 const reference: IrType = { kind: "record", shapeId: "key" };
 const references: IrType[] = [reference, { kind: "object", className: "Key" }, arrayOf(F64), { kind: "symbol" }, { kind: "netServer" }];
 const union: IrType = { kind: "union", unionId: "keys" };
+
+test("checked collection slots refuse snapshot and adapting reference conversions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "scriptc-collection-conversion-"));
+  try {
+    const entry = join(dir, "main.ts");
+    writeFileSync(entry, `
+      const promise = Promise.resolve(1);
+      const error = new Error("key");
+      class CustomError extends Error {}
+      const custom = new CustomError("key");
+      const map = new Map<unknown, unknown>();
+      map.set(promise, 1);
+      map.set(1, promise);
+      map.set(error, 1);
+      map.set(custom, 1);
+      const set = new Set<unknown>([promise]);
+      set.add(error);
+    `);
+    const { coverage } = analyze(entry, { dynamic: false });
+    expect(coverage.preflightFailed).toBe(false);
+    expect(coverage.diagnostics).toHaveLength(6);
+    for (const diagnostic of coverage.diagnostics) {
+      expect(diagnostic.message).toContain("collection slot conversion requiring an Error snapshot or promise adapter");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test.each(references)("identity key %j uses the reference ABI in both emitters", (type) => {
   expect(isIdentityCollectionKey(type)).toBe(true);
@@ -35,7 +67,7 @@ test("unresolved, empty and mixed-value unions cannot enter the identity ABI", (
     expect(isSupportedMapKey(union, [reference, scalar])).toBe(false);
     expect(isSupportedSetElem(union, [reference, scalar])).toBe(false);
   }
-  for (const unsupported of [BOOL, { kind: "date" } as IrType, { kind: "dyn" } as IrType, mapOf(STRING, F64), setOf(STRING)]) {
+  for (const unsupported of [BOOL, { kind: "date" } as IrType, mapOf(STRING, F64), setOf(STRING)]) {
     expect(isSupportedMapKey(unsupported)).toBe(false);
   }
 });
@@ -43,6 +75,14 @@ test("unresolved, empty and mixed-value unions cannot enter the identity ABI", (
 test("primitive key ABI constants remain stable", () => {
   expect([mapKeyKindC(F64), mapKeyKindNum(F64), mapKeyAccess(F64)]).toEqual(["SCR_MAP_KEY_F64", 0, "f64"]);
   expect([mapKeyKindC(STRING), mapKeyKindNum(STRING), mapKeyAccess(STRING)]).toEqual(["SCR_MAP_KEY_STR", 1, "str"]);
+});
+
+test("unknown keys select value equality separately from reference identity", () => {
+  expect(isIdentityCollectionKey(DYN)).toBe(false);
+  expect(isSupportedMapKey(DYN)).toBe(true);
+  expect(isSupportedSetElem(DYN)).toBe(true);
+  expect([mapKeyKindC(DYN), mapKeyKindNum(DYN), mapKeyAccess(DYN), llvmAccess(DYN)])
+    .toEqual(["SCR_MAP_KEY_DYN", 4, "ref", "ref"]);
 });
 
 test.each(["map", "set"] as const)("validator checks the arms behind a %s key union", (kind) => {

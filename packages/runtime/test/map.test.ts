@@ -27,6 +27,8 @@ beforeAll(async () => {
     // which pull in the closure/array/box machinery
     join(testDir, "../src/scr_union.c"),
     join(testDir, "../src/scr_array.c"),
+    // Checked-value collection equality shares the native JSON value runtime.
+    join(testDir, "../src/scr_json.c"),
     join(testDir, "../src/scr_closure.c"),
     join(testDir, "../src/scr_object.c"),
     join(testDir, "../src/scr_bytes.c"),

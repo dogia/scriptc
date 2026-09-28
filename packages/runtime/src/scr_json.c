@@ -3076,10 +3076,9 @@ bool scr_dyn_strict_eq(const ScrDyn *a, const ScrDyn *b) {
      * — a dyn copy is a different object, which is Node's answer too. */
     return a == b || scr_dyn_jsval_ops()->strict_eq(a->v.jsval.cell, b->v.jsval.cell);
   case SCR_DYN_TYPED_REF:
-    return a->v.typed_ref.ptr == b->v.typed_ref.ptr &&
-           a->v.typed_ref.type_key_len == b->v.typed_ref.type_key_len &&
-           memcmp(a->v.typed_ref.type_key, b->v.typed_ref.type_key,
-                  a->v.typed_ref.type_key_len) == 0;
+    /* A base-class view and a derived view still name the same object.
+     * The compiler's type key governs checked extraction, not identity. */
+    return a->v.typed_ref.ptr == b->v.typed_ref.ptr;
   default: return a == b;
   }
 }

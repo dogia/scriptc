@@ -32,6 +32,9 @@ test("scr_string_to_number matches Node Number(s) on committed oracle cases", as
     // scr_string.c's own link closure (the string.test.ts set):
     // scr_str_split pulls the array module and its dependencies.
     join(testDir, "../src/scr_array.c"),
+    // Checked-value collection equality shares the native JSON value runtime.
+    join(testDir, "../src/scr_json.c"),
+    join(testDir, "../src/scr_closure.c"),
     join(testDir, "../src/scr_bytes.c"),
     join(testDir, "../src/scr_error.c"),
     join(testDir, "../src/scr_exception.c"),

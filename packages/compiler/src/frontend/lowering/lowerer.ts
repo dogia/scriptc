@@ -7879,6 +7879,28 @@ export class Lowerer {
    * its referent. Apply the ordinary checked narrowing to absent arms from
    * runtime-optional reads; only present reference arms participate here. */
   lowerCollectionKey(node: ts.Expression, expected: IrType): IrExpr {
+    if (expected.kind === "dyn") {
+      const value = this.lowerExprExpecting(node, expected);
+      // An adapting promise changes identity, while the Error boundary
+      // snapshots mutable fields. Neither is a live collection reference.
+      const copiesReference = (type: IrType): boolean =>
+        (type.kind === "promise" && type.inner.kind !== "dyn") ||
+        (type.kind === "object" && (RUNTIME_ERROR_CLASSES.has(type.className) || this.isSubclassOf(type.className, "%Error"))) ||
+        (type.kind === "union" && (this.unions.get(type.unionId)?.arms.some(copiesReference) ?? false));
+      if (value.kind === "dynFrom" && copiesReference(value.value.type)) {
+        this.noLowering("collection slot conversion requiring an Error snapshot or promise adapter", node,
+          "use a collection with the original reference type; checked collection slots require identity-preserving conversions");
+      }
+      // Collections expose the stored reference again. Preserve records,
+      // arrays and byte views rather than taking the ordinary dyn snapshot.
+      const hasLiveReference = (type: IrType): boolean =>
+        type.kind === "record" || type.kind === "array" || type.kind === "bytes" ||
+        (type.kind === "union" && (this.unions.get(type.unionId)?.arms.some(hasLiveReference) ?? false));
+      if (value.kind === "dynFrom" && hasLiveReference(value.value.type)) {
+        return { ...value, liveRef: true };
+      }
+      return value;
+    }
     let literal = node;
     while (ts.isParenthesizedExpression(literal)) literal = literal.expression;
     // Fresh literals have no previous outer identity to preserve. Build them

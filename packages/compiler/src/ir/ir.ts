@@ -535,9 +535,12 @@ export function isUnitType(t: IrType): boolean {
  * backends. Array-producing lowerings can learn their result element from
  * a callback rather than through mapType's ordinary T[] gate, so they must
  * share this predicate instead of reconstructing an array around an
- * otherwise-valid standalone type (Map, Set, dyn, opaque handles, ...). */
+ * otherwise-valid standalone type (Map, Set, opaque handles, ...). */
 export function isSupportedArrayElem(t: IrType): boolean {
   switch (t.kind) {
+    // Native collection seeds and drains retain checked values in a
+    // temporary vector. User-facing unknown[] still maps to a dyn array.
+    case "dyn":
     case "f64":
     case "bigint":
     case "bool":
@@ -590,7 +593,7 @@ export function isIdentityCollectionKey(t: IrType): boolean {
  * identity. A union of identity arms hashes its payload, never its temporary
  * wrapper. Mixed scalar/reference unions remain outside this contract. */
 export function isSupportedMapKey(t: IrType, unionArms?: IrType[]): boolean {
-  return t.kind === "f64" || t.kind === "string" || isIdentityCollectionKey(t) ||
+  return t.kind === "f64" || t.kind === "string" || t.kind === "dyn" || isIdentityCollectionKey(t) ||
     (t.kind === "union" && unionArms !== undefined && unionArms.length > 0 && unionArms.every(isIdentityCollectionKey));
 }
 
@@ -599,13 +602,15 @@ export function isSupportedSetElem(t: IrType, unionArms?: IrType[]): boolean {
   return isSupportedMapKey(t, unionArms);
 }
 
-/** The Map VALUE fence: scalars plus every refcounted kind EXCEPT
- * func/promise/dyn/jsval (and map itself — no maps of maps).
+/** The Map VALUE fence: scalars, supported native references and checked
+ * values. Functions require checked-value boxing; nested maps and jsval
+ * have no native Map slot.
  * Record/object/union values can point back at the map holding them, which
  * is exactly why ref-valued maps are cycle-capable (see the backend's
  * cycle analysis and docs/memory.md). Shared frontend/validator. */
 export function isSupportedMapValue(t: IrType): boolean {
   switch (t.kind) {
+    case "dyn":
     case "f64":
     case "bigint":
     case "string":

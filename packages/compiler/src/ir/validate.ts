@@ -2966,6 +2966,10 @@ function validateFunction(
           }
           checkExpr(e.args[0]!);
           expectType(e.args[0]!, key, "mapIntrinsic get key");
+          if (value.kind === "dyn") {
+            expectType(e, DYN, "mapIntrinsic get result");
+            break;
+          }
           const def = e.type.kind === "union" ? unions.get(e.type.unionId) : undefined;
           const rest = def ? def.arms.filter((a): boolean => a.kind !== "undefinedT") : [];
           // When V is itself a union its own undefined arm (if any) folds

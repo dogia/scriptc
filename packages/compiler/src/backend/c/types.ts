@@ -268,7 +268,7 @@ export function elemKindC(elem: IrType): string {
       elem.kind !== "string" && elem.kind !== "array" && elem.kind !== "bytes" &&
       elem.kind !== "record" && elem.kind !== "object" && elem.kind !== "union" &&
       elem.kind !== "jsval" && elem.kind !== "child" && elem.kind !== "netServer" &&
-      elem.kind !== "symbol" && elem.kind !== "bigint" && elem.kind !== "classval" && elem.kind !== "func") {
+      elem.kind !== "symbol" && elem.kind !== "bigint" && elem.kind !== "classval" && elem.kind !== "func" && elem.kind !== "dyn") {
     throw new InternalCompilerError(`emitter bug: array of ${elem.kind} (frontend rejects these)`);
   }
   switch (elem.kind) {
@@ -289,6 +289,7 @@ export function elemKindC(elem: IrType): string {
     // release adapters) — `any[]` under --dynamic is a native array of
     // handles, one element per island value.
     case "jsval":
+    case "dyn":
     // Spawned child handles (ChildProcess[] — the running-apps list):
     // ordinary refcounted pointers, no trace (they drop their closures at
     // reap, so never part of a cycle).
@@ -409,12 +410,13 @@ export function mapKeyAccess(key: IrType): "f64" | "str" | "ref" {
   if (key.kind === "string") return "str";
   // Identity references share a pointer ABI; union keys select a separate
   // hash/equality kind below so their wrapper is not treated as the key.
-  if (isIdentityCollectionKey(key) || key.kind === "union") return "ref";
+  if (isIdentityCollectionKey(key) || key.kind === "union" || key.kind === "dyn") return "ref";
   throw new InternalCompilerError(`emitter bug: map key of ${key.kind} (frontend rejects these)`);
 }
 
 /** The runtime's key-kind/value-kind tags for scr_map_new. */
 export function mapKeyKindC(key: IrType): string {
+  if (key.kind === "dyn") return "SCR_MAP_KEY_DYN";
   const acc = mapKeyAccess(key);
   return key.kind === "union" ? "SCR_MAP_KEY_UNION_REF" : acc === "str" ? "SCR_MAP_KEY_STR" : acc === "ref" ? "SCR_MAP_KEY_REF" : "SCR_MAP_KEY_F64";
 }

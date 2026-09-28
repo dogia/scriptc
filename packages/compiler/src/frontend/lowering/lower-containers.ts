@@ -3307,13 +3307,15 @@ function buildArrayFromArrayFn(lowerer: Lowerer, name: string, elem: IrType,
       // result union. `undefined` sorts LAST among all possible arm
       // typeKeys, so when V is itself a union its arms keep their tags in
       // the result union — the backend leans on that (docs/ir.md).
-      const type = lowerer.irTypeOf(call);
-      if (type.kind !== "union") lowerer.badType(call, lowerer.typeOf(call));
+      const type = receiverIr.value.kind === "dyn" ? DYN : lowerer.irTypeOf(call);
+      if (type.kind !== "union" && type.kind !== "dyn") lowerer.badType(call, lowerer.typeOf(call));
       return { kind: "mapIntrinsic", method: "get", receiver, args: [k], type, loc };
     }
     if (name === "set") {
       const k = lowerer.lowerCollectionKey(call.arguments[0]!, receiverIr.key);
-      const v = lowerer.lowerExprExpecting(call.arguments[1]!, receiverIr.value);
+      const v = receiverIr.value.kind === "dyn"
+        ? lowerer.lowerCollectionKey(call.arguments[1]!, receiverIr.value)
+        : lowerer.lowerExprExpecting(call.arguments[1]!, receiverIr.value);
       return { kind: "mapIntrinsic", method: "set", receiver, args: [k, v], type: VOID, loc };
     }
     if (name === "has" || name === "delete") {

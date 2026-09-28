@@ -1244,6 +1244,9 @@ ScrArr *scr_arr_flat_copy(const ScrArr *a, ScrArr *out, bool flatten) {
 static bool scr_arr_ref_eq(const ScrArr *a, uint64_t slot, void *v) {
   void *p = scr_slot_to_ptr(slot);
   if (a->elem == SCR_ELEM_STR) return scr_str_eq((ScrStr *)p, (ScrStr *)v);
+  if (a->elem == SCR_ELEM_REF && a->elem_retain == scr_dyn_retain_v) {
+    return scr_dyn_strict_eq((ScrDyn *)p, (ScrDyn *)v);
+  }
   return p == v;
 }
 
@@ -1296,6 +1299,22 @@ bool scr_arr_includes_bool(ScrArr *a, bool v) {
 }
 
 bool scr_arr_includes_ref(ScrArr *a, void *v) {
+  if (a->elem == SCR_ELEM_REF && a->elem_retain == scr_dyn_retain_v) {
+    const ScrDyn *needle = (const ScrDyn *)v;
+    if (needle->kind == SCR_DYN_NUM && needle->v.num != needle->v.num) {
+      for (size_t i = 0; i < a->cap && i < a->len; i++) {
+        if (a->present[i] != SCR_ARR_VALUE) continue;
+        const ScrDyn *d = (const ScrDyn *)scr_slot_to_ptr(a->data[i]);
+        if (d->kind == SCR_DYN_NUM && d->v.num != d->v.num) return true;
+      }
+      for (size_t i = 0; i < a->sparse_len; i++) {
+        if (a->sparse[i].state != SCR_ARR_VALUE) continue;
+        const ScrDyn *d = (const ScrDyn *)scr_slot_to_ptr(a->sparse[i].slot);
+        if (d->kind == SCR_DYN_NUM && d->v.num != d->v.num) return true;
+      }
+      return false;
+    }
+  }
   return scr_arr_index_of_ref(a, v) >= 0;
 }
 

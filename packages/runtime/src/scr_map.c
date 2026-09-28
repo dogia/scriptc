@@ -87,8 +87,42 @@ static uint64_t scr_map_identity(const ScrMap *m, uint64_t key) {
   return key;
 }
 
+/* Checked-dynamic keys use the JavaScript value, not the temporary box.
+ * Typed capsules preserve a native object's identity across repeated
+ * crossings; numbers retain SameValueZero and strings compare by content. */
+static uint64_t scr_map_hash_dyn(const ScrDyn *d) {
+  uint64_t value;
+  switch (d->kind) {
+  case SCR_DYN_UNDEF:
+  case SCR_DYN_NULL: value = 0; break;
+  case SCR_DYN_BOOL: value = d->v.b; break;
+  case SCR_DYN_NUM: value = scr_map_f64_bits(d->v.num); break;
+  case SCR_DYN_STR: return scr_map_hash_str(d->v.str);
+  case SCR_DYN_FUNC: value = scr_map_slot_from_ptr(d->v.fn.clo); break;
+  case SCR_DYN_HANDLE: value = scr_map_slot_from_ptr(d->v.handle.ptr); break;
+  case SCR_DYN_PROMISE: value = scr_map_slot_from_ptr(d->v.promise); break;
+  case SCR_DYN_TYPED_REF: value = scr_map_slot_from_ptr(d->v.typed_ref.ptr); break;
+  /* The optional island bridge exposes equality but no hash. A shared
+   * bucket still preserves correctness without adding an engine dependency. */
+  case SCR_DYN_JSVAL: value = 0; break;
+  default: value = scr_map_slot_from_ptr((void *)d); break;
+  }
+  return scr_map_fnv1a((const unsigned char *)&value, sizeof value) ^ (uint64_t)d->kind;
+}
+
+static bool scr_map_dyn_eq(const ScrDyn *a, const ScrDyn *b) {
+  if (a->kind == SCR_DYN_NUM && b->kind == SCR_DYN_NUM) {
+    return scr_map_f64_bits(a->v.num) == scr_map_f64_bits(b->v.num);
+  }
+  if (a->kind == SCR_DYN_TYPED_REF && b->kind == SCR_DYN_TYPED_REF) {
+    return a->v.typed_ref.ptr == b->v.typed_ref.ptr;
+  }
+  return scr_dyn_strict_eq(a, b);
+}
+
 static uint64_t scr_map_hash_key(const ScrMap *m, uint64_t key) {
   if (m->key_kind == SCR_MAP_KEY_STR) return scr_map_hash_str((ScrStr *)scr_map_slot_to_ptr(key));
+  if (m->key_kind == SCR_MAP_KEY_DYN) return scr_map_hash_dyn((ScrDyn *)scr_map_slot_to_ptr(key));
   uint64_t identity = scr_map_identity(m, key);
   return scr_map_fnv1a((const unsigned char *)&identity, sizeof identity);
 }
@@ -96,6 +130,9 @@ static uint64_t scr_map_hash_key(const ScrMap *m, uint64_t key) {
 /* Stored keys are pre-normalized, so bit equality IS SameValueZero for f64
  * keys (probe keys normalize through the same function). */
 static bool scr_map_key_eq(const ScrMap *m, uint64_t stored, uint64_t probe) {
+  if (m->key_kind == SCR_MAP_KEY_DYN) {
+    return scr_map_dyn_eq((ScrDyn *)scr_map_slot_to_ptr(stored), (ScrDyn *)scr_map_slot_to_ptr(probe));
+  }
   /* f64 keys are pre-normalized and REF keys are pointers, so bit equality
    * IS the honest compare for both (SameValueZero; reference identity). */
   if (m->key_kind != SCR_MAP_KEY_STR) return scr_map_identity(m, stored) == scr_map_identity(m, probe);
@@ -180,7 +217,7 @@ static void scr_map_reserve_append(ScrMap *m) {
 static void scr_map_release_key(ScrMap *m, uint64_t key) {
   if (m->key_kind == SCR_MAP_KEY_STR) {
     scr_str_release((ScrStr *)scr_map_slot_to_ptr(key));
-  } else if (m->key_kind == SCR_MAP_KEY_REF || m->key_kind == SCR_MAP_KEY_UNION_REF) {
+  } else if (m->key_kind == SCR_MAP_KEY_REF || m->key_kind == SCR_MAP_KEY_UNION_REF || m->key_kind == SCR_MAP_KEY_DYN) {
     m->key_release(scr_map_slot_to_ptr(key));
   }
 }
@@ -373,6 +410,15 @@ static void scr_map_set(ScrMap *m, uint64_t hash, uint64_t key, uint64_t val) {
   m->nlive++;
   if (m->key_kind == SCR_MAP_KEY_STR) {
     scr_str_retain((ScrStr *)scr_map_slot_to_ptr(key)); /* key is borrowed */
+  } else if (m->key_kind == SCR_MAP_KEY_DYN) {
+    const ScrDyn *d = (ScrDyn *)scr_map_slot_to_ptr(key);
+    if (d->kind == SCR_DYN_NUM && d->v.num == 0) {
+      /* Iteration returns +0 even when the inserted key was -0. Never
+       * mutate the caller's shared box while normalizing a stored key. */
+      m->entries[idx].key = scr_map_slot_from_ptr(scr_dyn_new_num(0));
+    } else {
+      m->key_retain(scr_map_slot_to_ptr(key));
+    }
   } else if (m->key_kind == SCR_MAP_KEY_REF || m->key_kind == SCR_MAP_KEY_UNION_REF) {
     m->key_retain(scr_map_slot_to_ptr(key)); /* key is borrowed */
   }
@@ -571,7 +617,7 @@ void scr_set_add_all(ScrMap *set, ScrArr *values) {
       ScrStr *s = (ScrStr *)scr_arr_get_ref(values, (double)i); /* +1 */
       scr_map_set_str_f64(set, s, 0);                           /* borrows; retains stored copy */
       scr_str_release(s);
-    } else if (set->key_kind == SCR_MAP_KEY_REF || set->key_kind == SCR_MAP_KEY_UNION_REF) {
+    } else if (set->key_kind == SCR_MAP_KEY_REF || set->key_kind == SCR_MAP_KEY_UNION_REF || set->key_kind == SCR_MAP_KEY_DYN) {
       void *p = scr_arr_get_ref(values, (double)i); /* +1 */
       scr_map_set_ref_f64(set, p, 0);               /* borrows; retains stored copy */
       set->key_release(p);

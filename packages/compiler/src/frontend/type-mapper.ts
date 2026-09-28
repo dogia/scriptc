@@ -1222,9 +1222,9 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     // A dyn ELEMENT makes the WHOLE array the checked-dynamic value:
     // `unknown[]`, `object[]`, and the collapsed `(string | object)[]`
     // (the plugins-slot shape) — the checked-dynamic tree has real arrays, so length/
-    // index/push/iteration ride the keyed-dyn paths, while a dyn-element
-    // STATIC array has no backend representation (ScrArr has no dyn
-    // element kind). This is dynFallbackType's JS stance promoted into
+    // index/push/iteration ride the keyed-dyn paths. Native dyn-element
+    // vectors are reserved for collection seeds and drains, rather than
+    // changing this public representation. This is dynFallbackType's JS stance promoted into
     // the mapping itself; construction sites build dynArrLit (the checked-dynamic tree
     // array literal) and typed sources convert per element at the slot.
     if (elem.kind === "dyn") return DYN;
@@ -1756,9 +1756,9 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
   if (isStdlibInterface("Map") || isStdlibInterface("ReadonlyMap")) {
     const args = checker.getTypeArguments(widened as ts.TypeReference);
     if (args.length !== 2) return null;
-    const key = mapType(args[0]!, ctx);
+    const key = !ctx.dynamic && (args[0]!.flags & ts.TypeFlags.Any) !== 0 ? DYN : mapType(args[0]!, ctx);
     if (!key || !isSupportedMapKey(key, key.kind === "union" ? ctx.unions.get(key.unionId)?.arms : undefined)) return null;
-    const value = mapType(args[1]!, ctx);
+    const value = !ctx.dynamic && (args[1]!.flags & ts.TypeFlags.Any) !== 0 ? DYN : mapType(args[1]!, ctx);
     if (!value || !isSupportedMapValue(value)) return null;
     return mapOf(key, value);
   }
@@ -1768,7 +1768,7 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
   if (isStdlibInterface("Set") || isStdlibInterface("ReadonlySet")) {
     const args = checker.getTypeArguments(widened as ts.TypeReference);
     if (args.length !== 1) return null;
-    const elem = mapType(args[0]!, ctx);
+    const elem = !ctx.dynamic && (args[0]!.flags & ts.TypeFlags.Any) !== 0 ? DYN : mapType(args[0]!, ctx);
     if (!elem || !isSupportedSetElem(elem, elem.kind === "union" ? ctx.unions.get(elem.unionId)?.arms : undefined)) return null;
     return setOf(elem);
   }
