@@ -3392,7 +3392,10 @@ typedef struct {
   char *key;
   size_t key_len;
   ScrDyn *value; /* owned */
-  /* Data-property attributes. Ordinary object insertion uses all three. */
+  ScrDyn *getter; /* owned when this is an accessor property */
+  ScrDyn *setter; /* owned when this is an accessor property */
+  bool accessor;
+  /* Ordinary object insertion sets all three attributes true. */
   bool writable;
   bool enumerable;
   bool configurable;
@@ -3501,6 +3504,8 @@ ScrDyn *scr_json_stringify_replacer(const ScrDyn *value, const ScrDyn *replacer,
 
 /* BORROWED member lookup on a SCR_DYN_OBJ; NULL when the key is absent. */
 ScrDyn *scr_dyn_obj_get(const ScrDyn *d, const char *key, size_t key_len);
+/* Own-enumerable check on a SCR_DYN_OBJ. */
+bool scr_dyn_obj_enumerable(const ScrDyn *d, const char *key, size_t key_len);
 /* Literal discriminator tests used before selecting a typed record layout.
  * Missing fields and different primitive kinds never match. Borrowed args. */
 bool scr_dyn_field_eq_str(const ScrDyn *d, const ScrStr *key, const ScrStr *value);
@@ -3512,13 +3517,15 @@ bool scr_dyn_field_eq_bool(const ScrDyn *d, const ScrStr *key, bool value);
  * member nodes. null/undefined receivers throw Node's catchable
  * TypeError. */
 ScrDyn *scr_dyn_obj_keys(const ScrDyn *v);
+/* Snapshot all own string keys of a SCR_DYN_OBJ in JS order. Returns +1. */
+ScrDyn *scr_dyn_obj_own_keys(const ScrDyn *v);
 /* Object.hasOwn over a dyn receiver: OBJ member presence, ARR index
  * bounds ("length" included); nullish receivers throw Node's ToObject
  * TypeError; every other kind answers false. */
 bool scr_dyn_has_own(const ScrDyn *v, const ScrStr *key);
 /* Object.assign over dyn values (+1 target back; ToObject TypeError on a
- * nullish target). Sources copy their own enumerable keys exactly as
- * Object.keys lists them: OBJ members, ARR/STR/BYTES index keys; nullish
+ * nullish target). Sources visit own keys in order and copy entries that
+ * are enumerable when reached; ARR/STR/BYTES expose index keys. Nullish
  * and scalar/function/handle sources copy nothing. */
 ScrDyn *scr_dyn_assign(ScrDyn *target, const ScrDyn *src);
 /* Variadic Object.assign (the spread-source form): the compiler packs

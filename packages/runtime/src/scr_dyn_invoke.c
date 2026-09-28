@@ -779,31 +779,80 @@ ScrDyn *scr_dyn_define_props(ScrDyn *target, ScrDyn *descs) {
                         strlen("Object.defineProperties called on non-object"));
     return NULL;
   }
-  for (size_t i = 0; i < descs->v.obj.len; i++) {
-    ScrDynEntry *ent = &descs->v.obj.entries[i];
-    if (ent->value->kind != SCR_DYN_OBJ) {
+  ScrDyn *keys = scr_dyn_obj_own_keys(descs);
+  ScrDyn *pending = scr_dyn_new_arr();
+  static const char *const names[] = {"enumerable", "configurable", "value", "writable", "get", "set"};
+  static const size_t lengths[] = {10, 12, 5, 8, 3, 3};
+  for (size_t i = 0; i < keys->v.arr.len; i++) {
+    ScrDyn *key = keys->v.arr.items[i];
+    ScrStr *name = key->v.str;
+    if (!scr_dyn_obj_enumerable(descs, name->data, name->len)) continue;
+    ScrDyn *descriptor = scr_dyn_obj_read(descs, name->data, name->len);
+    if (!descriptor) goto fail;
+    if (descriptor->kind != SCR_DYN_OBJ) {
       ScrJsonBuf b;
       scr_jb_init(&b);
       scr_jb_puts(&b, "Property description must be an object: ");
-      scr_dyn_display_buf(&b, ent->value);
+      scr_dyn_display_buf(&b, descriptor);
       scr_throw_error(SCR_ERR_TYPE, scr_jb_finish(&b));
-      return NULL;
+      scr_dyn_release(descriptor);
+      goto fail;
     }
-    if (scr_dyn_obj_get(ent->value, "get", 3) || scr_dyn_obj_get(ent->value, "set", 3)) {
+    ScrDyn *snapshot = scr_dyn_new_obj();
+    for (size_t field = 0; field < 6; field++) {
+      if (!scr_dyn_obj_get(descriptor, names[field], lengths[field])) continue;
+      ScrDyn *value = scr_dyn_obj_read(descriptor, names[field], lengths[field]);
+      if (!value) {
+        scr_dyn_release(snapshot);
+        scr_dyn_release(descriptor);
+        goto fail;
+      }
+      scr_dyn_obj_set(snapshot, names[field], lengths[field], value);
+    }
+    scr_dyn_release(descriptor);
+    ScrDyn *get = scr_dyn_obj_get(snapshot, "get", 3);
+    ScrDyn *set = scr_dyn_obj_get(snapshot, "set", 3);
+    if ((get || set) && (scr_dyn_obj_get(snapshot, "value", 5) ||
+                         scr_dyn_obj_get(snapshot, "writable", 8))) {
+      static const char msg[] = "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute";
+      scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+      scr_dyn_release(snapshot);
+      goto fail;
+    }
+    if ((get && get->kind != SCR_DYN_UNDEF && get->kind != SCR_DYN_FUNC) ||
+        (set && set->kind != SCR_DYN_UNDEF && set->kind != SCR_DYN_FUNC)) {
+      static const char msg[] = "Getter and setter must be functions";
+      scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+      scr_dyn_release(snapshot);
+      goto fail;
+    }
+    ScrDyn *pair = scr_dyn_new_arr();
+    scr_dyn_arr_push(pair, scr_dyn_retain(key));
+    scr_dyn_arr_push(pair, snapshot);
+    scr_dyn_arr_push(pending, pair);
+  }
+  scr_dyn_release(keys);
+  for (size_t i = 0; i < pending->v.arr.len; i++) {
+    ScrDyn *pair = pending->v.arr.items[i];
+    ScrDyn *key = pair->v.arr.items[0];
+    ScrDyn *descriptor = pair->v.arr.items[1];
+    ScrStr *name = key->v.str;
+    if (target->kind == SCR_DYN_FUNC &&
+        (scr_dyn_obj_get(descriptor, "get", 3) || scr_dyn_obj_get(descriptor, "set", 3))) {
       scr_throw_error_msg(SCR_ERR_ERROR,
         "accessor (get/set) property descriptors on a dynamic value are not supported yet",
         strlen("accessor (get/set) property descriptors on a dynamic value are not supported yet"));
+      scr_dyn_release(pending);
       return NULL;
     }
-    ScrDyn *value = scr_dyn_obj_get(ent->value, "value", 5);
+    ScrDyn *value = scr_dyn_obj_get(descriptor, "value", 5);
     if (!value) value = scr_dyn_undefined();
     if (target->kind == SCR_DYN_OBJ) {
-      ScrStr *name = scr_str_new(ent->key, ent->key_len);
-      ScrDyn *key = scr_dyn_new_str(name);
-      scr_str_release(name);
-      ScrDyn *defined = scr_dyn_define_property(target, key, ent->value);
-      scr_dyn_release(key);
-      if (!defined) return NULL;
+      ScrDyn *defined = scr_dyn_define_property(target, key, descriptor);
+      if (!defined) {
+        scr_dyn_release(pending);
+        return NULL;
+      }
       scr_dyn_release(defined);
     } else {
       if (!target->v.fn.clo->props) {
@@ -813,9 +862,14 @@ ScrDyn *scr_dyn_define_props(ScrDyn *target, ScrDyn *descs) {
         target->v.fn.clo->props = box;
       }
       ScrDyn *table = (ScrDyn *)scr_box_get_ref(target->v.fn.clo->props); /* +1 */
-      scr_dyn_obj_set(table, ent->key, ent->key_len, scr_dyn_retain(value));
+      scr_dyn_obj_set(table, name->data, name->len, scr_dyn_retain(value));
       scr_dyn_release(table);
     }
   }
+  scr_dyn_release(pending);
   return scr_dyn_retain(target);
+fail:
+  scr_dyn_release(keys);
+  scr_dyn_release(pending);
+  return NULL;
 }

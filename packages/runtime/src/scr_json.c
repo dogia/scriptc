@@ -374,6 +374,8 @@ void scr_dyn_release(ScrDyn *d) {
     for (size_t i = 0; i < d->v.obj.len; i++) {
       free(d->v.obj.entries[i].key);
       scr_dyn_release(d->v.obj.entries[i].value);
+      scr_dyn_release(d->v.obj.entries[i].getter);
+      scr_dyn_release(d->v.obj.entries[i].setter);
     }
     if (d->v.obj.source_identity) {
       d->v.obj.source_access(d->v.obj.source_identity, false);
@@ -434,6 +436,14 @@ ScrDyn *scr_dyn_obj_get(const ScrDyn *d, const char *key, size_t key_len) {
     if (e->key_len == key_len && memcmp(e->key, key, key_len) == 0) return e->value;
   }
   return NULL;
+}
+
+bool scr_dyn_obj_enumerable(const ScrDyn *d, const char *key, size_t key_len) {
+  for (size_t i = 0; i < d->v.obj.len; i++) {
+    const ScrDynEntry *e = &d->v.obj.entries[i];
+    if (e->key_len == key_len && memcmp(e->key, key, key_len) == 0) return e->enumerable;
+  }
+  return false;
 }
 
 /* Read through a typed capsule without exposing its native layout to a
@@ -645,6 +655,9 @@ static void scr_dyn_obj_put(ScrDyn *obj, char *key, size_t key_len, ScrDyn *valu
   e->key = key;
   e->key_len = key_len;
   e->value = value;
+  e->getter = NULL;
+  e->setter = NULL;
+  e->accessor = false;
   e->writable = true;
   e->enumerable = true;
   e->configurable = true;
@@ -1396,6 +1409,10 @@ static bool scr_dyn_property_same_value(const ScrDyn *a, const ScrDyn *b) {
   return scr_dyn_strict_eq(a, b);
 }
 
+static void scr_dyn_descriptor_fields_drop(ScrDyn **fields) {
+  for (size_t i = 0; i < 6; i++) scr_dyn_release(fields[i]);
+}
+
 ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor) {
   scr_dyn_isl_fence(target, "Object.defineProperty");
   if (!scr_exc_pending()) scr_dyn_isl_fence(key, "Object.defineProperty key");
@@ -1406,51 +1423,101 @@ ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor)
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
     return NULL;
   }
+  ScrStr *name = scr_dyn_property_key(key);
+  if (!name) return NULL;
   if (descriptor->kind != SCR_DYN_OBJ) {
+    scr_str_release(name);
     static const char msg[] = "Property description must be an object";
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
     return NULL;
   }
-  if (scr_dyn_obj_get(descriptor, "get", 3) || scr_dyn_obj_get(descriptor, "set", 3)) {
-    static const char msg[] = "Accessor property descriptors are not supported yet";
-    scr_throw_error_msg(SCR_ERR_ERROR, msg, sizeof msg - 1);
+  static const char *const names[] = {"enumerable", "configurable", "value", "writable", "get", "set"};
+  static const size_t lengths[] = {10, 12, 5, 8, 3, 3};
+  ScrDyn *fields[6] = {NULL};
+  for (size_t i = 0; i < 6; i++) {
+    if (!scr_dyn_obj_get(descriptor, names[i], lengths[i])) continue;
+    fields[i] = scr_dyn_obj_read(descriptor, names[i], lengths[i]);
+    if (!fields[i]) {
+      scr_dyn_descriptor_fields_drop(fields);
+      scr_str_release(name);
+      return NULL;
+    }
+  }
+  ScrDyn *e = fields[0], *c = fields[1], *value = fields[2];
+  ScrDyn *w = fields[3], *get = fields[4], *set = fields[5];
+  ScrDynEntry *prior = scr_dyn_entry(target, name);
+  bool accessor_descriptor = get || set;
+  bool data_descriptor = value || w;
+  if (accessor_descriptor && data_descriptor) {
+    scr_dyn_descriptor_fields_drop(fields);
+    scr_str_release(name);
+    static const char msg[] = "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
     return NULL;
   }
-  ScrStr *name = scr_dyn_property_key(key);
-  if (!name) return NULL;
-  ScrDynEntry *prior = scr_dyn_entry(target, name);
-  ScrDyn *value = scr_dyn_obj_get(descriptor, "value", 5);
-  ScrDyn *w = scr_dyn_obj_get(descriptor, "writable", 8);
-  ScrDyn *e = scr_dyn_obj_get(descriptor, "enumerable", 10);
-  ScrDyn *c = scr_dyn_obj_get(descriptor, "configurable", 12);
-  bool writable = w ? scr_dyn_truthy(w) : prior ? prior->writable : false;
+  if ((get && get->kind != SCR_DYN_UNDEF && get->kind != SCR_DYN_FUNC) ||
+      (set && set->kind != SCR_DYN_UNDEF && set->kind != SCR_DYN_FUNC)) {
+    scr_dyn_descriptor_fields_drop(fields);
+    scr_str_release(name);
+    static const char msg[] = "Getter and setter must be functions";
+    scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+    return NULL;
+  }
+  bool accessor = accessor_descriptor || (!data_descriptor && prior && prior->accessor);
+  bool writable = w ? scr_dyn_truthy(w) : prior && !prior->accessor && !accessor ? prior->writable : false;
   bool enumerable = e ? scr_dyn_truthy(e) : prior ? prior->enumerable : false;
   bool configurable = c ? scr_dyn_truthy(c) : prior ? prior->configurable : false;
   if (prior && !prior->configurable &&
       (configurable || enumerable != prior->enumerable ||
-       (!prior->writable && writable) ||
-       (!prior->writable && value && !scr_dyn_property_same_value(prior->value, value)))) {
+       accessor != prior->accessor ||
+       (accessor && ((get && !scr_dyn_property_same_value(get, prior->getter ? prior->getter : scr_dyn_undefined())) ||
+                     (set && !scr_dyn_property_same_value(set, prior->setter ? prior->setter : scr_dyn_undefined())))) ||
+       (!accessor && ((!prior->writable && writable) ||
+                     (!prior->writable && value && !scr_dyn_property_same_value(prior->value, value)))))) {
+    scr_dyn_descriptor_fields_drop(fields);
     scr_str_release(name);
     static const char msg[] = "Cannot redefine property";
     scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
     return NULL;
   }
   if (prior) {
-    if (value) {
+    if (accessor != prior->accessor) {
+      scr_dyn_release(prior->value);
+      prior->value = scr_dyn_retain(scr_dyn_undefined());
+      scr_dyn_release(prior->getter);
+      scr_dyn_release(prior->setter);
+      prior->getter = prior->setter = NULL;
+    }
+    if (value && !accessor) {
       ScrDyn *replacement = scr_dyn_retain(value);
       scr_dyn_release(prior->value);
       prior->value = replacement;
     }
+    if (get) {
+      ScrDyn *replacement = get->kind == SCR_DYN_UNDEF ? NULL : scr_dyn_retain(get);
+      scr_dyn_release(prior->getter);
+      prior->getter = replacement;
+    }
+    if (set) {
+      ScrDyn *replacement = set->kind == SCR_DYN_UNDEF ? NULL : scr_dyn_retain(set);
+      scr_dyn_release(prior->setter);
+      prior->setter = replacement;
+    }
+    prior->accessor = accessor;
     prior->writable = writable;
     prior->enumerable = enumerable;
     prior->configurable = configurable;
   } else {
     scr_dyn_obj_set(target, name->data, name->len, scr_dyn_retain(value ? value : scr_dyn_undefined()));
     ScrDynEntry *entry = scr_dyn_entry(target, name);
+    entry->accessor = accessor;
+    if (get && get->kind != SCR_DYN_UNDEF) entry->getter = scr_dyn_retain(get);
+    if (set && set->kind != SCR_DYN_UNDEF) entry->setter = scr_dyn_retain(set);
     entry->writable = writable;
     entry->enumerable = enumerable;
     entry->configurable = configurable;
   }
+  scr_dyn_descriptor_fields_drop(fields);
   scr_str_release(name);
   return scr_dyn_retain(target);
 }
@@ -1475,8 +1542,13 @@ ScrDyn *scr_dyn_get_own_property_descriptor(ScrDyn *target, ScrDyn *key) {
   scr_str_release(name);
   if (!entry) return scr_dyn_retain(scr_dyn_undefined());
   ScrDyn *out = scr_dyn_new_obj();
-  scr_dyn_obj_set(out, "value", 5, scr_dyn_retain(entry->value));
-  scr_dyn_obj_set(out, "writable", 8, scr_dyn_new_bool(entry->writable));
+  if (entry->accessor) {
+    scr_dyn_obj_set(out, "get", 3, scr_dyn_retain(entry->getter ? entry->getter : scr_dyn_undefined()));
+    scr_dyn_obj_set(out, "set", 3, scr_dyn_retain(entry->setter ? entry->setter : scr_dyn_undefined()));
+  } else {
+    scr_dyn_obj_set(out, "value", 5, scr_dyn_retain(entry->value));
+    scr_dyn_obj_set(out, "writable", 8, scr_dyn_new_bool(entry->writable));
+  }
   scr_dyn_obj_set(out, "enumerable", 10, scr_dyn_new_bool(entry->enumerable));
   scr_dyn_obj_set(out, "configurable", 12, scr_dyn_new_bool(entry->configurable));
   return out;
@@ -1622,15 +1694,24 @@ static bool scr_dyn_json_write(ScrJsonBuf *b, const ScrDyn *d) {
   case SCR_DYN_OBJ: {
     scr_jb_putc(b, '{');
     bool first = true;
-    ScrDyn *entries = scr_dyn_obj_entries(d);
-    for (size_t i = 0; i < entries->v.arr.len; i++) {
-      const ScrDyn *pair = entries->v.arr.items[i];
-      const ScrDyn *key = pair->v.arr.items[0];
-      const ScrDyn *value = pair->v.arr.items[1];
+    ScrDyn *keys = scr_dyn_obj_keys(d);
+    if (!keys) return false;
+    for (size_t i = 0; i < keys->v.arr.len; i++) {
+      const ScrDyn *key = keys->v.arr.items[i];
+      ScrDyn *value = scr_dyn_obj_read(d, key->v.str->data, key->v.str->len);
+      if (!value) {
+        scr_dyn_release(keys);
+        return false;
+      }
       ScrJsonBuf probe;
       scr_jb_init(&probe);
       if (!scr_dyn_json_write(&probe, value)) {
         scr_jb_dispose(&probe);
+        scr_dyn_release(value);
+        if (scr_exc_pending()) {
+          scr_dyn_release(keys);
+          return false;
+        }
         continue; /* undefined/function members drop, like Node */
       }
       if (!first) scr_jb_putc(b, ',');
@@ -1640,8 +1721,9 @@ static bool scr_dyn_json_write(ScrJsonBuf *b, const ScrDyn *d) {
       ScrStr *body = scr_jb_finish(&probe);
       scr_jb_write(b, body->data, body->len);
       scr_str_release(body);
+      scr_dyn_release(value);
     }
-    scr_dyn_release(entries);
+    scr_dyn_release(keys);
     scr_jb_putc(b, '}');
     return true;
   }
@@ -2170,7 +2252,18 @@ void scr_dyn_key_set(ScrDyn *recv, ScrStr *key, ScrDyn *value) {
   if (recv->kind == SCR_DYN_OBJ) {
     for (size_t i = 0; i < recv->v.obj.len; i++) {
       ScrDynEntry *entry = &recv->v.obj.entries[i];
-      if (entry->key_len == key->len && memcmp(entry->key, key->data, key->len) == 0 && !entry->writable) {
+      if (entry->key_len != key->len || memcmp(entry->key, key->data, key->len) != 0) continue;
+      if (entry->accessor && entry->setter) {
+        ScrDyn *args[] = {value};
+        ScrDyn *setter = scr_dyn_retain(entry->setter);
+        scr_dyn_this_push_dyn(recv);
+        ScrDyn *result = scr_dyn_call(setter, args, 1, "setter");
+        scr_dyn_this_pop();
+        scr_dyn_release(setter);
+        scr_dyn_release(result);
+        return;
+      }
+      if (entry->accessor || !entry->writable) {
         static const char msg[] = "Cannot assign to read only property";
         scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
         return;
@@ -2951,8 +3044,7 @@ static ScrDyn *scr_json_member(const ScrDyn *holder, const ScrStr *key) {
     }
     return scr_dyn_retain(index < holder->v.arr.len ? holder->v.arr.items[index] : scr_dyn_undefined());
   }
-  ScrDyn *value = scr_dyn_obj_get(holder, key->data, key->len);
-  return scr_dyn_retain(value ? value : scr_dyn_undefined());
+  return scr_dyn_obj_read(holder, key->data, key->len);
 }
 
 static void scr_json_delete_member(ScrDyn *object, const ScrStr *key) {
@@ -2961,6 +3053,8 @@ static void scr_json_delete_member(ScrDyn *object, const ScrStr *key) {
     if (entry->key_len != key->len || memcmp(entry->key, key->data, key->len) != 0) continue;
     free(entry->key);
     scr_dyn_release(entry->value);
+    scr_dyn_release(entry->getter);
+    scr_dyn_release(entry->setter);
     memmove(entry, entry + 1, (object->v.obj.len - i - 1) * sizeof *entry);
     object->v.obj.len--;
     return;
@@ -2988,6 +3082,7 @@ static ScrDyn *scr_json_revive(ScrDyn *holder, const ScrStr *key,
                               const ScrDyn *reviver, size_t depth) {
   if (!scr_json_callback_depth(depth)) return NULL;
   ScrDyn *value = scr_json_member(holder, key);
+  if (!value) return NULL;
   if (value->kind == SCR_DYN_ARR) {
     /* Capture length once, but read each member at the time it is visited. */
     size_t length = value->v.arr.len;
@@ -3063,6 +3158,7 @@ static ScrDyn *scr_json_buffer_view(const ScrDyn *value) {
 
 static ScrDyn *scr_json_replace(const ScrDyn *holder, const ScrStr *key, const ScrDyn *replacer) {
   ScrDyn *value = scr_json_member(holder, key);
+  if (!value) return NULL;
   if (value->kind == SCR_DYN_TYPED_REF) {
     ScrDyn *view = scr_dyn_typed_ref_materialize(value);
     scr_dyn_release(value);
@@ -3073,10 +3169,12 @@ static ScrDyn *scr_json_replace(const ScrDyn *holder, const ScrStr *key, const S
     scr_dyn_release(value);
     value = view;
   } else if (value->kind == SCR_DYN_OBJ) {
-    ScrDyn *method = scr_dyn_obj_get(value, "toJSON", 6);
-    if (method && method->kind == SCR_DYN_FUNC) {
-      /* Retain the callable too: it can replace its own property. */
-      scr_dyn_retain(method);
+    ScrDyn *method = scr_dyn_obj_read(value, "toJSON", 6);
+    if (!method) {
+      scr_dyn_release(value);
+      return NULL;
+    }
+    if (method->kind == SCR_DYN_FUNC) {
       ScrDyn *name = scr_dyn_new_str((ScrStr *)key);
       ScrDyn *args[] = { name };
       scr_dyn_this_push_dyn(value);
@@ -3087,7 +3185,7 @@ static ScrDyn *scr_json_replace(const ScrDyn *holder, const ScrStr *key, const S
       scr_dyn_release(value);
       if (!converted) return NULL;
       value = converted;
-    }
+    } else scr_dyn_release(method);
   }
   ScrDyn *result = scr_json_callback(replacer, holder, key, value);
   scr_dyn_release(value);
@@ -3418,6 +3516,18 @@ bool scr_dyn_err_instanceof(const ScrDyn *d, double kind) {
 }
 
 ScrDyn *scr_dyn_obj_read(const ScrDyn *d, const char *key, size_t key_len) {
+  for (size_t i = 0; i < d->v.obj.len; i++) {
+    ScrDynEntry *entry = &d->v.obj.entries[i];
+    if (entry->key_len != key_len || memcmp(entry->key, key, key_len) != 0) continue;
+    if (!entry->accessor) return scr_dyn_retain(entry->value);
+    if (!entry->getter) return scr_dyn_retain(scr_dyn_undefined());
+    ScrDyn *getter = scr_dyn_retain(entry->getter);
+    scr_dyn_this_push_dyn(d);
+    ScrDyn *result = scr_dyn_call(getter, NULL, 0, "getter");
+    scr_dyn_this_pop();
+    scr_dyn_release(getter);
+    return result;
+  }
   ScrDyn *own = scr_dyn_obj_get(d, key, key_len);
   if (own) return scr_dyn_retain(own);
   if (key_len == 11 && memcmp(key, "constructor", 11) == 0) {
@@ -3475,6 +3585,40 @@ static ScrDyn *scr_dyn_objwalk_key(const char *key, size_t key_len) {
   return d;
 }
 
+ScrDyn *scr_dyn_obj_own_keys(const ScrDyn *v) {
+  size_t n = v->v.obj.len;
+  ScrDyn *keys = scr_dyn_new_arr();
+  bool *is_index = malloc(n ? n * sizeof *is_index : 1);
+  double *idx = malloc(n ? n * sizeof *idx : 1);
+  if (!is_index || !idx) scr_trap("scriptc: out of memory\n");
+  size_t index_count = 0;
+  for (size_t i = 0; i < n; i++) {
+    const ScrDynEntry *e = &v->v.obj.entries[i];
+    is_index[i] = scr_dyn_key_is_index(e->key, e->key_len, &idx[i]);
+    if (is_index[i]) index_count++;
+  }
+  double last = -1;
+  for (size_t done = 0; done < index_count; done++) {
+    size_t best = (size_t)-1;
+    for (size_t i = 0; i < n; i++) {
+      if (!is_index[i] || idx[i] <= last) continue;
+      if (best == (size_t)-1 || idx[i] < idx[best]) best = i;
+    }
+    if (best == (size_t)-1) break;
+    last = idx[best];
+    scr_dyn_arr_push(keys, scr_dyn_objwalk_key(v->v.obj.entries[best].key,
+                                                v->v.obj.entries[best].key_len));
+  }
+  for (size_t i = 0; i < n; i++) {
+    if (is_index[i]) continue;
+    scr_dyn_arr_push(keys, scr_dyn_objwalk_key(v->v.obj.entries[i].key,
+                                                v->v.obj.entries[i].key_len));
+  }
+  free(is_index);
+  free(idx);
+  return keys;
+}
+
 static void scr_dyn_objwalk_push(ScrDyn *out, ScrObjWalk mode, const char *key,
                                  size_t key_len, ScrDyn *value /* borrowed */) {
   switch (mode) {
@@ -3492,6 +3636,19 @@ static void scr_dyn_objwalk_push(ScrDyn *out, ScrObjWalk mode, const char *key,
     break;
   }
   }
+}
+
+static bool scr_dyn_objwalk_entry(ScrDyn *out, const ScrDyn *object,
+                                  ScrObjWalk mode, const ScrStr *key) {
+  if (!scr_dyn_obj_enumerable(object, key->data, key->len)) return true;
+  ScrDyn *value = NULL;
+  if (mode != SCR_OBJWALK_KEYS) {
+    value = scr_dyn_obj_read(object, key->data, key->len);
+    if (!value) return false;
+  }
+  scr_dyn_objwalk_push(out, mode, key->data, key->len, value);
+  scr_dyn_release(value);
+  return true;
 }
 
 static ScrDyn *scr_dyn_objwalk(const ScrDyn *v, ScrObjWalk mode) {
@@ -3514,43 +3671,15 @@ static ScrDyn *scr_dyn_objwalk(const ScrDyn *v, ScrObjWalk mode) {
   }
   ScrDyn *out = scr_dyn_new_arr();
   if (v->kind == SCR_DYN_OBJ) {
-    size_t n = v->v.obj.len;
-    /* Two passes: array-index keys ascending, then the rest in insertion
-     * order (JS's own-key order). Index keys are rare in dyn objects —
-     * the ascending pass is a simple selection scan. */
-    bool *is_index = malloc(n ? n * sizeof *is_index : 1);
-    double *idx = malloc(n ? n * sizeof *idx : 1);
-    if (!is_index || !idx) {
-      scr_trap("scriptc: out of memory\n");
-    }
-    size_t index_count = 0;
-    for (size_t i = 0; i < n; i++) {
-      const ScrDynEntry *e = &v->v.obj.entries[i];
-      /* Reserved '%'-prefixed members (the checked-dynamic tree's error marker) never
-       * appear in user objects — '%' cannot start a JS identifier-ish
-       * JSON key from this runtime's own producers; skip defensively. */
-      is_index[i] = scr_dyn_key_is_index(e->key, e->key_len, &idx[i]);
-      if (is_index[i]) index_count++;
-    }
-    double last = -1;
-    for (size_t done = 0; done < index_count; done++) {
-      size_t best = (size_t)-1;
-      for (size_t i = 0; i < n; i++) {
-        if (!is_index[i] || idx[i] <= last) continue;
-        if (best == (size_t)-1 || idx[i] < idx[best]) best = i;
+    ScrDyn *keys = scr_dyn_obj_own_keys(v);
+    for (size_t i = 0; i < keys->v.arr.len; i++) {
+      if (!scr_dyn_objwalk_entry(out, v, mode, keys->v.arr.items[i]->v.str)) {
+        scr_dyn_release(keys);
+        scr_dyn_release(out);
+        return NULL;
       }
-      if (best == (size_t)-1) break;
-      last = idx[best];
-      const ScrDynEntry *e = &v->v.obj.entries[best];
-      if (e->enumerable) scr_dyn_objwalk_push(out, mode, e->key, e->key_len, e->value);
     }
-    for (size_t i = 0; i < n; i++) {
-      if (is_index[i]) continue;
-      const ScrDynEntry *e = &v->v.obj.entries[i];
-      if (e->enumerable) scr_dyn_objwalk_push(out, mode, e->key, e->key_len, e->value);
-    }
-    free(is_index);
-    free(idx);
+    scr_dyn_release(keys);
     return out;
   }
   if (v->kind == SCR_DYN_ARR || v->kind == SCR_DYN_BYTES) {
@@ -3613,15 +3742,11 @@ static ScrDyn *scr_dyn_objwalk(const ScrDyn *v, ScrObjWalk mode) {
 
 ScrDyn *scr_dyn_obj_keys(const ScrDyn *v) { return scr_dyn_objwalk(v, SCR_OBJWALK_KEYS); }
 
-/* One source's own enumerable members onto an OBJ target — the
- * CopyDataProperties walk Object.assign runs per source. OBJ sources copy
- * their members directly (last write wins); the index-keyed kinds
- * (arrays, strings, bytes) ride the entries walk, so the copied key set
- * is EXACTLY what Object.keys answers for that kind (string sources per
- * UTF-16 code unit, like Node's String exotic object); nullish sources
- * copy nothing (Node skips them) and the scalar/function/handle kinds
- * have no own enumerable string keys. Non-OBJ targets copy nothing (the
- * existing two-arg stance — a dyn array target has no property table). */
+/* One source's own enumerable members onto an OBJ target. OBJ sources
+ * snapshot their keys, then check attributes and read values in order so
+ * getters can affect later entries. Arrays, strings, and bytes use their
+ * index-keyed entries walk. Nullish and scalar sources copy nothing;
+ * non-OBJ targets have no property table. */
 static void scr_dyn_assign_from(ScrDyn *target, const ScrDyn *src) {
   if (target->kind != SCR_DYN_OBJ) return;
   if (src->kind == SCR_DYN_TYPED_REF) {
@@ -3632,12 +3757,18 @@ static void scr_dyn_assign_from(ScrDyn *target, const ScrDyn *src) {
   }
   if (src->kind == SCR_DYN_UNDEF || src->kind == SCR_DYN_NULL) return;
   if (src->kind == SCR_DYN_OBJ) {
-    for (size_t i = 0; i < src->v.obj.len; i++) {
-      if (!src->v.obj.entries[i].enumerable) continue;
-      scr_dyn_obj_set(target, src->v.obj.entries[i].key,
-                      src->v.obj.entries[i].key_len,
-                      scr_dyn_retain(src->v.obj.entries[i].value));
+    ScrDyn *keys = scr_dyn_obj_own_keys(src);
+    if (!keys) return;
+    for (size_t i = 0; i < keys->v.arr.len; i++) {
+      ScrStr *key = keys->v.arr.items[i]->v.str;
+      if (!scr_dyn_obj_enumerable(src, key->data, key->len)) continue;
+      ScrDyn *value = scr_dyn_obj_read(src, key->data, key->len);
+      if (!value) break;
+      scr_dyn_key_set(target, key, value);
+      scr_dyn_release(value);
+      if (scr_exc_pending()) break;
     }
+    scr_dyn_release(keys);
     return;
   }
   if (src->kind != SCR_DYN_ARR && src->kind != SCR_DYN_STR &&
@@ -3652,8 +3783,8 @@ static void scr_dyn_assign_from(ScrDyn *target, const ScrDyn *src) {
       if (pair->kind != SCR_DYN_ARR || pair->v.arr.len != 2) continue;
       const ScrDyn *k = pair->v.arr.items[0];
       if (k->kind != SCR_DYN_STR) continue;
-      scr_dyn_obj_set(target, k->v.str->data, k->v.str->len,
-                      scr_dyn_retain(pair->v.arr.items[1]));
+      scr_dyn_key_set(target, k->v.str, pair->v.arr.items[1]);
+      if (scr_exc_pending()) break;
     }
   }
   scr_dyn_release(pairs);
@@ -3696,15 +3827,15 @@ ScrDyn *scr_dyn_assign(ScrDyn *target, const ScrDyn *src) {
       for (size_t i = 0; i < entries->v.arr.len; i++) {
         const ScrDyn *pair = entries->v.arr.items[i];
         const ScrDyn *k = pair->v.arr.items[0];
-        scr_dyn_obj_set(target, k->v.str->data, k->v.str->len,
-                        scr_dyn_retain(pair->v.arr.items[1]));
+        scr_dyn_key_set(target, k->v.str, pair->v.arr.items[1]);
+        if (scr_exc_pending()) break;
       }
       scr_dyn_release(entries);
     }
-    return scr_dyn_retain(target);
+    return scr_exc_pending() ? NULL : scr_dyn_retain(target);
   }
   scr_dyn_assign_from(target, src);
-  return scr_dyn_retain(target);
+  return scr_exc_pending() ? NULL : scr_dyn_retain(target);
 }
 
 /* Variadic Object.assign's argument pack (the `Object.assign({},

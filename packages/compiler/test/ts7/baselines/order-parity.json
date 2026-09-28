@@ -7625,6 +7625,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3121-dynamic-accessor-descriptors.js": {
+   "order": [
+    "<repo>/tests/corpus/3121-dynamic-accessor-descriptors.js"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/3122-js-async-class-methods.js": {
    "order": [
     "<repo>/tests/corpus/3122-js-async-class-methods.js"

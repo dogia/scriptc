@@ -856,9 +856,9 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
   }
   const fieldTypes = new Map(shape.fields.map((f) => [f.name, f.type]));
   // File-scope JavaScript object bindings live in the checked-dynamic tree
-  // to preserve open writes and identity. Build an optional-field literal
-  // from its actually written keys so Object.hasOwn can distinguish an
-  // omitted property from a present property whose value is undefined.
+  // to preserve open writes and identity. The checker can infer fields
+  // from later writes; those fields must remain absent when the literal
+  // is first evaluated.
   const topLevelJsDecl = ts.isVariableDeclaration(expr.parent) &&
     expr.parent.initializer === expr &&
     ts.isVariableStatement(expr.parent?.parent?.parent) &&
@@ -872,10 +872,9 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
     assignedProperties.length === expr.properties.length
   ) {
     const provided = new Set(assignedProperties.map((prop) => propNameText(lowerer, prop.name)));
-    const omittedOptional = shape.fields.some((field) =>
-      !provided.has(field.name) && field.type.kind === "union" &&
-      lowerer.armTag(field.type.unionId, UNDEFINED_T) >= 0);
-    if (omittedOptional) return lowerDynObjectLiteral(lowerer, expr);
+    if (shape.fields.some((field) => !provided.has(field.name))) {
+      return lowerDynObjectLiteral(lowerer, expr);
+    }
   }
   // The clone probe may lower the leading spread before declining (a
   // static `as` cast can make the checker-visible shape match while its
