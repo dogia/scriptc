@@ -63,3 +63,33 @@ const words = ["zero", "one"];
 console.log(indices.map((index) => words[index] ?? "missing").join(","));
 for (const index of indices) console.log(words[index!] ?? "missing");
 console.log(words[indices[99]] ?? "missing");
+
+// A tuple spread saves its receiver in the first argument's sequence and
+// reuses it in later arguments. Both payloads must survive the whole call.
+function pair(n: number): [Box, () => string] {
+  return [box(`pair:${n}`, n), callback(n)];
+}
+function consume(value: Box, read: () => string): string {
+  return `${value.text}/${read()}`;
+}
+for (let i = 0; i < 20; i++) {
+  const result = i % 2 === 0 ? consume(...pair(i)) : consume(...pair(i + 100));
+  if (i > 16) console.log("shared-call-temporaries", result);
+}
+
+// A later argument can throw after the first has saved owned operands.
+function throwingPair(n: number): [Box, () => string] {
+  if (n % 2 === 0) throw new Error("tuple-argument");
+  return pair(n);
+}
+function consumeBoth(first: Box, a: () => string, second: Box, b: () => string): string {
+  return `${consume(first, a)}/${consume(second, b)}`;
+}
+for (let i = 0; i < 10; i++) {
+  try {
+    const result = consumeBoth(...pair(i), ...throwingPair(i));
+    if (i === 9) console.log("shared-call-success", result);
+  } catch (error) {
+    if (error instanceof Error && i === 8) console.log("shared-call-throw", error.message);
+  }
+}

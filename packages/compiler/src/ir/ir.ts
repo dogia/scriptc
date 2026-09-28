@@ -5334,8 +5334,9 @@ export type IrExpr =
    * `type` IS result's type. Restricted on purpose: stmts must be
    * local statements (including state-selection blocks/ifs, but no jumps;
    * the validator enforces the subset). Hidden locals retain function-wide
-   * ids, but their owned values live only for this evaluation: retain the
-   * result before releasing them, on the same path that initialized them. */
+   * ids, but their owned values live through the enclosing expression's
+   * frame: later call arguments may reuse a saved operand. Release them
+   * on the same path that initialized them, not an outer lexical scope. */
   | { kind: "seqExpr"; stmts: IrStmt[]; result: IrExpr; type: IrType; loc: SrcLoc }
   /** RequireObjectCoercible with V8's destructuring TypeError: throws
    * "Cannot destructure 'SPELLING' as it is undefined." (or "…null.") on

@@ -2310,7 +2310,12 @@ class LlEmitter {
       if (v.slot) {
         const t = this.B.tmp();
         this.B.line(`${t} = load ptr, ptr ${v.name}`);
-        this.releaseValue(t, v.type);
+        if (v.boxed) {
+          this.declare(`declare void @scr_box_release(ptr)`);
+          this.B.line(`call void @scr_box_release(ptr ${t})`);
+        } else {
+          this.releaseValue(t, v.type);
+        }
       } else {
         this.releaseValue(v.name, v.type);
       }
@@ -4154,12 +4159,14 @@ class LlEmitter {
 
   private emitOperatorExpr(e: ExprOf<"bin" | "unary" | "incDec" | "fieldIncDec" | "assignExpr" | "seqExpr">): LlValue {
     if (e.kind === "seqExpr") {
-      // Sequence temporaries must die on the path that created them. In a
-      // lazy branch, the enclosing lexical scope can outlive (or skip) the
-      // sequence on later loop iterations.
+      // Saved operands can feed later call arguments. Transfer ownership
+      // to this expression's frame so they survive those reads and still
+      // die on the path that created them, including inside lazy branches.
       this.scopes.push([]);
       const result = emitOperatorExpr(this.expressionContext(), e);
-      this.releaseScope(this.scopes.pop()!);
+      for (const local of this.scopes.pop()!) {
+        this.currentFrame().push({ name: local.slot, type: local.type, slot: true, ...(local.boxed ? { boxed: true } : {}) });
+      }
       return result;
     }
     return emitOperatorExpr(this.expressionContext(), e);

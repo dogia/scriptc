@@ -1,4 +1,4 @@
-import { streamRooted, unionWideningTags, type IrClassGraphNode } from "../../../packages/compiler/src/ir/analysis.js";
+import { streamRooted, unionWideningTags, type IrClassAncestry } from "../../../packages/compiler/src/ir/analysis.js";
 import { BOOL, F64, STRING, VOID, isRefCounted, typeEquals, type IrType } from "../../../packages/compiler/src/ir/ir.js";
 
 // These are the compiler's real type comparison and ownership queries.
@@ -82,9 +82,9 @@ console.log("empty", unionWideningTags([], wider)?.length);
 
 // Hierarchy traversal uses real recursive graph interfaces and nullable
 // parents. Query several depths and distinct runtime/user roots.
-const plain: IrClassGraphNode = { def: { name: "Plain" }, base: null, children: [] };
-const stream: IrClassGraphNode = { def: { name: "%Readable" }, base: null, children: [] };
-const child: IrClassGraphNode = { def: { name: "Child" }, base: stream, children: [] };
-const grandchild: IrClassGraphNode = { def: { name: "Grandchild" }, base: child, children: [] };
-const unrelated: IrClassGraphNode = { def: { name: "Unrelated" }, base: plain, children: [] };
+const plain: IrClassAncestry = { def: { name: "Plain" }, base: null };
+const stream: IrClassAncestry = { def: { name: "%Readable" }, base: null };
+const child: IrClassAncestry = { def: { name: "Child" }, base: stream };
+const grandchild: IrClassAncestry = { def: { name: "Grandchild" }, base: child };
+const unrelated: IrClassAncestry = { def: { name: "Unrelated" }, base: plain };
 console.log("roots", streamRooted(plain), streamRooted(stream), streamRooted(child), streamRooted(grandchild), streamRooted(unrelated));

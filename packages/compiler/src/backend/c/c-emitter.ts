@@ -196,8 +196,8 @@ export class CEmitter {
    * dispatches through. Registered during body emission (the regex
    * pattern); the statics and thunks are assembled around the bodies. */
   readonly classObjs = new Map<string, string>();
-  /** Stack of statement frames: refcounted temps not yet released or moved. */
-  frames: Temp[][] = [];
+  /** Statement frames own expression temps and sequence locals until cleanup. */
+  frames: ScopeEntry[][] = [];
   /** Stack of scopes: refcounted locals (with types) declared in each. */
   scopes: ScopeEntry[][] = [];
   /** The function being emitted: local table (for boxedness) and whether
@@ -1530,7 +1530,7 @@ export class CEmitter {
     return t;
   }
 
-  currentFrame(): Temp[] {
+  currentFrame(): ScopeEntry[] {
     const frame = this.frames[this.frames.length - 1];
     if (!frame) throw new InternalCompilerError("emitter bug: no active statement frame");
     return frame;

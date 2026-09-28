@@ -25,18 +25,18 @@ node-fallback-fence.ts:30:28 - error SC2020: 'timers/promises.setInterval with 3
 
   hint: the lowered form is setInterval(delay, value) with an explicit yielded value; AbortSignal options are not supported yet
 
-node-fallback-fence.ts:35:36 - error SC2020: 'deflateSync with explicit options' is part of the standard library types but has no scriptc lowering yet
+node-fallback-fence.ts:35:36 - error SC2020: 'deflateSync with these options' is part of the standard library types but has no scriptc lowering yet
 
   34 | import { brotliCompressSync, deflateSync } from "node:zlib";
-  35 | const packed = deflateSync("data", { level: 9 }); // options remain fenced
-     |                                    ^~~~~~~~~~~~
+  35 | const packed = deflateSync("data", { level: 9, strategy: 1 }); // strategy remains fenced
+     |                                    ^~~~~~~~~~~~~~~~~~~~~~~~~
   36 | const brotli = brotliCompressSync(Buffer.from("data")); // outside the lowered family: fenced
 
-  hint: deflateSync(data) with Node's default options is supported
+  hint: the static compression options form is { level: <integer literal from -1 through 9> }
 
 node-fallback-fence.ts:36:16 - error SC2020: 'zlib.brotliCompressSync' is part of the standard library types but has no scriptc lowering yet
 
-  35 | const packed = deflateSync("data", { level: 9 }); // options remain fenced
+  35 | const packed = deflateSync("data", { level: 9, strategy: 1 }); // strategy remains fenced
   36 | const brotli = brotliCompressSync(Buffer.from("data")); // outside the lowered family: fenced
      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   37 | // The remaining imports continue the declared-but-not-lowered surface.

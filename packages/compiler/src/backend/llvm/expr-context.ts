@@ -15,6 +15,8 @@ export interface LlValue {
   name: string;
   type: IrType;
   slot?: boolean;
+  /** A sequence local held in a capture box; release the box itself. */
+  boxed?: boolean;
 }
 
 export type ExprOf<K extends IrExpr["kind"]> = Extract<IrExpr, { kind: K }>;

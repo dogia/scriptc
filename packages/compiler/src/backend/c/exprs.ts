@@ -994,14 +994,14 @@ function emitOperatorExpr(
         return v;
       }
       case "seqExpr": {
-        // Hidden locals belong to this evaluation, not the containing
-        // lexical block. A conditional sequence in a loop may not run on
-        // the next iteration; registering its locals on the outer scope
-        // would release stale pointers from the branch that was skipped.
+        // Keep saved operands alive through the enclosing expression:
+        // tuple spreads and JS arguments reuse them in later call slots.
+        // The current frame still cleans up on the path that created them,
+        // including a lazy branch that is skipped on later loop iterations.
         emitter.scopes.push([]);
         for (const s of e.stmts) emitter.emitStmt(s);
         const result = emitter.emitExpr(e.result);
-        emitter.releaseFrame(emitter.scopes.pop()!);
+        emitter.currentFrame().push(...emitter.scopes.pop()!);
         return result;
       }
     default: {

@@ -29,9 +29,9 @@ const tmp = mkdtempSync("/tmp/scr-");
 const raw = readFileSync("/etc/hosts").toString(tty ? "hex" : "latin1"); // runtime BufferEncoding selection lowers too
 const intervalWithSignal = promiseInterval(1, "tick", {}); // AbortSignal options stay fenced
 // The computed encoding is now part of the static Buffer surface. The
-// one-shot zlib/raw/gzip codecs lower for strings and Buffers; explicit
-// options stay fenced, while Brotli remains an explicit member fence.
+// one-shot zlib/raw/gzip codecs also accept literal compression levels;
+// other options stay fenced, while Brotli remains an explicit member fence.
 import { brotliCompressSync, deflateSync } from "node:zlib";
-const packed = deflateSync("data", { level: 9 }); // options remain fenced
+const packed = deflateSync("data", { level: 9, strategy: 1 }); // strategy remains fenced
 const brotli = brotliCompressSync(Buffer.from("data")); // outside the lowered family: fenced
 // The remaining imports continue the declared-but-not-lowered surface.
