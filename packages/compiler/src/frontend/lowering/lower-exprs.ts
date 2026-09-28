@@ -40,6 +40,7 @@ import { fenceNodeModuleMutation, isNodeModuleValue, lowerNodeModuleIdentifier, 
 import { lowerAbstractEquality } from "./abstract-equality.js";
 import { coerceStringSearchValue, defaultAfterUndefined, lowerStaticallyUndefinedArgument } from "./optional-arguments.js";
 import { recordTextCodecClass } from "../../ir/ir.js";
+import { classSymbolKeyOf } from "./symbol-fields.js";
 
 /** An assignable `obj.field` target — a class field, a record field, or a
  * class ACCESSOR property (reads become getter calls, writes setter calls;
@@ -4313,11 +4314,11 @@ export function lowerOptionalNumber(
       if (ex) return lowerer.maybeNarrow(ex, expr);
     }
     // Symbol-keyed property READS (`this[kLimit]`): when the key is a
-    // statically-resolvable unique-symbol const declared as a field of the
-    // receiver's class (uniqueSymbolKeyOf — the countdown.js idiom), the
+    // statically-resolvable symbol declared as a field of the receiver's
+    // class (classSymbolKeyOf — the countdown.js/OpenTUI idioms), the
     // read IS an ordinary field read of the hidden slot. Every other
     // symbol key stays fenced: record shapes, runtime-identity keys
-    // (symbol parameters, Symbol.for consts), and keys no class declares
+    // (symbol parameters, reassigned bindings), and keys no class declares
     // — the layouts are compile-time field lists.
     if (lowerer.mapTypeOf(lowerer.typeOf(expr.argumentExpression))?.kind === "symbol") {
       const target = symbolFieldTarget(lowerer, expr);
@@ -4325,7 +4326,7 @@ export function lowerOptionalNumber(
       lowerer.unsupported(
         "SC1090",
         expr,
-        "symbol-keyed property access outside class fields keyed by a module-level `const k = Symbol('desc')` (static shapes have no symbol-keyed storage)",
+        "symbol-keyed property access outside class fields keyed by a stable module-level literal Symbol()/Symbol.for() (other static shapes have no symbol-keyed storage)",
       );
     }
     // A never-tainted JS receiver type (neverTaintedJsType — `cmd[1]` on
@@ -5143,7 +5144,7 @@ export function lowerElementCompound(lowerer: Lowerer, expr: ts.BinaryExpression
       lowerer.unsupported(
         "SC1090",
         target,
-        "symbol-keyed property writes outside class fields keyed by a module-level `const k = Symbol('desc')` (static shapes have no symbol-keyed storage)",
+        "symbol-keyed property writes outside class fields keyed by a stable module-level literal Symbol()/Symbol.for() (other static shapes have no symbol-keyed storage)",
       );
     }
     const receiverIr = lowerer.mapTypeOf(lowerer.typeOf(target.expression));
@@ -9411,9 +9412,9 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
       lowerer.flushDeferredClass(receiverIr.className);
       return null;
     }
-    const key = uniqueSymbolKeyOf(lowerer, expr.argumentExpression);
+    const key = classSymbolKeyOf(lowerer, expr.argumentExpression);
     if (!key) return null;
-    const field = info.symbolFields?.get(key.sym);
+    const field = info.symbolFields?.get(key.identity);
     if (field === undefined) return null;
     const fieldType = info.fields.get(field);
     if (!fieldType) return null;

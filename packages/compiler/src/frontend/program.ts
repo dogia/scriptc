@@ -960,11 +960,10 @@ function purePrefixStmt7(program: ts.Program, s: ts.Statement): boolean {
   return false;
 }
 
-/** Can code that runs BEFORE the require statement at index `k` reach one
- * of the require's bindings? Node initializes them AT the require (TDZ —
- * earlier access is a ReferenceError), but the lowering aliases reads
- * through to the exporter's storage with no TDZ state, so a reachable
- * early read would silently diverge. Conservative reachability: earlier
+/** Can code that runs BEFORE the declaration at index `k` reach one of
+ * its bindings? Static require aliases and symbol field keys bypass
+ * storage reads, so an early use could erase a TDZ error or a var's
+ * initial undefined value. Conservative reachability: earlier
  * statements' whole subtrees (arrows and function expressions included)
  * read the binding directly, or reference a hoisted function/class whose
  * body (transitively through other hoisted declarations) reads it — a
@@ -975,7 +974,7 @@ function purePrefixStmt7(program: ts.Program, s: ts.Statement): boolean {
  * (The CheckerFacade memoizes symbol queries, and 7's client dedupes
  * symbol identity by server handle, so the Map-keyed-by-Symbol discipline
  * carries over from the 5.9.3 original unchanged.) */
-function requireTdzRisk7(
+export function bindingEarlyUse7(
   program: ts.Program,
   sf: ts.SourceFile,
   k: number,
@@ -1182,7 +1181,7 @@ function stableCreateRequireBindingReason7(program: ts.Program, decl: ts.Variabl
       }
     }
     const preceding = stmt.declarationList.declarations.slice(0, stmt.declarationList.declarations.indexOf(decl));
-    if (requireTdzRisk7(program, sf, sf.statements.indexOf(stmt), decl, preceding) !== null) {
+    if (bindingEarlyUse7(program, sf, sf.statements.indexOf(stmt), decl, preceding) !== null) {
       return "its createRequire binding can be used before initialization";
     }
     return null;
@@ -2894,7 +2893,7 @@ function preflight7(load: LoadResult): {
             precedingDecls.some((decl) => !purePrefixDecl7(decl));
           const tdzName =
             prefixCanRun && req.decl
-              ? requireTdzRisk7(program, sf, k, req.decl, precedingDecls)
+              ? bindingEarlyUse7(program, sf, k, req.decl, precedingDecls)
               : null;
           if (tdzName !== null) {
             diags.push(

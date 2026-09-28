@@ -37,6 +37,7 @@ import { countedFor, numLit, varRef } from "../../ir/build.js";
 import { rejectStaticThis } from "./static-this.js";
 import { fenceNodeModuleMutationCall, lowerRequireCacheKeys } from "./lower-node-module.js";
 import { defaultAfterUndefined, lowerOptionalArgument, lowerStaticallyUndefinedArgument, positionNumber } from "./optional-arguments.js";
+import { fenceSymbolFieldCopy } from "./symbol-fields.js";
 
 export { bodyReadsArguments };
 
@@ -8789,7 +8790,9 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
         if (tProbe?.type.kind === "dyn") {
           const loc = locOf(call);
           const target = lowerer.lowerExpr(call.arguments[0]!);
-          const source = lowerer.coerceToExpected(lowerer.lowerExpr(call.arguments[1]!), DYN);
+          const rawSource = lowerer.lowerExpr(call.arguments[1]!);
+          fenceSymbolFieldCopy(lowerer, call.arguments[1]!, rawSource.type);
+          const source = lowerer.coerceToExpected(rawSource, DYN);
           if (target.type.kind === "dyn" && source.type.kind === "dyn") {
             return { kind: "libCall", fn: "dyn.assign", args: [target, source], type: DYN, loc };
           }
@@ -8866,7 +8869,9 @@ export function lowerPromiseMethodCall(lowerer: Lowerer, call: ts.CallExpression
               const argNode = sources[i]!;
               const spread = ts.isSpreadElement(argNode);
               const srcNode = spread ? argNode.expression : argNode;
-              const src = lowerer.coerceToExpected(lowerer.lowerExpr(srcNode), DYN);
+              const rawSource = lowerer.lowerExpr(srcNode);
+              fenceSymbolFieldCopy(lowerer, srcNode, rawSource.type, spread);
+              const src = lowerer.coerceToExpected(rawSource, DYN);
               if (src.type.kind !== "dyn") {
                 ok = false;
                 break;

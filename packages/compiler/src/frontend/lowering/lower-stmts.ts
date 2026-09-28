@@ -2788,6 +2788,9 @@ export function isParseArgsDynCheckerType(lowerer: Lowerer, type: ts.Type): bool
     consumed: Set<string>,
     restT: IrType | null,): IrExpr {
     const loc = locOf(blame);
+    if (info.symbolFields?.size) {
+      lowerer.unsupported("SC1031", blame, "rest bindings over class instances with symbol-keyed fields (the copied symbols have no record form)");
+    }
     for (let c: ClassInfo | null = info; c; c = c.base) {
       if (c.builtinError || c.builtinEmitter || c.builtinStream) {
         lowerer.unsupported(

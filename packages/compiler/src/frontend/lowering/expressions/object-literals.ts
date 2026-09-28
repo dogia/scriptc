@@ -26,6 +26,7 @@ import { isGenericCallableMemberType } from "../../type-mapper.js";
 import { numLit, varRef } from "../../../ir/build.js";
 import { isSafeToRepeat } from "./evaluation-safety.js";
 import { tryLowerExpression } from "./try-lower-expression.js";
+import { fenceSymbolFieldCopy } from "../symbol-fields.js";
 
 /** `{ a: 1, b: "x" }` → recordLit. The record type comes from the
  * contextual type when tsc has one (annotated declarations, arguments,
@@ -211,6 +212,7 @@ export function lowerDynObjectLiteral(
     if (ts.isSpreadAssignment(prop)) {
       flushFields();
       const raw = lowerer.lowerExpr(prop.expression);
+      fenceSymbolFieldCopy(lowerer, prop.expression, raw.type);
       const source = boxValue
         ? boxValue(prop.expression, raw)
         : lowerer.coerceToExpected(raw, DYN);

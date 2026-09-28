@@ -41,6 +41,7 @@ import { BOOL, DYN, F64, IrExpr, IrStmt, IrType, RUNTIME_ERROR_CLASSES, STRING, 
 import type { ClassInfo } from "./lower-classes.js";
 import { isSafeToRepeat } from "./expressions/evaluation-safety.js";
 import { boolLit, numLit, strLit, varRef } from "../../ir/build.js";
+import { symbolFieldDisplayName } from "./symbol-fields.js";
 
 /* ── IR construction shorthand ───────────────────────────────────────── */
 function concatAll(parts: IrExpr[], loc: SrcLoc): IrExpr {
@@ -711,15 +712,15 @@ function inspectHelper(lowerer: Lowerer, t: IrType, loc: SrcLoc): string {
       // assigns in declaration order (SEMANTICS.md 36's stance). SYMBOL-
       // keyed fields render LAST ([[OwnPropertyKeys]] lists all string
       // keys before all symbol keys — Node's inspect order) and their
-      // layout name IS Node's key spelling (`Symbol(limit)`), printed
-      // verbatim, never quoted.
+      // reserved layout names carry Node's key spelling (`Symbol(limit)`),
+      // printed verbatim after removing the internal slot prefix.
       const symNames = new Set(info.symbolFields?.values() ?? []);
       const ordered = [
         ...visible.filter((f) => !symNames.has(f.name)),
         ...visible.filter((f) => symNames.has(f.name)),
       ];
       for (const f of ordered) {
-        const key = symNames.has(f.name) ? f.name : inspectKey(f.name);
+        const key = symNames.has(f.name) ? symbolFieldDisplayName(f.name) : inspectKey(f.name);
         body.push(
           entry(concatAll([strLit(`${key}: `, loc), child(f.type, get(f.name, f.type))], loc), boolLit(false, loc)),
         );

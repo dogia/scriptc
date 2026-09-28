@@ -19,7 +19,7 @@ import { requiresDynamicPackageDiag, unsupportedDiag } from "../../diagnostics/d
 import { STREAM_API_MEMBERS, STREAM_PROP_MEMBERS, UNDERSCORE_METHODS, lowerStreamNew, lowerStreamSuperCall, streamCtorShape } from "./lower-stream.js";
 import { emitOverrideShapeReason, emitSpecSuperForward, emitterRooted, lowerEmitterSuperCall, type EmitOverrideRec } from "./lower-event-emitter.js";
 import { declSymbolOf } from "./lower-modules.js";
-import { uniqueSymbolKeyOf } from "./lower-exprs.js";
+import { classSymbolKeyOf, classSymbolKeyOfSymbol, symbolFieldDisplayName } from "./symbol-fields.js";
 import { builtinFenceHintOf } from "./surfaces.js";
 import { lowerHttpAgentNew, lowerHttpServerNew } from "./lower-server.js";
 import { ambientNsRootOf, ambientUndefReadType, ambientUndefVarRootOf, ambientUndefinedFnSymbolOf, fenceEarlyAliasUse, fenceEarlyNsMemberRef, nsMemberIdentOf, nsUndefRead } from "./lower-namespaces.js";
@@ -148,14 +148,13 @@ export interface ClassInfo {
    * constructor value — no value form here) fences at collection. Absent on
    * builtin classes and classes without blocks. */
   staticBlocks?: ts.ClassStaticBlockDeclaration[];
-  /** SYMBOL-KEYED fields (`this[kLimit] = v` where kLimit is a module-level
-   * `const k = Symbol(...)`): the key's unique-symbol identity is a
-   * compile-time constant, so each key resolves to an ORDINARY hidden slot
-   * in the static layout — no runtime symbol table exists. The map goes
-   * key-symbol → layout field name (`Symbol(limit)`, Node's inspect
-   * spelling); inherited entries are seeded from the base like `fields`.
+  /** SYMBOL-KEYED fields with stable module-level Symbol()/Symbol.for()
+   * keys: each identity resolves to an ordinary hidden slot in the static
+   * layout. Registry keys share one identity across declarations. The map
+   * goes key identity → reserved layout field name; inspect recovers the
+   * Symbol(limit) spelling. Inherited entries are seeded from the base.
    * Absent on builtin classes and classes with no symbol-keyed fields. */
-  symbolFields?: Map<ts.Symbol, string>;
+  symbolFields?: Map<ts.Symbol | string, string>;
   /** GENERIC class FAMILY (`class Box<T>` itself): the synthetic,
    * never-constructed ancestor every instantiation extends. It owns what
    * JS's one runtime `Box` owns — the statics (one storage location for
@@ -287,7 +286,7 @@ export interface GenericClassInfo {
   function symbolSlotReturnType(
     lowerer: Lowerer,
     fnLike: ts.MethodDeclaration,
-    symbolFields: ReadonlyMap<ts.Symbol, string>,
+    symbolFields: ReadonlyMap<ts.Symbol | string, string>,
     fields: ReadonlyMap<string, IrType>,
   ): IrType | null {
     if (symbolFields.size === 0) return null;
@@ -311,8 +310,8 @@ export interface GenericClassInfo {
       while (e !== undefined && ts.isParenthesizedExpression(e)) e = e.expression;
       if (e === undefined || !ts.isElementAccessExpression(e)) return null;
       if (e.expression.kind !== ts.SyntaxKind.ThisKeyword) return null;
-      const key = uniqueSymbolKeyOf(lowerer, e.argumentExpression);
-      const fieldName = key ? symbolFields.get(key.sym) : undefined;
+      const key = classSymbolKeyOf(lowerer, e.argumentExpression);
+      const fieldName = key ? symbolFields.get(key.identity) : undefined;
       const t = fieldName !== undefined ? fields.get(fieldName) : undefined;
       if (t === undefined || t.kind === "dyn") return null;
       if (out !== null && !typeEquals(out, t)) return null;
@@ -1173,7 +1172,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
         for (let c = base; c; c = c.base) if (c.builtinError) return true;
         return false;
       })();
-      const symbolFields = new Map<ts.Symbol, string>(base?.symbolFields ?? []);
+      const symbolFields = new Map<ts.Symbol | string, string>(base?.symbolFields ?? []);
       const fieldOrder: ClassInfo["fieldOrder"] = [];
       const methods = new Map<string, { params: ParamShape[]; ret: IrType; abstract?: true; async?: true; gen?: NonNullable<IrFunction["generator"]> }>();
       // Own accessor declarations ("get:x"/"set:x" → node), for the
@@ -1490,6 +1489,31 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
             // `accessor x = 1` desugars (in JS) to a private slot plus a
             // get/set pair — declare the field and accessors explicitly.
             lowerer.unsupported("SC1090", member, "auto-accessor fields ('accessor x')");
+          }
+          if (ts.isComputedPropertyName(member.name)) {
+            const key = classSymbolKeyOf(lowerer, member.name.expression);
+            if (!key || !member.initializer) {
+              lowerer.unsupported("SC1090", member, "computed class fields without an initializer and a stable module-level literal Symbol()/Symbol.for() key");
+            }
+            const declared = lowerer.typeOf(member);
+            const inferred = member.type ? declared : lowerer.checker.getBaseTypeOfLiteralType(lowerer.typeOf(member.initializer));
+            const type = lowerer.mapTypeOf(inferred);
+            if (!type || type.kind === "void" || type.kind === "dyn") lowerer.badType(member, inferred);
+            const previous = fields.get(key.fieldName);
+            if (previous) {
+              if (!symbolFields.has(key.identity)) {
+                lowerer.unsupported("SC1090", member.name, `distinct keys sharing the printable name '${symbolFieldDisplayName(key.fieldName)}' in one class`);
+              }
+              if (!typeEquals(previous, type)) {
+                lowerer.unsupported("SC1090", member.name, "redeclaring symbol-keyed fields at a different type");
+              }
+              fieldOrder.push({ name: key.fieldName, type, initializer: member.initializer, redeclared: true });
+            } else {
+              fields.set(key.fieldName, type);
+              fieldOrder.push({ name: key.fieldName, type, initializer: member.initializer });
+            }
+            symbolFields.set(key.identity, key.fieldName);
+            continue;
           }
           // #private fields ride the ordinary field machinery — the '#'
           // name is unspellable publicly, so the slot never collides, and
@@ -2171,7 +2195,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               continue;
             }
             // `this[kLimit] = v` at the constructor's top level with a
-            // STATICALLY-RESOLVABLE unique-symbol key (uniqueSymbolKeyOf's
+            // STATICALLY-RESOLVABLE symbol key (classSymbolKeyOf's
             // contract — the countdown.js idiom): the key is a compile-time
             // identity, so the member is an ordinary hidden field of the
             // static layout under Node's inspect spelling; no runtime
@@ -2183,18 +2207,18 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               lhs && ts.isElementAccessExpression(lhs) &&
               lhs.expression.kind === ts.SyntaxKind.ThisKeyword
             ) {
-              const key = uniqueSymbolKeyOf(lowerer, lhs.argumentExpression);
+              const key = classSymbolKeyOf(lowerer, lhs.argumentExpression);
               if (!key) continue;
               // A key already declared (own or inherited) makes later
               // assignments writes, not declarations.
-              if (symbolFields.has(key.sym)) continue;
+              if (symbolFields.has(key.identity)) continue;
               if (fields.has(key.fieldName)) {
                 // Two DISTINCT Symbol(...) consts with one description in
                 // one layout would need one printable name for two slots.
                 lowerer.unsupported(
                   "SC1090",
                   lhs,
-                  `distinct symbol keys sharing the printable name '${key.fieldName}' in one class`,
+                  `distinct symbol keys sharing the printable name '${symbolFieldDisplayName(key.fieldName)}' in one class`,
                 );
               }
               const propSym = lateBoundByKey.get(key.sym);
@@ -2216,7 +2240,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               const type = t ? (lowerer.mapTypeOf(t) ?? dynFallbackType(lowerer, lhs, t)) : null;
               if (!type || type.kind === "void") lowerer.badType(lhs, t ?? lowerer.typeOf(lhs));
               fields.set(key.fieldName, type);
-              symbolFields.set(key.sym, key.fieldName);
+              symbolFields.set(key.identity, key.fieldName);
               fieldOrder.push({ name: key.fieldName, type, initializer: undefined });
             }
           }
@@ -2239,16 +2263,17 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
           // Late-bound properties: the ones the scan above collected are
           // real fields under their printable names — skip. The rest keep
           // a fence that names the supported form: keys that are runtime
-          // identities (symbol parameters, Symbol.for consts, computed
+          // identities (symbol parameters, mutable bindings, computed
           // descriptions) or assignments outside the constructor's top
           // level.
           if (p.name.startsWith("__@")) {
             const keySym = lateBoundKeySymOf(lowerer, p);
-            if (keySym && symbolFields.has(keySym)) continue;
+            const key = keySym ? classSymbolKeyOfSymbol(lowerer, keySym) : null;
+            if (key && symbolFields.has(key.identity)) continue;
             lowerer.unsupported(
               "SC1090",
               site,
-              "symbol-keyed class fields outside the supported form (a module-level `const k = Symbol('desc')` key, assigned unconditionally at the top of the constructor)",
+              "symbol-keyed class fields outside the supported form (a stable module-level literal Symbol()/Symbol.for() key, assigned unconditionally at the top of the constructor)",
             );
           }
           // JS classes: a property first assigned in a method or a
