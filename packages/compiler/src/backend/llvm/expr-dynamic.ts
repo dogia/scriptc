@@ -598,6 +598,16 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
           };
           if (e.test === "nullish") {
             test = oneOf([DYN_KIND.UNDEF, DYN_KIND.NULL]);
+          } else if (e.test === "buffer") {
+            const bytes = oneOf([DYN_KIND.BYTES]);
+            const flagPtr = B.tmp();
+            const flag = B.tmp();
+            const buffer = B.tmp();
+            B.line(`${flagPtr} = getelementptr inbounds i8, ptr ${d.name}, i64 ${host.abiOffset(12, 8)} ; ->buffer`);
+            B.line(`${flag} = load i8, ptr ${flagPtr}`);
+            B.line(`${buffer} = icmp ne i8 ${flag}, 0`);
+            test = B.tmp();
+            B.line(`${test} = and i1 ${bytes}, ${buffer}`);
           } else if (e.test === "object") {
             // `typeof v === "object"`: objects, arrays, bytes, native
             // handles, promises, AND null — engine-held objects by the

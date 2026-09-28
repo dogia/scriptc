@@ -3231,6 +3231,10 @@ function emitDynamicExpr(
         // kind, so the calls stay unconditional); narrowing never changes
         // representation (SEMANTICS.md).
         const d = emitter.emitExpr(e.value);
+        if (e.test === "buffer") {
+          const test = `(${d.name}->kind == SCR_DYN_BYTES && ${d.name}->buffer)`;
+          return emitter.newTemp(e.type, e.negated ? `!${test}` : test);
+        }
         const test =
           e.test === "nullish"
             ? `(${d.name}->kind == SCR_DYN_UNDEF || ${d.name}->kind == SCR_DYN_NULL)`

@@ -1147,6 +1147,12 @@ export function lowerBufferStaticCall(lowerer: Lowerer, call: ts.CallExpression,
           loc,
         };
       }
+      // Untyped stream chunks retain the native checked value's Buffer
+      // flavor. Plain bytes are Uint8Arrays at this boundary; inspecting
+      // only the bytes tag would incorrectly identify them as Buffers.
+      if (v.type.kind === "dyn") {
+        return { kind: "dynTest", test: "buffer", value: v, type: BOOL, loc };
+      }
       if (v.type.kind === "union") {
         const def = lowerer.unions.get(v.type.unionId);
         const tag = def ? def.arms.findIndex((a) => a.kind === "bytes" && a.elem === "u8") : -1;
