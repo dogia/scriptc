@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { Ts7RpcClient } from "../../../packages/compiler/src/frontend/ts7/rpc-client.js";
 import { registerTs7FileSystem } from "../../../packages/compiler/src/frontend/ts7/rpc-filesystem.js";
 import { Ts7Wire } from "../../../packages/compiler/src/frontend/ts7/rpc-wire.js";
+import { AstFile, AstNode } from "../../../packages/compiler/src/frontend/ts7/ast-node.js";
+import { AstKind, KIND_NODE_LIST, astChildNames } from "../../../packages/compiler/src/frontend/ts7/ast-schema.generated.js";
+import { decodeAstString } from "../../../packages/compiler/src/frontend/ts7/ast-bytes.js";
 
 // The harness connects these inherited descriptors straight to native tsgo.
 // No JavaScript helper reads, interprets, or relays protocol messages.
@@ -38,6 +41,61 @@ interface Diagnostic {
 
 function check(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
+}
+
+// The current native runtime documents replacing lone UTF-16 surrogates.
+// Compiler input must never silently pass through that normalization. Keep
+// this boundary explicit until native strings can retain every code unit.
+function checkSurrogateBoundary(): string {
+  const bytes = new Uint8Array([0xed, 0xa0, 0x80, 0xef, 0xbb, 0xbf]);
+  try {
+    const value = decodeAstString(bytes, 0, bytes.length);
+    check(value.length === 2 && value.charCodeAt(0) === 0xd800 && value.charCodeAt(1) === 0xfeff, "lossless surrogate decode");
+    return "preserved";
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "TypeScript AST: runtime cannot preserve lone UTF-16 surrogates") throw error;
+    return "refused";
+  }
+}
+
+function checkAst(ast: AstFile, source: string): void {
+  check(ast.root.text === source, "decoded source text");
+  check(ast.root.getSourceFile() === ast.root, "source identity");
+  check(ast.root.statements === ast.root.statements, "stable child list");
+  for (let index = 1; index < ast.wire.nodeCount; index++) {
+    if (ast.wire.kind(index) === KIND_NODE_LIST) { ast.list(index); continue; }
+    const node = ast.node(index);
+    check(ast.resolve(node.id) === node, "handle identity");
+    check(node.getFullText() === source.substring(node.pos, node.end), "full text span");
+    check(node.getText() === source.substring(node.getStart(), node.end), "token text span");
+    check(node.getFullWidth() === node.end - node.pos, "full width");
+    check(node.getWidth() === node.end - node.getStart(), "token width");
+    check(node.getLeadingTriviaWidth() === node.getStart() - node.pos, "trivia width");
+    check(node.getFullStart() === node.pos && node.getEnd() === node.end, "span endpoints");
+    for (const name of astChildNames(node.kind).split(",")) {
+      const child = node.child(name!);
+      if (Array.isArray(child)) {
+        for (const item of child) check(item.parent === node, "list child parent");
+      } else if (child !== undefined) check(child.parent === node, "named child parent");
+    }
+    const seen: AstNode[] = [];
+    node.forEachChild((child) => { seen.push(child); });
+    check(node.forEachChild((child) => child.index) === seen[0]?.index, "visitor early return");
+    let listElements = 0;
+    node.forEachChild(() => {}, (list) => { listElements += list.length; });
+    check(listElements <= seen.length, "array visitor");
+    for (const doc of node.jsDoc ?? []) check(doc.kind === AstKind.JSDoc, "JSDoc children");
+  }
+  const lines = ast.root.getLineStarts();
+  for (let position = 0; position <= source.length; position++) {
+    const location = ast.root.getLineAndCharacterOfPosition(position);
+    check(ast.root.getPositionOfLineAndCharacter(location.line, location.character) === position, "UTF16 line round trip");
+    check(lines[location.line]! <= position, "line start");
+  }
+  check(ast.root.referencedFiles.length === 0 && ast.root.typeReferenceDirectives.length === 0 && ast.root.libReferenceDirectives.length === 0, "file references");
+  check(ast.root.imports.length === 0 && ast.root.moduleAugmentations.length === 0 && ast.root.ambientModuleNames.length === 0, "structured arrays");
+  check(ast.root.externalModuleIndicator !== undefined, "external module");
+  check(ast.root.fileName.length > 0 && ast.root.languageVariant === 0 && !ast.root.isDeclarationFile, "source metadata");
 }
 
 // Exercise malformed inputs in the native executable too. The callbacks
@@ -113,13 +171,17 @@ const file = protocolPath(join(directory, "virtual.ts"));
 const empty = protocolPath(join(directory, "empty.ts"));
 const hidden = protocolPath(join(directory, "hidden.ts"));
 const disk = protocolPath(join(directory, "disk.ts"));
-let content = 'export const answer = 42;\nexport const greeting = "héllo 🌍";\n';
+let content = 'export const answer = 42;\nexport const greeting = "\\uFEFFhéllo 🌍";\n';
+content += '/** Box documentation. */\nexport class Box { readonly value = 2; method(n: number) { return n + this.value; } }\n';
+content += 'export const many = [';
+for (let index = 0; index < 40; index++) content += `${index},`;
+content += '];\nexport const template = `head\\n${answer}tail`;\n';
 let reads = 0;
 registerTs7FileSystem(client, {
   readFile: (path) => {
     reads++;
     if (path === configPath) return JSON.stringify({
-      compilerOptions: { strict: true, noEmit: true, types: [] as string[] },
+      compilerOptions: { strict: true, noEmit: true, target: "esnext", types: [] as string[] },
       files: [file, empty, hidden, disk],
     });
     if (path === file) return content;
@@ -159,6 +221,16 @@ try {
   check(!names.includes(hidden), "hidden file remains absent");
   const ast = client.requestBytes("getSourceFile", Buffer.from(JSON.stringify(request)));
   check(ast.length > content.length, "binary AST response");
+  const tree = new AstFile(ast);
+  checkAst(tree, content);
+  const statements = tree.root.statements!;
+  check(statements[1]!.declarationList!.declarations![0]!.initializer!.text === "\uFEFFhéllo 🌍", "string BOM retained");
+  const box = statements[2]!;
+  check(box.getStart(undefined, true) < box.getStart() && box.members!.length === 2, "class JSDoc and members");
+  check(box.members![0]!.modifierFlags !== 0, "readonly modifier flag");
+  check(statements[3]!.declarationList!.declarations![0]!.initializer!.elements!.length === 40, "long native node list");
+  const template = statements[4]!.declarationList!.declarations![0]!.initializer!;
+  check(template.head!.text === "head\n" && template.head!.rawText === "head\\n", "cooked and raw template text");
   const semantic = JSON.parse(client.requestText("getSemanticDiagnostics", JSON.stringify(request))) as Diagnostic[];
   check(semantic.length === 0, "valid program diagnostics");
   const type = JSON.parse(client.requestText("getTypeAtPosition", JSON.stringify({ ...request, position: content.indexOf("answer") }))) as TypeInfo;
@@ -166,6 +238,12 @@ try {
   check(symbol.name === "answer", "checker symbol");
   const typeText = JSON.parse(client.requestText("typeToString", JSON.stringify({ snapshot: snapshot.snapshot, project: project.id, type: type.id }))) as string;
   check(typeText === "42", "checker literal type");
+  const declaration = tree.root.statements![0]!.declarationList!.declarations![0]!;
+  const identifier = declaration.name!;
+  const nodeType = JSON.parse(client.requestText("getTypeAtLocation", JSON.stringify({ snapshot: snapshot.snapshot, project: project.id, location: identifier.id }))) as TypeInfo;
+  const nodeSymbol = JSON.parse(client.requestText("getSymbolAtLocation", JSON.stringify({ snapshot: snapshot.snapshot, project: project.id, location: identifier.id }))) as SymbolInfo;
+  check(nodeType.id === type.id && nodeSymbol.id === symbol.id, "native AST checker query");
+  check(tree.resolve(nodeSymbol.declarations![0]!) === declaration, "checker declaration identity");
 
   // A server-side refusal completes its request. It must not poison the
   // channel: the frontend's checker panic fence relies on this recovery.
@@ -189,7 +267,8 @@ try {
   check(timing.requests > 20 && timing.callbacks > 0 && reads > 0, "requests and filesystem callbacks executed");
   writeFileSync(report, JSON.stringify({
     typeText, symbol: symbol.name, diagnostics: diagnostics.map((diagnostic) => diagnostic.code),
-    echo: true, binaryAst: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
+    surrogateBoundary: checkSurrogateBoundary(),
+    echo: true, binaryAst: true, astIdentity: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
   }));
 } finally {
   client.close();

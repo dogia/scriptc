@@ -1081,6 +1081,12 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
   // unit-only union themselves (isUnitOnlyTsType + unitOnlyUnion) — the
   // position knows it wants a value; this mapping cannot.
   if (flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) return VOID;
+  // Generic visitors can instantiate `T | undefined` as `void | undefined`.
+  // It has the same return convention as standalone void; value positions
+  // still substitute the unit-only slot through isUnitOnlyTsType below.
+  if (widened.isUnionType() && ts.constituentTypes(widened).every(
+    (part) => (part.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0,
+  )) return VOID;
   // Standalone `null` (a `const x = null` binding, a `{ value: null }`
   // field, a `(): null` return): the unit-only union — the value is always
   // THE interned null instance, comparisons are tag tests, JSON serializes

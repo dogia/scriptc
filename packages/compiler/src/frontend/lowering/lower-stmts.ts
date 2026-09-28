@@ -3708,7 +3708,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
       // `var v: void;` / `let x: undefined;` — a unit-only binding rides
       // the unit-only union (its undefined arm is the unassigned state,
       // which is also the only state).
-      if (type.kind === "void" && isUnitOnlyTsType(lowerer.typeOf(decl.name))) {
+      if (type.kind === "void" && isUnitOnlyTsType(lowerer.typeParamTsResolver(lowerer.typeOf(decl.name)) ?? lowerer.typeOf(decl.name))) {
         type = unitOnlyUnion(lowerer.unions);
       }
       if (type.kind === "void") lowerer.badType(decl.name, lowerer.typeOf(decl.name));
@@ -3934,9 +3934,10 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     }
     // `const x: void = undefined` / `let y: undefined = undefined`: the
     // unit-only union — the initializer's unit literal wraps into its arm
-    // like any optional completion. Non-literal void initializers (a
-    // void CALL's result) keep their fence at the coercion below.
-    if (settledType.kind === "void" && isUnitOnlyTsType(lowerer.typeOf(decl.name))) {
+    // like any optional completion. A generic visitor can bind the slot's
+    // T to void; consult that binding before deciding its value layout.
+    // coerceInto preserves a void call's effects before wrapping undefined.
+    if (settledType.kind === "void" && isUnitOnlyTsType(lowerer.typeParamTsResolver(lowerer.typeOf(decl.name)) ?? lowerer.typeOf(decl.name))) {
       settledType = unitOnlyUnion(lowerer.unions);
     }
     if (settledType.kind === "void") lowerer.badType(decl.name, lowerer.typeOf(decl.name));
@@ -6635,15 +6636,14 @@ function lowerBranchSwitch(
     let iterable = lowerer.lowerExpr(iterSrc);
     // A nested loop receiver can be an OOB-safe array read from the outer
     // loop (`for (const row of grid) for (const cell of row)`). The checker
-    // sees the inner value as an array, while its runtime slot is array |
-    // undefined; validate the receiver before selecting the array iterator.
+    // sees the inner value as an array, while its runtime slot retains
+    // undefined. An Array.isArray guard can also select the array from a
+    // node | node[] | undefined slot. Validate that exact array arm; simply
+    // stripping undefined would leave a multi-arm union in the loop.
     const checkerIterable = lowerer.mapTypeOf(lowerer.typeOf(iterSrc));
     if (iterable.type.kind === "union" && lowerer.armTag(iterable.type.unionId, UNDEFINED_T) >= 0 && checkerIterable?.kind === "array") {
-      const present = lowerer.stripUndefinedArm(iterable.type);
-      const helper = present.kind === "array"
-        ? lowerer.narrowedArmHelper(iterable.type.unionId, present, locOf(iterSrc))
-        : null;
-      if (helper) iterable = { kind: "call", callee: helper, args: [iterable], type: present, loc: locOf(iterSrc) };
+      const helper = lowerer.narrowedArmHelper(iterable.type.unionId, checkerIterable, locOf(iterSrc));
+      if (helper) iterable = { kind: "call", callee: helper, args: [iterable], type: checkerIterable, loc: locOf(iterSrc) };
     }
     if (iterable.type.kind === "bytes") {
       return lowerForOfBytes(

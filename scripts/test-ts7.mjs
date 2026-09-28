@@ -59,6 +59,8 @@ if (compilerPackage.scripts?.build !== "node node_modules/typescript/bin/tsc -p 
 }
 
 const vitest = resolve(repoRoot, "node_modules/vitest/vitest.mjs");
+const schema = spawnSync(process.execPath, [resolve(repoRoot, "scripts/generate-ts7-ast-schema.mjs"), "--check"], { cwd: repoRoot, stdio: "inherit" });
+if (schema.error || schema.status !== 0) process.exit(1);
 const result = spawnSync(
   process.execPath,
   [vitest, "run", "packages/compiler/test/ts7"],

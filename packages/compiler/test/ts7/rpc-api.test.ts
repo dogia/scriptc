@@ -7,6 +7,7 @@ import { Ts7Api, ts7Executable } from "../../src/frontend/ts7/rpc-api.js";
 import { Ts7RpcClient } from "../../src/frontend/ts7/rpc-client.js";
 import type { Ts7FileSystem } from "../../src/frontend/ts7/rpc-filesystem.js";
 import { spawnTs7Wire } from "../../src/frontend/ts7/rpc-process.js";
+import { AstNode } from "../../src/frontend/ts7/ast-node.js";
 
 function tsgoPath(path: string): string {
   return process.platform === "win32" ? path.replaceAll("\\", "/") : path;
@@ -64,12 +65,25 @@ test("production RPC bridge preserves pinned SDK parser/checker behavior", () =>
     expect(facts.semantic.map((diagnostic) => diagnostic.code)).toEqual([2322]);
     const project = actual.getProject(config)!;
     const source = project.program.getSourceFile(path)!;
+    expect(source).toBeInstanceOf(AstNode);
     expect(project.program.getSourceFile(path)).toBe(source);
     const first = project.checker.getTypeAtPosition(path, source.text.indexOf("answer"));
     expect(project.checker.getTypeAtPosition(path, source.text.indexOf("answer"))).toBe(first);
     const symbol = project.checker.getSymbolAtPosition(path, source.text.indexOf("answer"));
     expect(project.checker.getSymbolAtPosition(path, source.text.indexOf("answer"))).toBe(symbol);
     expect(symbol!.declarations[0]!.resolve()).toBe(symbol!.declarations[0]!.resolve());
+    const declaration = symbol!.declarations[0]!.resolve()!;
+    expect(declaration).toBeInstanceOf(AstNode);
+    const variable = source.statements[0]! as import("typescript/unstable/ast").VariableStatement;
+    expect(variable.declarationList.declarations[0]).toBe(declaration);
+    expect(project.checker.getSymbolAtLocation(variable.declarationList.declarations[0]!.name)).toBe(symbol);
+    expect(project.checker.getTypeAtLocation(variable.declarationList.declarations[0]!.name)).toBe(first);
+    const expectedSource = expected.getProject(config)!.program.getSourceFile(path)!;
+    expect(source.statements.pos).toBe(expectedSource.statements.pos);
+    expect(source.statements.end).toBe(expectedSource.statements.end);
+    expect(source.statements.transformFlags).toBe(expectedSource.statements.transformFlags);
+    expect(source.referencedFiles).toBe(source.referencedFiles);
+    expect(source.imports).toBe(source.imports);
   } finally {
     nativeClient.close();
     sdk.close();

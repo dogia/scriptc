@@ -1420,7 +1420,7 @@ export function genericFnOf(lowerer: Lowerer, ident: ts.Identifier): GenericFnIn
       if (!tp) return;
       const taT = lowerer.checker.getTypeFromTypeNode(ta);
       const mapped = lowerer.mapTypeOf(taT);
-      if (mapped && mapped.kind !== "void") {
+      if (mapped) {
         bindings.set(tp, mapped);
         tsBindings?.set(tp, taT);
       }
@@ -1443,7 +1443,7 @@ export function genericFnOf(lowerer: Lowerer, ident: ts.Identifier): GenericFnIn
       if (!tp || bindings.has(tp) || !tpDecl.defaultType) return;
       const defT = lowerer.checker.getTypeFromTypeNode(tpDecl.defaultType);
       const mapped = lowerer.mapTypeOf(defT);
-      if (mapped && mapped.kind !== "void") {
+      if (mapped) {
         bindings.set(tp, mapped);
         tsBindings?.set(tp, defT);
       }
@@ -1489,7 +1489,10 @@ export function genericFnOf(lowerer: Lowerer, ident: ts.Identifier): GenericFnIn
           }
           if (!bindings.has(sym)) {
             const mapped = lowerer.mapTypeOf(inst);
-            if (mapped && mapped.kind !== "void") bindings.set(sym, mapped);
+            // A visitor's inferred T can be void. It still binds the
+            // return convention of `(node) => T`; discarding it leaves
+            // the callback's return type spuriously uninstantiated.
+            if (mapped) bindings.set(sym, mapped);
           }
         }
         return;

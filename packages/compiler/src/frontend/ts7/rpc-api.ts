@@ -5,8 +5,9 @@ import type { ConfigResponse, InitializeResponse, UpdateSnapshotResponse } from 
 import { Ts7RpcClient } from "./rpc-client.js";
 import { registerTs7FileSystem, TS7_FILE_SYSTEM_CALLBACKS, type Ts7FileSystem } from "./rpc-filesystem.js";
 import { spawnTs7Wire } from "./rpc-process.js";
+import { installNativeAst } from "./ast-sdk.js";
 
-// The pinned SDK still owns AST materialization and checker object identity.
+// The pinned SDK still owns snapshots and checker object identity.
 // These hidden helpers have no public package exports. Derive their types
 // from Snapshot's constructor rather than duplicating the SDK's contracts.
 // This bridge can go away when those object models also compile statically;
@@ -70,8 +71,8 @@ class SnapshotClient {
 }
 
 /** The API operations scriptc uses, backed by its own synchronous client.
- * Keep upstream Snapshot/Project objects until their identity-bearing AST
- * and checker representations have a native replacement. No upstream API
+ * Keep upstream Snapshot/Project objects until their checker registries
+ * have a native replacement. ASTs use the owned model. No upstream API
  * or Client instance is constructed, and all requests use Ts7RpcClient. */
 export class Ts7Api {
   private readonly client: SnapshotClient;
@@ -118,6 +119,7 @@ export class Ts7Api {
       this.snapshots.delete(snapshot);
       if (snapshot !== this.latest) this.cache.releaseSnapshot(snapshot.id);
     });
+    for (const project of snapshot.getProjects()) installNativeAst(snapshot.id, project, this.client as unknown as SdkClient, this.cache, canonical);
     this.latest = snapshot;
     this.snapshots.add(snapshot);
     return snapshot;
