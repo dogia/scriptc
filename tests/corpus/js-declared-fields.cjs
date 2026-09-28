@@ -103,3 +103,58 @@ console.log(BaseRenderable.renderableNumber--, --BaseRenderable.renderableNumber
 BaseRenderable.renderableNumber++;
 --BaseRenderable.renderableNumber;
 console.log(BaseRenderable.renderableNumber);
+
+// Explicit undefined is a value in JS fields, accessors and returns.
+// Getter inference also determines an unannotated setter's parameter.
+class Listener {
+  // @ts-expect-error Deliberately observe the slot before initialization.
+  before = this.value;
+  value = undefined;
+  #private = undefined;
+  get current() { return this.value; }
+  set current(value) { this.value = value; }
+  readPrivate() { return this.#private; }
+  setPrivate(value) { this.#private = value; }
+}
+const listener = new Listener();
+console.log(listener.before, listener.value, listener.current, listener.readPrivate());
+listener.current = "ready";
+listener.setPrivate("secret");
+console.log(listener.value, listener.current, listener.readPrivate());
+listener.current = undefined;
+listener.setPrivate(undefined);
+console.log(listener.current, listener.readPrivate());
+stringView(listener);
+
+class UndefinedBase {
+  value = undefined;
+  constructor(value) { this.value = value; }
+}
+class UndefinedDerived extends UndefinedBase {
+  // @ts-expect-error Observe the base write before the derived reset.
+  seen = this.value;
+  value = undefined;
+}
+const reset = new UndefinedDerived("base");
+console.log(reset.seen, reset.value);
+function undefinedResult() { return undefined; }
+console.log(undefinedResult());
+
+// Assigning an accessor invokes its setter; it never declares a field,
+// including from a constructor and through an inherited setter body.
+class Positioned {
+  _left = 0;
+  constructor() { this.left = 1; }
+  get left() { return this._left; }
+  set left(value) { this._left = value; }
+  get x() { return this.left; }
+  set x(value) { this.left = value; }
+}
+class PositionedChild extends Positioned {
+  constructor() { super(); this.left = 2; }
+}
+const positioned = new PositionedChild();
+console.log(positioned.left);
+positioned.x = 3;
+console.log(positioned.left);
+stringView(positioned);

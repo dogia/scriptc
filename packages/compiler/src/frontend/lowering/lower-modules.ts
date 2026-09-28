@@ -25,7 +25,7 @@ import { collectExpandoMembers } from "./lower-expando.js";
 import { recordTextCodecClass } from "../../ir/ir.js";
 import { isUnitOnlyTsType, unitOnlyUnion } from "../type-mapper.js";
 import type { ClassInfo } from "./lower-classes.js";
-import { decoratorNodesOf, genericIfaceBindingKeepsClass, guaranteedDecorationThrow } from "./lower-classes.js";
+import { collectVirtualJsMethods, decoratorNodesOf, genericIfaceBindingKeepsClass, guaranteedDecorationThrow } from "./lower-classes.js";
 import { isMixinFnBinding, mixinResultBindingClassOf } from "./lower-mixins.js";
 import { cjsModuleRef, cjsModuleRegistryPrelude } from "./lower-node-module.js";
 import { forkTargetPaths } from "../fork-target.js";
@@ -248,6 +248,7 @@ export function appendForkModules(
   export function collectProgram(lowerer: Lowerer, parts: FileParts[]): void {
     lowerer.collecting = true;
     try {
+      collectVirtualJsMethods(lowerer, parts.map((part) => part.sf));
       for (const fp of parts) for (const decl of fp.classDecls) lowerer.collectClassShape(decl);
       for (const fp of parts) for (const decl of fp.fnDecls) lowerer.collectSignature(decl);
     } finally {

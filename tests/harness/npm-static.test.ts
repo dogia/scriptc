@@ -99,6 +99,21 @@ async function buildStatic(entry: string, npmStatic: string[] | "auto"): Promise
 }
 
 describe(`npm-static pilots${sanitize ? " (sanitized)" : ""}`, () => {
+  test.each(["c", "llvm"] as const)("untyped package methods preserve virtual overrides (%s)", async (backend) => {
+    const entry = join(pilotRoot, "virtual-classes-cli.ts");
+    const { coverage } = analyze(entry, { npmStatic: "auto" });
+    expect(coverage.npmStatic).toEqual([{ package: "virtual-classes", status: "static" }]);
+    expect(coverage.diagnostics).toHaveLength(0);
+    expect(coverage.runtimeFences ?? []).toHaveLength(0);
+    const outDir = join(cacheDir, "virtual-classes", sanitize ? "san" : "plain", backend);
+    const result = await compile(entry, { backend, dynamic: false, npmStatic: "auto", sanitize, outDir, outPath: join(outDir, "program") });
+    if (!result.ok) throw new Error(result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("\n"));
+    const [nodeRes, nativeRes] = await Promise.all([runBinary(process.execPath, [entry]), runBinary(result.binaryPath, [])]);
+    expect(nativeRes.stdout).toEqual(nodeRes.stdout);
+    expect(comparableStderr(nativeRes.stderr)).toEqual(nodeRes.stderr);
+    expect(nativeRes.exitCode).toBe(nodeRes.exitCode);
+  });
+
   test.each(["c", "llvm"] as const)("a package's literal createRequire calls compile without an engine (%s)", async (backend) => {
     const entry = join(pilotRoot, "module-loader-cli.ts");
     const { coverage } = analyze(entry, { npmStatic: "auto" });

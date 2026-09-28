@@ -1682,6 +1682,9 @@ export class Lowerer {
   /** Keyed by program-wide qualified class name (what IR object types carry). */
   readonly classes = new Map<string, ClassInfo>();
   readonly classBySymbol = new Map<ts.Symbol, ClassInfo>();
+  /** Inferred JS methods participating in an override chain keep a vtable
+   * ABI instead of call-site specialization. Filled before class collection. */
+  readonly virtualJsMethods = new WeakSet<ts.MethodDeclaration>();
   /** The class whose members are lowering — `super` binds lexically to it
    * (arrows inside methods lower within this window, so they see it too). */
   currentClass: ClassInfo | null = null;
@@ -4971,6 +4974,9 @@ export class Lowerer {
 
   irTypeOf(node: ts.Node): IrType {
     const t = this.typeOf(node);
+    // JS inference can leave mutable fields, accessor parameters and
+    // locals at undefined. They still carry values; void has no storage.
+    if (isJsSourceFile(node.getSourceFile()) && (t.flags & ts.TypeFlags.Undefined) !== 0) return DYN;
     // A never-tainted JS type (neverTaintedJsType) maps — never rides as
     // f64 — but must not: pre-empt the mapping so the JS fallback below
     // answers instead.

@@ -1004,6 +1004,9 @@ function completeFuncValueArgs(
     const sig = lowerer.checker.getSignatureFromDeclaration(decl);
     if (!sig) lowerer.unsupported("SC1090", decl, "this function form");
     const retTsType = lowerer.checker.getReturnTypeOfSignature(sig);
+    // An inferred undefined return in JS can read a mutable checked-value
+    // field. Keep the returned value instead of erasing it to void.
+    if (isJsSourceFile(decl.getSourceFile()) && (retTsType.flags & ts.TypeFlags.Undefined) !== 0) return DYN;
     // A body that always throws infers `never` — as a RETURN type that is
     // void with a stronger guarantee (`() => never` is assignable to
     // `() => void`), and throw-only callbacks are ordinary code

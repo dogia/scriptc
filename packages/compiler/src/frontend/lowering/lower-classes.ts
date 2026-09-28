@@ -1812,6 +1812,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
           if (
             implicitMonoFile(decl.getSourceFile()) &&
             ts.isIdentifier(member.name) &&
+            !lowerer.virtualJsMethods.has(member) &&
             inst === undefined && decl.typeParameters === undefined &&
             !fields.has(member.name.text) &&
             !lowerer.findMethodOn(base, member.name.text) &&
@@ -2116,6 +2117,10 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
       // forbids via strictPropertyInitialization — so they keep a named
       // fence instead of a silent undefined.
       if (isJsSourceFile(decl.getSourceFile())) {
+        const hasAccessor = (name: string): boolean =>
+          methods.has(`get:${name}`) || methods.has(`set:${name}`) ||
+          lowerer.findMethodOn(base, `get:${name}`) !== null ||
+          lowerer.findMethodOn(base, `set:${name}`) !== null;
         // Named classes (declarations and self-binding expressions) resolve
         // by name; the nameless default-export declaration by its module's
         // default-export symbol.
@@ -2150,7 +2155,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
               const name = assign.name.text;
               // Later assignments to an already-declared field (own or
               // inherited) are writes, not declarations.
-              if (fields.has(name)) continue;
+              if (fields.has(name) || hasAccessor(name)) continue;
               if (methods.has(name) || lowerer.findMethodOn(base, name)) {
                 lowerer.unsupported("SC1090", assign, "constructor-assigned fields shadowing methods");
               }
@@ -2249,7 +2254,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
         // assignment site.
         for (const p of instType ? lowerer.checker.getPropertiesOfType(instType) : []) {
           if (fields.has(p.name) || methods.has(p.name)) continue;
-          if (methods.has(`get:${p.name}`) || methods.has(`set:${p.name}`)) continue;
+          if (hasAccessor(p.name)) continue;
           if (base && (base.fields.has(p.name) || lowerer.findMethodOn(base, p.name))) continue;
           const site = lowerer.checker.declarationsOf(p).find(
             (d) =>
@@ -3654,6 +3659,47 @@ export function staticFieldWriteTarget(lowerer: Lowerer, access: ts.PropertyAcce
       (s) => s.genericMethods?.has(name) === true || genericOverrideBelow(lowerer, s, name),
     );
   }
+
+/** Discover overrides before choosing inferred method ABIs. Class collection
+ * visits bases first, including imported bases and class expressions, so the
+ * collected subclass graph cannot answer this question yet. The checker
+ * hierarchy identifies the original declarations through aliases as well. */
+export function collectVirtualJsMethods(lowerer: Lowerer, files: readonly ts.SourceFile[]): void {
+  if (!files.some(implicitMonoFile)) return;
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      const names = node.members.flatMap((member) =>
+        ts.isMethodDeclaration(member) && ts.isIdentifier(member.name) &&
+        !member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)
+          ? [member.name.text] : [],
+      );
+      if (node.heritageClauses?.length && names.length > 0) {
+        const symbol = lowerer.typeOf(node).getSymbol();
+        const instance = symbol ? lowerer.checker.getDeclaredTypeOfSymbol(symbol) : null;
+        const seen = new Set<ts.Type>();
+        const markBases = (type: ts.Type): void => {
+          const target = type.isTypeReference() ? type.getTarget() : type;
+          if (!target.isClassOrInterface() || seen.has(target)) return;
+          seen.add(target);
+          for (const base of lowerer.checker.getBaseTypes(target)) {
+            for (const name of names) {
+              const property = lowerer.checker.getPropertyOfType(base, name);
+              for (const declaration of property ? lowerer.checker.declarationsOf(property) : []) {
+                if (ts.isMethodDeclaration(declaration) && implicitMonoFile(declaration.getSourceFile())) {
+                  lowerer.virtualJsMethods.add(declaration);
+                }
+              }
+            }
+            markBases(base);
+          }
+        };
+        if (instance) markBases(instance);
+      }
+    }
+    node.forEachChild(visit);
+  };
+  for (const file of files) visit(file);
+}
 
 /** The receiver's EXACT runtime class, when the expression proves it: a
    * `new C(...)` expression directly, or a const binding initialized with
