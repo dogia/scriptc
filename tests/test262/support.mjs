@@ -95,6 +95,14 @@ function hasOwnThisBinding(node) {
   return false;
 }
 
+function argumentsOwner(node) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (ts.isArrowFunction(parent)) continue;
+    if (ts.isFunctionLike(parent) && parent.body) return parent;
+  }
+  return undefined;
+}
+
 // The first static profile adapts scripts to standalone strict modules. Be
 // conservative about observable global-script semantics and helper reflection.
 // Exclusions are runner limitations, never implementation support claims.
@@ -111,7 +119,7 @@ export function exclusion(source, meta, variant) {
   if (unsupportedIncludes.length) return `harness-includes:${unsupportedIncludes.join(",")}`;
   const sf = ts.createSourceFile("test.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   let reason;
-  const forbidden = new Set(["$262", "$DONE", "$DONOTEVALUATE", "globalThis", "eval", "Function", "print", "process", "require", "arguments"]);
+  const forbidden = new Set(["$262", "$DONE", "$DONOTEVALUATE", "globalThis", "eval", "Function", "print", "process", "require"]);
   if (variant === "sloppy") for (const name of ["module", "exports", "__dirname", "__filename"]) forbidden.add(name);
   if (meta.flags.includes("async")) forbidden.delete("$DONE");
   const visit = (node) => {
@@ -121,6 +129,11 @@ export function exclusion(source, meta, variant) {
       reason = "host:script-environment";
     } else if (ts.isIdentifier(node) && forbidden.has(node.text)) {
       reason = `host:${node.text}`;
+    } else if (ts.isIdentifier(node) && node.text === "arguments" &&
+      (!argumentsOwner(node) ||
+        !(ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node && node.parent.name.text === "length") &&
+        !(ts.isElementAccessExpression(node.parent) && node.parent.expression === node))) {
+      reason = "host:arguments";
     } else if (ts.isIdentifier(node) && node.text === "assert") {
       const parent = node.parent;
       if (ts.isCallExpression(parent) && parent.expression === node) {

@@ -73,6 +73,18 @@ test("receiver-bound this is admitted without adapting script-level this", () =>
   }
 });
 
+test("arguments reads are admitted only for indexed and length access inside a function", () => {
+  for (const [body, expected] of [
+    ["function f() { return arguments.length === 1 && arguments[0] === 3; } assert(f(3));", undefined],
+    ["function f() { return arguments; }", "host:arguments"],
+    ["function f() { return Array.isArray(arguments); }", "host:arguments"],
+    ["assert.sameValue(arguments.length, 0);", "host:arguments"],
+  ]) {
+    const text = source("description: arguments", body!);
+    expect(exclusion(text, metadata(text), "strict")).toBe(expected);
+  }
+});
+
 test("negative parse cases require the compiler's matching source diagnostic", () => {
   const text = source("negative: {phase: parse, type: SyntaxError}", "$DONOTEVALUATE();\nconst = ;");
   expect(exclusion(text, metadata(text), "strict")).toBeUndefined();
