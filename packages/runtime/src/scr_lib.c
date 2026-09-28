@@ -53,6 +53,25 @@
 #include <lmcons.h>  /* UNLEN for GetUserNameA */
 #include "scr_win_stats.h"
 
+static WCHAR *scr_fs_win_wide(const ScrStr *path);
+static int scr_fs_win_errno(DWORD error);
+
+static ScrStr *scr_fs_win_utf8(const WCHAR *text, size_t length) {
+  if (length > INT_MAX) { SetLastError(ERROR_FILENAME_EXCED_RANGE); return NULL; }
+  int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, (int)length, NULL, 0, NULL, NULL);
+  if (size <= 0) return length == 0 ? scr_str_new("", 0) : NULL;
+  char *bytes = malloc((size_t)size);
+  if (!bytes) scr_trap("scriptc: out of memory\n");
+  if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, (int)length, bytes, size, NULL, NULL) != size) {
+    DWORD error = GetLastError();
+    free(bytes);
+    SetLastError(error);
+    return NULL;
+  }
+  ScrStr *result = scr_str_new(bytes, (size_t)size);
+  free(bytes);
+  return result;
+}
 
 /* The CRT has no symlink view, so its internal lstat users degrade to stat.
  * The public Stats path below bypasses this seam and opens the final component
@@ -961,11 +980,23 @@ bool scr_process_kill_named(double pid, const ScrStr *signal) {
 }
 
 ScrStr *scr_process_cwd(void) {
+#ifdef _WIN32
+  DWORD size = GetCurrentDirectoryW(0, NULL);
+  if (!size) scr_trap("scriptc: process.cwd() failed\n");
+  WCHAR *wide = malloc((size_t)size * sizeof *wide);
+  if (!wide) scr_trap("scriptc: out of memory\n");
+  DWORD length = GetCurrentDirectoryW(size, wide);
+  ScrStr *result = length > 0 && length < size ? scr_fs_win_utf8(wide, length) : NULL;
+  free(wide);
+  if (!result) scr_trap("scriptc: process.cwd() failed\n");
+  return result;
+#else
   char buf[4096];
   if (!getcwd(buf, sizeof buf)) {
     scr_trap("scriptc: process.cwd() failed\n");
   }
   return scr_str_new(buf, strlen(buf));
+#endif
 }
 
 /* The raw byte writes use the SAME stdio stream as console, and each call
@@ -1815,7 +1846,11 @@ double scr_process_umask(double mask) {
 
 void scr_process_chdir(ScrStr *dir) {
 #ifdef _WIN32
-  if (_chdir(dir->data) != 0) scr_fs_throw(errno, "chdir", dir);
+  WCHAR *wide = scr_fs_win_wide(dir);
+  BOOL changed = wide && SetCurrentDirectoryW(wide);
+  DWORD error = changed ? ERROR_SUCCESS : GetLastError();
+  free(wide);
+  if (!changed) scr_fs_throw(scr_fs_win_errno(error), "chdir", dir);
 #else
   if (chdir(dir->data) != 0) scr_fs_throw(errno, "chdir", dir);
 #endif
@@ -1965,8 +2000,26 @@ void scr_fs_throw(int e, const char *op, const ScrStr *path) {
 
 /* ── fs operations ───────────────────────────────────────────────────── */
 
+static FILE *scr_fs_fopen(const ScrStr *path, const char *mode) {
+#ifdef _WIN32
+  WCHAR *wide = scr_fs_win_wide(path);
+  if (!wide) { errno = scr_fs_win_errno(GetLastError()); return NULL; }
+  WCHAR wide_mode[4] = {0};
+  size_t length = strlen(mode);
+  if (length >= 4) scr_trap("scriptc: invalid internal file mode\n");
+  for (size_t i = 0; i < length; i++) wide_mode[i] = (WCHAR)mode[i];
+  FILE *file = _wfopen(wide, wide_mode);
+  int error = errno;
+  free(wide);
+  errno = error;
+  return file;
+#else
+  return fopen(path->data, mode);
+#endif
+}
+
 ScrStr *scr_fs_read_file(ScrStr *path) {
-  FILE *f = fopen(path->data, "rb");
+  FILE *f = scr_fs_fopen(path, "rb");
   if (!f) {
     scr_fs_throw(errno, "open", path);
     return NULL;
@@ -2001,11 +2054,6 @@ ScrStr *scr_fs_read_file(ScrStr *path) {
   free(buf);
   return s;
 }
-
-#ifdef _WIN32
-static WCHAR *scr_fs_win_wide(const ScrStr *path);
-static int scr_fs_win_errno(DWORD error);
-#endif
 
 static ScrStr *scr_fs_realpath_common(ScrStr *path, const char *op) {
 #ifdef _WIN32
@@ -2091,7 +2139,7 @@ ScrStr *scr_fs_realpath_promise(ScrStr *path) {
 }
 
 static void scr_fs_write_common(ScrStr *path, ScrStr *data, const char *mode) {
-  FILE *f = fopen(path->data, mode);
+  FILE *f = scr_fs_fopen(path, mode);
   if (!f) {
     scr_fs_throw(errno, "open", path);
     return;
@@ -3785,6 +3833,14 @@ ScrStats *scr_fs_fstat(double fd) {
 }
 
 ScrArr *scr_fs_readdir(ScrStr *path) {
+#ifdef _WIN32
+  ScrScandir *scan = scr_fs_scandir(path);
+  if (!scan) return NULL;
+  ScrArr *arr = scr_arr_new(SCR_ELEM_STR, scr_fs_scandir_count(scan));
+  for (size_t i = 0; i < scr_fs_scandir_count(scan); i++) scr_arr_push_ref(arr, scr_fs_scandir_name(scan, i));
+  scr_fs_scandir_free(scan);
+  return arr;
+#else
   DIR *d = opendir(path->data);
   if (!d) {
     scr_fs_throw(errno, "scandir", path); /* Node reports scandir */
@@ -3798,6 +3854,7 @@ ScrArr *scr_fs_readdir(ScrStr *path) {
   }
   closedir(d);
   return arr; /* OS order, exactly like Node (unsorted) */
+#endif
 }
 
 /* ── the withFileTypes scandir snapshot ──────────────────────────────
@@ -3814,6 +3871,7 @@ struct ScrScandir {
   unsigned char *kinds;
 };
 
+#ifndef _WIN32
 static unsigned char scr_dirent_kind_of_mode(mode_t m) {
   if (S_ISREG(m)) return 1;
   if (S_ISDIR(m)) return 2;
@@ -3828,8 +3886,72 @@ static unsigned char scr_dirent_kind_of_mode(mode_t m) {
   if (S_ISBLK(m)) return 7;
   return 0;
 }
+#endif
+
+#ifdef _WIN32
+static ScrScandir *scr_fs_scandir_windows(ScrStr *path) {
+  WCHAR *wide = scr_fs_win_wide(path);
+  if (!wide) { scr_fs_throw(scr_fs_win_errno(GetLastError()), "scandir", path); return NULL; }
+  DWORD attrs = GetFileAttributesW(wide);
+  if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+    int error = attrs == INVALID_FILE_ATTRIBUTES ? scr_fs_win_errno(GetLastError()) : ENOTDIR;
+    free(wide);
+    scr_fs_throw(error, "scandir", path);
+    return NULL;
+  }
+  size_t length = wcslen(wide);
+  WCHAR *pattern = realloc(wide, (length + 3) * sizeof *wide);
+  if (!pattern) { free(wide); scr_trap("scriptc: out of memory\n"); }
+  if (length && pattern[length - 1] != L'\\' && pattern[length - 1] != L'/') pattern[length++] = L'\\';
+  pattern[length++] = L'*';
+  pattern[length] = 0;
+  WIN32_FIND_DATAW entry;
+  HANDLE search = FindFirstFileW(pattern, &entry);
+  DWORD error = search == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+  free(pattern);
+  if (search == INVALID_HANDLE_VALUE && error != ERROR_FILE_NOT_FOUND) {
+    scr_fs_throw(scr_fs_win_errno(error), "scandir", path);
+    return NULL;
+  }
+  ScrScandir *scan = calloc(1, sizeof *scan);
+  if (!scan) { if (search != INVALID_HANDLE_VALUE) FindClose(search); scr_trap("scriptc: out of memory\n"); }
+  if (search == INVALID_HANDLE_VALUE) return scan;
+  do {
+    if (wcscmp(entry.cFileName, L".") == 0 || wcscmp(entry.cFileName, L"..") == 0) continue;
+    ScrStr *name = scr_fs_win_utf8(entry.cFileName, wcslen(entry.cFileName));
+    if (!name) {
+      error = GetLastError();
+      FindClose(search);
+      scr_fs_scandir_free(scan);
+      scr_fs_throw(scr_fs_win_errno(error), "scandir", path);
+      return NULL;
+    }
+    if (scan->len == scan->cap) {
+      scan->cap = scan->cap ? scan->cap * 2 : 8;
+      scan->names = realloc(scan->names, scan->cap * sizeof *scan->names);
+      scan->kinds = realloc(scan->kinds, scan->cap);
+      if (!scan->names || !scan->kinds) scr_trap("scriptc: out of memory\n");
+    }
+    scan->names[scan->len] = name;
+    scan->kinds[scan->len++] = (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+        scr_stats_is_link_tag(entry.dwReserved0) ? 3 :
+        (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 2 : 1;
+  } while (FindNextFileW(search, &entry));
+  error = GetLastError();
+  FindClose(search);
+  if (error != ERROR_NO_MORE_FILES) {
+    scr_fs_scandir_free(scan);
+    scr_fs_throw(scr_fs_win_errno(error), "scandir", path);
+    return NULL;
+  }
+  return scan;
+}
+#endif
 
 ScrScandir *scr_fs_scandir(ScrStr *path) {
+#ifdef _WIN32
+  return scr_fs_scandir_windows(path);
+#else
   DIR *d = opendir(path->data);
   if (!d) {
     scr_fs_throw(errno, "scandir", path); /* Node reports scandir */
@@ -3894,6 +4016,7 @@ ScrScandir *scr_fs_scandir(ScrStr *path) {
   }
   closedir(d);
   return s;
+#endif
 }
 
 size_t scr_fs_scandir_count(const ScrScandir *s) { return s ? s->len : 0; }

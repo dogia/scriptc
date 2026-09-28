@@ -10661,6 +10661,24 @@
     "<repo>/tests/corpus/unicode-process-argv.ts"
    ],
    "diags": []
+  },
+  "<repo>/tests/corpus/json-guarded-map-values.ts": {
+   "order": [
+    "<repo>/tests/corpus/json-guarded-map-values.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/fs-native-realpath.ts": {
+   "order": [
+    "<repo>/tests/corpus/fs-native-realpath.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/async-local-typed-results.ts": {
+   "order": [
+    "<repo>/tests/corpus/async-local-typed-results.ts"
+   ],
+   "diags": []
   }
  }
 }

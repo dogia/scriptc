@@ -203,6 +203,7 @@ export const LIB_FN_SYMS: Record<string, string> = {
   "fs.rmdirSync": "scr_fs_rmdir",
   "fs.readdirSync": "scr_fs_readdir",
   "fs.realpathSync": "scr_fs_realpath",
+  "fs.realpathNativeSync": "scr_fs_realpath_promise",
   "fs.unlinkSync": "scr_fs_unlink",
   "fs.chmodSync": "scr_fs_chmod",
   "fs.copyFileSync": "scr_fs_copyfile",

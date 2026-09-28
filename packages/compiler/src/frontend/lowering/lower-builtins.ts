@@ -4368,20 +4368,20 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
     const loc = locOf(call);
     if (name === "getStore" && call.arguments.length === 0) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
-      return { kind: "libCall", fn: "als.get", args: [receiver], type: DYN, loc };
+      return alsTypedResult(lowerer, call, { kind: "libCall", fn: "als.get", args: [receiver], type: DYN, loc });
     }
     if (name === "run" && call.arguments.length >= 2) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
       const value = dcMessageArg(lowerer, call.arguments[0]!);
       const fn = dcSubscriberArg(lowerer, call.arguments[1]!);
       const rest = dcTraceArgsArr(lowerer, call.arguments.slice(2), loc);
-      return { kind: "libCall", fn: "als.run", args: [receiver, value, fn, rest], type: DYN, loc };
+      return alsTypedResult(lowerer, call, { kind: "libCall", fn: "als.run", args: [receiver, value, fn, rest], type: DYN, loc });
     }
     if (name === "exit" && call.arguments.length >= 1) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
       const fn = dcSubscriberArg(lowerer, call.arguments[0]!);
       const rest = dcTraceArgsArr(lowerer, call.arguments.slice(1), loc);
-      return { kind: "libCall", fn: "als.exitRun", args: [receiver, fn, rest], type: DYN, loc };
+      return alsTypedResult(lowerer, call, { kind: "libCall", fn: "als.exitRun", args: [receiver, fn, rest], type: DYN, loc });
     }
     if (name === "enterWith" && call.arguments.length === 1) {
       const receiver = lowerer.lowerExprExpecting(access.expression, F64);
@@ -4398,6 +4398,18 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
       "run(store, fn, ...args), exit(fn, ...args), getStore(), enterWith(store), and disable() are the supported AsyncLocalStorage members",
       lowerer.checker.getSymbolAtLocation(access.name),
     );
+  }
+
+  /** The runtime carries a tagged value, while a typed ALS call promises
+   * its generic store/callback result. Convert at that boundary so inferred
+   * locals and immediate method calls share the same checked representation.
+   * Untyped JS and unknown stores keep the original dynamic value. */
+  function alsTypedResult(lowerer: Lowerer, call: ts.CallExpression, value: IrExpr): IrExpr {
+    const expected = lowerer.mapTypeOf(lowerer.typeOf(call));
+    // Promises already use the runtime's dynamic async path; unlike class
+    // capsules, boxed typed promises do not have a checked extraction ABI.
+    if (!expected || expected.kind === "dyn" || expected.kind === "void" || expected.kind === "promise") return value;
+    return lowerer.coerceInto(call, value, expected);
   }
 
   /** Property reads on Channel receivers: `.name` (the registration
@@ -4823,6 +4835,19 @@ export function lowerForkCall(lowerer: Lowerer, expr: ts.CallExpression, loc: Sr
       }
       const argNode = call.arguments[0]!;
       let value = lowerer.lowerExpr(argNode);
+      // Optional Map/array reads and partially narrowed unions keep their
+      // storage representation when lowered as ordinary arguments. Select
+      // the JSON walker from the proven use-site type, using a checked
+      // conversion so a stale capture cannot read an impossible payload.
+      if (value.type.kind === "union") {
+        const narrowed = lowerer.mapTypeOf(lowerer.typeOf(argNode));
+        if (narrowed && !isUnitType(narrowed) && narrowed.kind !== "void") {
+          const helper = narrowed.kind === "union"
+            ? lowerer.narrowedRetagHelper(argNode, value.type.unionId, narrowed.unionId, loc)
+            : lowerer.narrowedArmHelper(value.type.unionId, narrowed, loc);
+          if (helper) value = { kind: "call", callee: helper, args: [value], type: narrowed, loc };
+        }
+      }
       const replacer = call.arguments[1];
       if (replacer && !jsonNullishArgument(lowerer, replacer)) {
         const callback = lowerJsonCallback(lowerer, replacer, "replacer");

@@ -3596,6 +3596,8 @@ export type IrLibFn =
   /** realpath(3) with Node's error shape (syscall "lstat" in the message,
    * Node's own spelling for realpathSync failures). +1 fresh string. */
   | "fs.realpathSync"
+  /** Native realpath with syscall "realpath" on failure. +1 fresh string. */
+  | "fs.realpathNativeSync"
   /** kill(2) with Node's exact semantics and error shapes: the pid must be
    * an int32 (else the ERR_INVALID_ARG_TYPE TypeError text), the named
    * form resolves Node's signal-name table (unknown names throw the
@@ -6108,6 +6110,23 @@ export function isClassOwnEnumerableFieldName(name: string): boolean {
   return !name.startsWith("#") && !name.startsWith("%");
 }
 
+/** A class capsule can always preserve its exact native identity. Its
+ * optional property view additionally needs converters in both directions;
+ * fields such as Maps may remain opaque without preventing the round trip. */
+export function classDynViewSupported(
+  fields: readonly { name: string; type: IrType }[],
+  getRecord: (shapeId: string) => IrRecordShape | undefined,
+  getUnion: (unionId: string) => IrUnionDef | undefined,
+): boolean {
+  const checkable = (type: IrType): boolean => {
+    if (isDynTypedRefType(type) || isUnitType(type)) return true;
+    if (type.kind === "union") return getUnion(type.unionId)?.arms.every(checkable) ?? false;
+    return canDynCheckTo(type, getRecord, getUnion);
+  };
+  return fields.every((field) => !isClassOwnEnumerableFieldName(field.name) ||
+    (canConvertToDyn(field.type, getRecord, getUnion) && checkable(field.type)));
+}
+
 /** A static type that CONVERTS into a dyn value — the dynFrom domain:
  * JSON-safe data, bytes<u8> (payload copied), identity-preserving class
  * references, undefined-armed unions of those arms, boxable function types,
@@ -7784,6 +7803,7 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "dyn.defineProps",
   "process.chdir",
   "fs.realpathSync",
+  "fs.realpathNativeSync",
   "fs.readFileSync",
   "fs.writeFileSync",
   "fs.appendFileSync",

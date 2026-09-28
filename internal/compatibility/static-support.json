@@ -46,6 +46,7 @@
     "node-builtin.dns": ["tests/corpus/2597-dgram-send-ladders.cjs"],
     "node-builtin.events": ["tests/corpus/1677-emitter-listeners.ts", "tests/corpus/2620-ee-override-once-order.ts"],
     "node-builtin.fs": ["tests/corpus/1403-buffer-fs.ts", "tests/corpus/2595-fs-arg-ladders.cjs", "tests/corpus/2919-fs-function-values.ts", "tests/corpus/2920-fs-promises-function-values.ts"],
+    "node-builtin.fs.realpathSync.native": ["tests/corpus/fs-native-realpath.ts"],
     "node-builtin.fs.fchmodSync": ["tests/corpus/2950-fs-descriptor-publication.ts"],
     "node-builtin.fs.fstatSync": ["tests/corpus/2950-fs-descriptor-publication.ts"],
     "node-builtin.fs.fsyncSync": ["tests/corpus/2950-fs-descriptor-publication.ts"],

@@ -8,8 +8,8 @@
     "tiers": {
       "static": {
         "replace-refusal": 47,
-        "verify-gap": 2572,
-        "audit-partial": 593,
+        "verify-gap": 2571,
+        "audit-partial": 594,
         "classify": 2,
         "implement": 81
       },
@@ -39046,12 +39046,14 @@
       "priority": "high",
       "tiers": {
         "static": {
-          "status": "not-implemented",
-          "action": "verify-gap",
-          "verification": "registry-gap",
-          "confidence": "low",
-          "source": "compiler-unmatched:fs",
-          "tests": []
+          "status": "partial",
+          "action": "audit-partial",
+          "verification": "test-backed",
+          "confidence": "high",
+          "source": "surface-manifest:node-builtin.fs.realpathSync.native",
+          "tests": [
+            "tests/corpus/fs-native-realpath.ts"
+          ]
         },
         "dynamic": {
           "status": "not-implemented",

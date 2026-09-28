@@ -162,3 +162,8 @@ export function ts7DocumentFile(document: string | { uri: string }): string {
   }
   return "^/" + scheme + "/" + authority + "/" + path;
 }
+/** tsgo's file identities use slashes on Windows. POSIX backslashes are
+ * literal filename characters and must survive callback round trips. */
+export function tsgoPath(path: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? path.replace(/\\/g, "/") : path;
+}

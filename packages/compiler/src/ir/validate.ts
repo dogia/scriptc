@@ -222,6 +222,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "net.getAutoSelTimeout": { argTypes: [], result: F64 },
   "net.setAutoSelTimeout": { argTypes: [F64], result: VOID },
   "fs.realpathSync": { argTypes: [STRING], result: STRING },
+  "fs.realpathNativeSync": { argTypes: [STRING], result: STRING },
   "os.userName": { argTypes: [], result: STRING },
   "os.userShell": { argTypes: [], result: STRING },
   "os.userHomedir": { argTypes: [], result: STRING },

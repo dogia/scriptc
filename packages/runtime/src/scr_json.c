@@ -780,18 +780,27 @@ static void scr_dyn_typed_ref_preserve_children(
   }
 }
 
+ScrDyn *scr_dyn_class_view_unavailable(void *ptr) {
+  (void)ptr;
+  static const char message[] = "class fields cannot be represented as checked-dynamic properties";
+  scr_throw_error_msg(SCR_ERR_TYPE, message, sizeof message - 1);
+  return scr_dyn_retain(scr_dyn_undefined());
+}
+
 ScrDyn *scr_dyn_typed_ref_materialize(const ScrDyn *d) {
   ScrDyn *capsule = (ScrDyn *)d;
+  ScrDyn *fresh = capsule->v.typed_ref.materialize(capsule->v.typed_ref.ptr);
+  if (scr_exc_pending()) {
+    scr_dyn_release(fresh);
+    return scr_dyn_retain(scr_dyn_undefined());
+  }
   if (!capsule->v.typed_ref.materialized) {
-    capsule->v.typed_ref.materialized =
-        capsule->v.typed_ref.materialize(capsule->v.typed_ref.ptr);
+    capsule->v.typed_ref.materialized = fresh;
   } else {
     /* Keep the stable dyn object identity while refreshing its contents
      * from the live typed source. The fresh snapshot owns exactly one
      * reference; swapping payloads lets its release dispose the old
      * detached contents without changing the cached node's address. */
-    ScrDyn *fresh =
-        capsule->v.typed_ref.materialize(capsule->v.typed_ref.ptr);
     scr_dyn_typed_ref_preserve_children(
         capsule->v.typed_ref.materialized, fresh);
     size_t cached_rc = capsule->v.typed_ref.materialized->rc;

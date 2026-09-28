@@ -3,7 +3,7 @@ import { InternalCompilerError } from "../../errors.js";
  * expression lands in a fresh C temp, with RC ownership tracked on the
  * emitter's frames (see the discipline comment in emitter core). */
 import type { CEmitter, Temp } from "./c-emitter.js";
-import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM_T, CHILDWRITER_T, DYN, F64, type IrExpr, type IrLibFn, type IrRecordShape, type IrType, islandPromisePayloadTag, isClassOwnEnumerableFieldName, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, MAY_THROW_LIB_FNS, NETSOCKET_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, typeKey } from "../../ir/ir.js";
+import { arrayOf, BOOL, BYTES_U8, bytesOf, canMarshalFuncIntoIsland, CHILDSTREAM_T, CHILDWRITER_T, DYN, F64, type IrExpr, type IrLibFn, type IrRecordShape, type IrType, islandPromisePayloadTag, classDynViewSupported, isClassOwnEnumerableFieldName, isDynTypedRefType, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isRefCounted, isUnitType, MAY_THROW_LIB_FNS, NETSOCKET_T, RUNTIME_ERROR_CLASSES, STRING, typeEquals, typeKey } from "../../ir/ir.js";
 import { BYTES_NUM_KIND_C, BYTES_NUM_VAR_C, bytesElemKindC, cDecl, cFnPtrCast, cNumberLiteral, cStringLiteral, cType, DV_GET_KIND_C, DV_SET_KIND_C, elemAccess, mapKeyAccess, mapKeyKindC, mapValKindC, releaseCallC, retainCallC, vAdapters } from "./types.js";
 import { mangleClassNew, mangleClassRetain, mangleClassStruct, mangleField, mangleFnClosure, mangleFunction, mangleGlobal, mangleLocal, mangleRecordClone, mangleRecordNew, mangleRecordStruct, mangleVtStruct } from "../mangle.js";
 import { OVERFLOW_MEMBER } from "./shapes.js";
@@ -237,6 +237,13 @@ function streamTypedRefAdapter(
   /* Register before walking children: recursive record/array types refer
    * back to this prototype without recursively generating helpers. */
   ctx.adapters.set(key, adapter);
+  if (isDynTypedRefType(t)) {
+    const fields = emitter.classMeta.get(t.className)?.def.fields;
+    if (fields && !classDynViewSupported(fields, (id) => emitter.recordsById.get(id), (id) => emitter.unionsById.get(id))) {
+      adapter.snapshot = "scr_dyn_class_view_unavailable";
+      return adapter;
+    }
+  }
   emitter.walkerProtos.push(
     `static ScrDyn *${snapshot}(void *sc_p); /* materialize live stream value ${key} */`,
   );
@@ -4856,6 +4863,8 @@ function emitFilesystemLibCall(state: LibCallState): Temp {
           }
           case "fs.realpathSync":
             return finish(`scr_fs_realpath(${arg(0)})`);
+          case "fs.realpathNativeSync":
+            return finish(`scr_fs_realpath_promise(${arg(0)})`);
           // The fs option forms (scr_lib.c) — all in the may-throw seed,
           // like the rest of sync fs.
           case "fs.mkdirRecursiveSync":

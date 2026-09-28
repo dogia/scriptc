@@ -3578,6 +3578,7 @@ ScrDyn *scr_dyn_new_typed_ref(
 bool scr_dyn_typed_ref_is(
     const ScrDyn *d, const char *type_key, size_t type_key_len);
 void *scr_dyn_typed_ref_unbox(const ScrDyn *d); /* +1 */
+ScrDyn *scr_dyn_class_view_unavailable(void *ptr);
 ScrDyn *scr_dyn_typed_ref_materialize(const ScrDyn *d); /* +1 */
 void scr_dyn_typed_ref_commit(ScrDyn *d);
 void *scr_dyn_typed_ref_cached_cast(

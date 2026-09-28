@@ -209,7 +209,7 @@ export function trackedAccessibleEntries(
     files.sort();
     directories.sort();
     const answer = { files, directories };
-    record({ op: "entries", path, ...answer });
+    record({ op: "entries", path, files, directories });
     return answer;
   } catch {
     // Enumeration can fail even while the path remains a directory. Preserve

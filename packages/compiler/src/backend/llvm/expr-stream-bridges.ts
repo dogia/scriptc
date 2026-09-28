@@ -1,7 +1,7 @@
 /* Focused LLVM expression emission extracted from emitter.ts. */
 import { InternalCompilerError } from "../../errors.js";
 import { streamTypedRefEligible } from "../../ir/analysis.js";
-import { type IrType, isClassOwnEnumerableFieldName, isDynTypedRefType, isRefCounted, typeKey } from "../../ir/ir.js";
+import { type IrType, classDynViewSupported, isClassOwnEnumerableFieldName, isDynTypedRefType, isRefCounted, typeKey } from "../../ir/ir.js";
 import { mangleRecordStruct } from "../mangle.js";
 import { BlockBuilder } from "./blocks.js";
 import { classFieldIndex, classStructSym } from "./classes.js";
@@ -519,6 +519,14 @@ export function streamTypedRefMaterializeAdapter(host: LlvmEmitterContext,
       `${ctx.prefix}_nested_${ctx.adapters.size}`;
     const adapter: LlStreamTypedRefAdapter = { snapshot, commit: "null" };
     ctx.adapters.set(key, adapter);
+    if (isDynTypedRefType(t)) {
+      const fields = host.classMeta.get(t.className)?.def.fields;
+      if (fields && !classDynViewSupported(fields, (id) => host.recordsById.get(id), (id) => host.unionsById.get(id))) {
+        host.declare(`declare ptr @scr_dyn_class_view_unavailable(ptr)`);
+        adapter.snapshot = "scr_dyn_class_view_unavailable";
+        return adapter;
+      }
+    }
     adapter.commit = host.streamTypedRefCommitAdapter(t, snapshot);
     const B = new BlockBuilder();
 
