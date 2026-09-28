@@ -4723,13 +4723,15 @@ function emitFilesystemLibCall(state: LibCallState): Temp {
             return finish(
               `(scr_fs_stream_opts_chk(${arg(0)}, ${arg(1)}, ${arg(2)}), ${isRefCounted(e.type) ? `(${cType(e.type).trim()})NULL` : "0"})`,
             );
-          // The fs Buffer forms (scr_bytes_io.c): the sync pair throws
+          // The fs Buffer forms (scr_bytes_io.c): the sync forms throw
           // like the utf8 forms (may-throw seed set); the promise form
           // rejects instead.
           case "fs.readFileSyncBytes":
             return finish(`scr_fs_read_file_bytes(${arg(0)})`);
           case "fs.writeFileSyncBytes":
             return finish(`scr_fs_write_file_bytes(${arg(0)}, ${arg(1)})`);
+          case "fs.appendFileSyncBytes":
+            return finish(`scr_fs_append_file_bytes(${arg(0)}, ${arg(1)})`);
           case "fsp.readFileBytes":
             return finish(`scr_fsp_read_file_bytes(${arg(0)})`);
           // zlib (scr_zlib.c — linked only when these appear on the IR):

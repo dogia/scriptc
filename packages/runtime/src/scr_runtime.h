@@ -5576,6 +5576,7 @@ ScrBytes *scr_fs_read_file_bytes(ScrStr *path); /* +1 */
 ScrDyn *scr_fs_read_file_sync_dyn(ScrStr *path, const ScrDyn *enc);
 ScrBytes *scr_fs_read_fd_bytes(double fd);      /* +1; the fd form (scr_lib.c) */
 void scr_fs_write_file_bytes(ScrStr *path, const ScrBytes *data);
+void scr_fs_append_file_bytes(ScrStr *path, const ScrBytes *data);
 
 /* fs/promises readFile(path) [no encoding]: the same read behind an
  * already-settled promise — failure REJECTS (catchable at the await). */

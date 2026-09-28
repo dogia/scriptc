@@ -971,6 +971,7 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "emitter.setDefaultMaxChk": { argTypes: [DYN, STRING], result: VOID },
   "fs.readFileSyncBytes": { argTypes: [STRING], result: BYTES_U8 },
   "fs.writeFileSyncBytes": { argTypes: [STRING, BYTES_U8], result: VOID },
+  "fs.appendFileSyncBytes": { argTypes: [STRING, BYTES_U8], result: VOID },
   "fsp.readFileBytes": { argTypes: [STRING], result: { kind: "promise", inner: BYTES_U8 } },
   "zlib.deflateSync": { argTypes: [BYTES_U8], result: BYTES_U8 },
   "zlib.inflateSync": { argTypes: [BYTES_U8], result: BYTES_U8 },

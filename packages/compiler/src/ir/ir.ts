@@ -3432,13 +3432,14 @@ export type IrLibFn =
    * "defaultMaxListeners" for the module-property assignment). */
   | "emitter.setMaxChk"
   | "emitter.setDefaultMaxChk"
-  /** The Buffer forms of the fs quartet: readFileSync(path) with NO
-   * encoding → bytes<u8> (+1), writeFileSync(path, bytes), and the
+  /** The Buffer forms of fs: readFileSync(path) with NO
+   * encoding → bytes<u8> (+1), writeFileSync/appendFileSync(path, bytes), and the
    * fs/promises readFile(path) no-encoding form (an already-settled
    * promise, rejecting on failure like the other fsp members). The sync
-   * pair THROWS catchably on failure exactly like the utf8 forms. */
+   * forms THROW catchably on failure exactly like the utf8 forms. */
   | "fs.readFileSyncBytes"
   | "fs.writeFileSyncBytes"
+  | "fs.appendFileSyncBytes"
   | "fsp.readFileBytes"
   /** node:zlib (scr_zlib.c — native-toolchain.ts compiles/links it ONLY when these
    * appear on the IR, the regex/libcurl gating precedent): one-shot zlib,
@@ -7845,6 +7846,7 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   "emitter.setDefaultMaxChk",
   "fs.readFileSyncBytes",
   "fs.writeFileSyncBytes",
+  "fs.appendFileSyncBytes",
   "zlib.inflateSync",
   "zlib.inflateRawSync",
   "zlib.gunzipSync",

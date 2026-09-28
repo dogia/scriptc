@@ -111,8 +111,8 @@ ScrDyn *scr_fs_read_file_sync_dyn(ScrStr *path, const ScrDyn *enc) {
   }
 }
 
-void scr_fs_write_file_bytes(ScrStr *path, const ScrBytes *data) {
-  FILE *f = fopen(path->data, "wb");
+static void scr_fs_write_bytes_common(ScrStr *path, const ScrBytes *data, const char *mode) {
+  FILE *f = fopen(path->data, mode);
   if (!f) {
     scr_fs_throw(errno, "open", path);
     return;
@@ -125,6 +125,14 @@ void scr_fs_write_file_bytes(ScrStr *path, const ScrBytes *data) {
     return;
   }
   if (fclose(f) != 0) scr_fs_throw(errno, "close", path);
+}
+
+void scr_fs_write_file_bytes(ScrStr *path, const ScrBytes *data) {
+  scr_fs_write_bytes_common(path, data, "wb");
+}
+
+void scr_fs_append_file_bytes(ScrStr *path, const ScrBytes *data) {
+  scr_fs_write_bytes_common(path, data, "ab");
 }
 
 ScrPromise *scr_fsp_read_file_bytes(ScrStr *path) {

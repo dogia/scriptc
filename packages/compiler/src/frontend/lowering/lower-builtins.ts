@@ -2270,19 +2270,19 @@ function lowerFsSyncBufferWindow(
         : { kind: "numLit", value: 0, type: F64, loc };
       return { kind: "libCall", fn: "fs.accessSync", args: [path, mode], type: VOID, loc };
     }
-    if (bi.module === "fs" && bi.member === "writeFileSync" && expr.arguments.length === 2) {
+    if (bi.module === "fs" && (bi.member === "writeFileSync" || bi.member === "appendFileSync") && expr.arguments.length === 2) {
       const dataIr = lowerer.mapTypeOf(lowerer.typeOf(expr.arguments[1]!));
       if (dataIr?.kind === "bytes") {
         if (dataIr.elem !== "u8") {
           lowerer.noLowering(
-            `writeFileSync of '${lowerer.fmt(dataIr)}' data`,
+            `${bi.member} of '${lowerer.fmt(dataIr)}' data`,
             expr.arguments[1]!,
             "byte writes take Uint8Array/Buffer data",
           );
         }
         const path = lowerer.lowerExprExpecting(expr.arguments[0]!, STRING);
         const data = lowerer.lowerExprExpecting(expr.arguments[1]!, BYTES_U8);
-        return { kind: "libCall", fn: "fs.writeFileSyncBytes", args: [path, data], type: VOID, loc };
+        return { kind: "libCall", fn: bi.member === "appendFileSync" ? "fs.appendFileSyncBytes" : "fs.writeFileSyncBytes", args: [path, data], type: VOID, loc };
       }
     }
     // writeFileSync(p, data, options) / fs.promises.writeFile(p, data,
