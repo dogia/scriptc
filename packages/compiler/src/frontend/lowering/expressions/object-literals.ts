@@ -736,7 +736,10 @@ export function lowerObjectLiteral(lowerer: Lowerer, expr: ts.ObjectLiteralExpre
         const armShape = lowerer.shapes.get(recordArms[0]!.shapeId);
         if (
           (mapped?.kind !== "record" || mapped.shapeId !== recordArms[0]!.shapeId) &&
-          !armShape?.tuple
+          !armShape?.tuple &&
+          // `{} | undefined` supplies no layout for a populated options
+          // literal, just as a bare empty-record context supplies none.
+          (expr.properties.length === 0 || (armShape && (armShape.fields.length > 0 || armShape.indexValue)))
         ) {
           mapped = recordArms[0]!;
         }

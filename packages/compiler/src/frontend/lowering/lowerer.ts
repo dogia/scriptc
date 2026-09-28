@@ -84,6 +84,7 @@ import {
   formatIrType,
   ISLAND_AMBIENT_TYPES,
   isUnitOnlyTsType,
+  jsDefaultParameterType,
   mapType,
   ShapeRegistry,
   type DeclaredOrderPriorityRef,
@@ -918,6 +919,7 @@ function jsFallbackFunctionType(lowerer: Lowerer, node: ts.Node, t: ts.Type): Ir
     // `enabled = true`) rather than that call-site type, so recover the
     // syntactic optionality from the parameter declaration.
     const decl = lowerer.checker.valueDeclarationOf(p);
+    mapped = jsDefaultParameterType(decl, mapped, lowerer.shapes, lowerer.unions);
     const optional =
       decl !== undefined &&
       ts.isParameter(decl) &&
@@ -8741,6 +8743,16 @@ export class Lowerer {
             const pickedT = abi;
             srcType = pickedT;
             srcRef = () => ({ kind: "varRef", localId: src.id, type: pickedT, loc });
+            // An empty object pattern still rejects null after applying
+            // the default. With no property reads, nothing else performs
+            // RequireObjectCoercible; use V8's default-expression spelling.
+            if (abi.kind === "dyn" && ts.isObjectBindingPattern(decl.name) && decl.name.elements.length === 0) {
+              prologue.push({
+                kind: "exprStmt",
+                expr: { kind: "dynDestrCheck", value: srcRef(), spelling: "(intermediate value)(intermediate value)(intermediate value)", type: DYN, loc },
+                loc,
+              });
+            }
             this.lowerBindingPattern(decl.name, srcRef, srcType, true, prologue);
             return;
           }

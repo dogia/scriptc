@@ -8584,15 +8584,35 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/generic-visitor-void.ts": {
+   "order": [
+    "<repo>/tests/corpus/generic-visitor-void.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/js-declared-fields.cjs": {
    "order": [
     "<repo>/tests/corpus/js-declared-fields.cjs"
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/js-default-options/main.ts": {
+   "order": [
+    "<repo>/tests/corpus/js-default-options/options.js",
+    "<repo>/tests/corpus/js-default-options/index.js",
+    "<repo>/tests/corpus/js-default-options/main.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/js-static-registries.cjs": {
    "order": [
     "<repo>/tests/corpus/js-static-registries.cjs"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/optional-node-list-iteration.ts": {
+   "order": [
+    "<repo>/tests/corpus/optional-node-list-iteration.ts"
    ],
    "diags": []
   },

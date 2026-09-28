@@ -10,7 +10,7 @@ import { lowerGenMethodCall } from "./lower-generators.js";
 import { BIGINT_T, BOOL, CAUGHT, DYN, F64, IrExpr, IrFunction, IrLocal, IrParam, IrStmt, IrType, JSVAL, STRING, SYMBOL_T, SrcLoc, UNDEFINED_T, VOID, arrayOf, canBoxFuncIntoDyn, canConvertToDyn, canDynCheckTo, canMarshalTypedFuncIntoIsland, ffiClassType, ffiSourceParamTypes, funcOf, isFfiCallbackParam, isFfiContextParam, isFfiReleaseParam, isUnitType, shapeHasAccessorSlots, typeEquals } from "../../ir/ir.js";
 import type { IrFfiCallbackParam, IrFfiCallbackParamClass, IrFfiImport, IrFfiReleaseParam } from "../../ir/ir.js";
 import { isJsSourceFile, isNodeEsmFile, locOf, requireSpecOf } from "../program.js";
-import { genResultRecord, isGenericCallableMemberType, typeKey } from "../type-mapper.js";
+import { genResultRecord, isGenericCallableMemberType, jsDefaultParameterType, typeKey } from "../type-mapper.js";
 import { PoisonError, dynFallbackType, dynUndefinedExpr, importCallHandleType, jsFuncNameOf, newFnCtx, nodeThrowExpr, staticImportNamespaceType } from "./lowerer.js";
 import { enforceLibBoundary } from "./lib-boundary.js";
 import { NARROW_FIRST, STRING_INDEX_METHODS, STR_METHODS, builtinFenceHintOf, builtinModuleFnOf } from "./surfaces.js";
@@ -296,7 +296,7 @@ export interface GenericInstance {
         // identifier-param default below; the callee prologue picks the
         // default when the argument was omitted or undefined, then the
         // pattern destructures the picked value (declareParams).
-        const raw = lowerer.irTypeOf(param.name);
+        const raw = jsDefaultParameterType(param, lowerer.irTypeOf(param.name), lowerer.shapes, lowerer.unions);
         // A DYNAMIC-TIER pattern source (`function f({} = a)` with
         // `a: any` — jsval for island values, dyn for the checked-dynamic
         // dyn): the slot holds its tier's undefined DIRECTLY, so the ABI
@@ -343,7 +343,7 @@ export interface GenericInstance {
       return { type, mode: "rest" };
     }
     if (param.initializer) {
-      const raw = lowerer.irTypeOf(param.name);
+      const raw = jsDefaultParameterType(param, lowerer.irTypeOf(param.name), lowerer.shapes, lowerer.unions);
       // A DYNAMIC-TIER defaulted param (`function f(x = a)` with `a: any`
       // — tsc types x any; jsval for island values, dyn for the checked-
       // dynamic dyn): the slot holds its tier's undefined directly, so
@@ -415,10 +415,10 @@ export interface GenericInstance {
     return params.map((declParam, i) => {
       const symbol = signature.getParameters()[i];
       const tsType = symbol ? lowerer.checker.getTypeOfSymbol(symbol) : lowerer.typeOf(declParam.name);
-      const mapped = lowerer.runtimeOptionalBindingType(
+      const mapped = jsDefaultParameterType(declParam, lowerer.runtimeOptionalBindingType(
         declParam.name,
         lowerer.mapTypeOf(tsType) ?? lowerer.irTypeOf(declParam.name),
-      );
+      ), lowerer.shapes, lowerer.unions);
       if (!mapped || mapped.kind === "void") lowerer.badType(blameOf?.(declParam, i) ?? declParam.name, tsType);
       if (declParam.dotDotDotToken) {
         if (mapped.kind !== "array") lowerer.badType(blameOf?.(declParam, i) ?? declParam.name, tsType);
