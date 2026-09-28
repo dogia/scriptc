@@ -99,7 +99,7 @@ async function buildStatic(entry: string, npmStatic: string[] | "auto"): Promise
 }
 
 describe(`npm-static pilots${sanitize ? " (sanitized)" : ""}`, () => {
-  test.each(["c", "llvm"] as const)("bundled class aliases preserve declared scalar method returns (%s)", async (backend) => {
+  test.each(["c", "llvm"] as const)("bundled class aliases preserve declared methods and callback fields (%s)", async (backend) => {
     const entry = join(pilotRoot, "bundled-methods-cli.ts");
     const { coverage } = analyze(entry, { npmStatic: "auto" });
     expect(coverage.npmStatic).toEqual([{ package: "bundled-methods", status: "static" }]);

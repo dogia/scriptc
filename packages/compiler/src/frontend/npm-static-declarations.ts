@@ -34,6 +34,7 @@ export type NpmStaticDeclarationProperties = ReadonlyMap<
 >;
 
 const SCALAR_METHOD_RETURNS = new Set(["string", "number", "boolean"]);
+const NULLABLE_VOID_CALLBACK = "(() => void) | null";
 
 export interface NpmStaticRuntimeClassTarget {
   specifier: string | null;
@@ -237,7 +238,21 @@ function nullableSelfType(
   return arms.includes(className) && arms.includes("null") ? `${className} | null` : null;
 }
 
-/** Extracts the first declaration-backed field slice: nullable self links. */
+function nullableVoidCallbackType(node: ts.TypeNode): string | null {
+  if (!ts.isUnionTypeNode(node) || node.types.length !== 2) return null;
+  let callback = false;
+  let nullable = false;
+  for (let arm of node.types) {
+    while (ts.isParenthesizedTypeNode(arm)) arm = arm.type;
+    if (ts.isLiteralTypeNode(arm) && arm.literal.kind === ts.SyntaxKind.NullKeyword) nullable = true;
+    else if (ts.isFunctionTypeNode(arm) && arm.parameters.length === 0 &&
+        (arm.typeParameters?.length ?? 0) === 0 && arm.type.kind === ts.SyntaxKind.VoidKeyword) callback = true;
+    else return null;
+  }
+  return callback && nullable ? NULLABLE_VOID_CALLBACK : null;
+}
+
+/** Extracts nullable self links and zero-argument void callback fields. */
 export function parseNpmStaticDeclarationProperties(
   declarationPath: string,
   source: string,
@@ -268,7 +283,7 @@ export function parseNpmStaticDeclarationProperties(
       ) {
         continue;
       }
-      const type = nullableSelfType(member.type, sourceFile, className);
+      const type = nullableSelfType(member.type, sourceFile, className) ?? nullableVoidCallbackType(member.type);
       if (type !== null) properties.set(member.name.text, type);
     }
     if (properties.size > 0) classes.set(className, properties);
@@ -631,7 +646,9 @@ export function applyNpmStaticDeclarationOverloads(
   };
 }
 
-/** Injects nullable-self property JSDoc at matching constructor writes. */
+/** Projects self links at constructor null writes and nullable callbacks at
+ * field definitions. Local subclasses retain a callback's nullable storage
+ * type when an arrow replaces null, keeping caller inference slot-exact. */
 export function applyNpmStaticDeclarationProperties(
   sourcePath: string,
   source: string,
@@ -641,10 +658,61 @@ export function applyNpmStaticDeclarationProperties(
   const sourceFile = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const exported = exportedClassNames(sourceFile);
   const inserts: { offset: number; text: string }[] = [];
+  const classes = new Map(sourceFile.statements.flatMap((statement) =>
+    ts.isClassDeclaration(statement) && statement.name !== undefined ? [[statement.name.text, statement] as const] : [],
+  ));
+  const effectiveProperties = new Map<string, ReadonlyMap<string, string>>();
+  const collecting = new Set<string>();
+  const propertiesOf = (name: string): ReadonlyMap<string, string> => {
+    const existing = effectiveProperties.get(name);
+    if (existing) return existing;
+    if (collecting.has(name)) return new Map();
+    collecting.add(name);
+    const statement = classes.get(name);
+    const base = statement?.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
+    const properties = new Map<string, string>();
+    if (base && ts.isIdentifier(base) && classes.has(base.text)) {
+      // Self-link types belong to their own class. Only the callback ABI
+      // is independent of the declaring class and safe to inherit here.
+      for (const [field, type] of propertiesOf(base.text)) {
+        if (type === NULLABLE_VOID_CALLBACK) properties.set(field, type);
+      }
+    }
+    if (exported.has(name)) {
+      for (const [field, type] of declarations.get(name) ?? []) properties.set(field, type);
+    }
+    collecting.delete(name);
+    effectiveProperties.set(name, properties);
+    return properties;
+  };
+  const callbackInitializer = (node: ts.Expression): boolean => {
+    if (!ts.isArrowFunction(node) || node.parameters.length !== 0 ||
+        (node.typeParameters?.length ?? 0) !== 0 || hasModifier(node, ts.SyntaxKind.AsyncKeyword) ||
+        !ts.isBlock(node.body)) return false;
+    // A void callback contract permits value-returning implementations in
+    // TypeScript. Widen only arrows that really return undefined, so a
+    // derived callback's observable result can never be discarded here.
+    const returnsValue = (child: ts.Node): boolean | undefined => {
+      if (ts.isFunctionLike(child) || ts.isClassDeclaration(child) || ts.isClassExpression(child)) return undefined;
+      if (ts.isReturnStatement(child) && child.expression !== undefined) return true;
+      return ts.forEachChild(child, returnsValue);
+    };
+    return returnsValue(node.body) !== true;
+  };
   for (const statement of sourceFile.statements) {
-    if (!ts.isClassDeclaration(statement) || statement.name === undefined || !exported.has(statement.name.text)) continue;
-    const properties = declarations.get(statement.name.text);
-    if (properties === undefined) continue;
+    if (!ts.isClassDeclaration(statement) || statement.name === undefined) continue;
+    const properties = propertiesOf(statement.name.text);
+    if (properties.size === 0) continue;
+    for (const member of statement.members) {
+      if (!ts.isPropertyDeclaration(member) || !ts.isIdentifier(member.name) ||
+          member.initializer === undefined || hasModifier(member, ts.SyntaxKind.StaticKeyword)) continue;
+      const type = properties.get(member.name.text);
+      if (type !== NULLABLE_VOID_CALLBACK || (member.initializer.kind !== ts.SyntaxKind.NullKeyword &&
+          !callbackInitializer(member.initializer))) continue;
+      const leading = source.slice(member.getFullStart(), member.getStart(sourceFile));
+      if (ts.getJSDocType(member) !== undefined || leading.includes("@type")) continue;
+      inserts.push({ offset: member.getStart(sourceFile), text: `/** @type {${type}} */ ` });
+    }
     const constructor = statement.members.find(
       (member): member is ts.ConstructorDeclaration => ts.isConstructorDeclaration(member) && member.body !== undefined,
     );

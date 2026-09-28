@@ -126,6 +126,49 @@ module.exports = { Chainy };
     expect(rewritten!.text).toContain("/** @type {string[]} */ this._aliases = [];");
   });
 
+  test("projects nullable void callback fields through local subclass initializers", () => {
+    const properties = parseNpmStaticDeclarationProperties("index.d.ts", `
+export class Base {
+  parent: Base | null;
+  callback: (() => void) | null;
+  withArgs: ((value: number) => void) | null;
+  withReturn: (() => number) | null;
+  generic: (<T>() => T) | null;
+  optional?: (() => void) | null;
+  static shared: (() => void) | null;
+  private hidden: (() => void) | null;
+}
+`);
+    expect(properties).toEqual(new Map([["Base", new Map([["parent", "Base | null"], ["callback", "(() => void) | null"]])]]));
+    const rewritten = applyNpmStaticDeclarationProperties("index.js", `
+export class Base { parent = null; callback = null; }
+class Middle extends Base {}
+export class Derived extends Middle { callback = () => { console.log("callback"); }; }
+class PrivateChild extends Middle { callback = () => {}; }
+class ConstructorChild extends Middle { constructor() { super(); this.callback = null; } }
+class Annotated extends Base { /** @type {() => void} */ callback = () => {}; }
+class WithArgs extends Base { callback = (value) => {}; }
+class Async extends Base { callback = async () => {}; }
+class Value extends Base { callback = () => 1; }
+class Returned extends Base { callback = () => { if (true) return 1; }; }
+class Nested extends Base { callback = () => { const inner = () => { return 1; }; console.log(inner()); }; }
+class Static extends Base { static callback = null; }
+class Unrelated { callback = null; }
+`, properties);
+    expect(rewritten?.insertions).toHaveLength(5);
+    expect(rewritten?.text).toContain("/** @type {(() => void) | null} */ callback = null;");
+    expect(rewritten?.text).toContain("/** @type {(() => void) | null} */ callback = () => { console.log");
+    expect(rewritten?.text).toContain("/** @type {(() => void) | null} */ this.callback = null;");
+    expect(rewritten?.text).toContain("class Annotated extends Base { /** @type {() => void} */ callback");
+    expect(rewritten?.text).toContain("class WithArgs extends Base { callback");
+    expect(rewritten?.text).toContain("class Async extends Base { callback");
+    expect(rewritten?.text).toContain("class Value extends Base { callback");
+    expect(rewritten?.text).toContain("class Returned extends Base { callback");
+    expect(rewritten?.text).toContain("export class Base { parent = null;");
+    expect(rewritten?.text).toContain("class Static extends Base { static callback");
+    expect(rewritten?.text).toContain("class Unrelated { callback");
+  });
+
   test("projects safe optional parameters over stricter implementation JSDoc", () => {
     const rewritten = applyNpmStaticDeclarationOverloads("index.js", `
 class Chainy {
