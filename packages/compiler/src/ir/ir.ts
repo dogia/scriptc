@@ -3786,6 +3786,9 @@ export type IrLibFn =
    * when absent); hasCause distinguishes absence from present undefined. */
   | "error.cause"
   | "error.hasCause"
+  /** Assignment borrows both operands and retains the new cause. */
+  | "error.setCause"
+  | "error.deleteCause"
   /** The compiler-resolved Node-parity throw for always-throwing lowered
    * arms (ERR_INVALID_THIS receivers, ERR_MISSING_ARGS arity ladders,
    * the symbol-to-string TypeError): args are [error-kind f64 (the
@@ -5041,8 +5044,10 @@ export type IrExpr =
   | { kind: "closure"; fnName: string; captures: string[]; type: IrType; loc: SrcLoc }
   /** Indirect call of a func-typed value. Args follow `call`'s convention
    * (callee owns its params, callers pass +1). The callee expression is an
-   * ordinary owned temp, released at statement end. */
-  | { kind: "callValue"; callee: IrExpr; args: IrExpr[]; type: IrType; loc: SrcLoc }
+   * ordinary owned temp, released at statement end. receiver supplies the
+   * call-time this value; absence means undefined. Evaluate callee, receiver,
+   * then args, and restore the ambient receiver before unwinding. */
+  | { kind: "callValue"; callee: IrExpr; receiver?: IrExpr; args: IrExpr[]; type: IrType; loc: SrcLoc }
   /** The currently-executing closure, as a value (+1). Valid only inside a
    * lifted function. Exists so a named nested function can recurse on itself
    * WITHOUT capturing its own binding — a box holding its own closure would
@@ -5281,7 +5286,7 @@ export type IrExpr =
    * the nullish text spells), evaluated and flattened left-to-right (JS's
    * ArgumentListEvaluation). The emitters build one fresh argument array
    * and apply through it. */
-  | { kind: "dynCall"; callee: IrExpr; calleeName: string; args: IrExpr[]; spreads?: { arg: number; what: string }[]; type: IrType; loc: SrcLoc }
+  | { kind: "dynCall"; callee: IrExpr; receiver?: IrExpr; calleeName: string; args: IrExpr[]; spreads?: { arg: number; what: string }[]; type: IrType; loc: SrcLoc }
   /** Prototype-method DISPATCH on a dyn receiver — `recv.m(...)` where `m`
    * is a name a dyn-representable prototype declares (Array/String/
    * Function shared names: push, slice, join, forEach, map, apply, ...),
@@ -7729,6 +7734,9 @@ export const MAY_THROW_LIB_FNS: ReadonlySet<IrLibFn> = new Set([
   // Error messages use the same coercion protocol before installing cause.
   "error.newOptions",
   "error.ctorOptions",
+  "error.cause",
+  "error.setCause",
+  "error.deleteCause",
   "dyn.objectTag",
   // Numeric coercion runs user valueOf/toString — throws propagate.
   "dyn.toNumberCoerce",

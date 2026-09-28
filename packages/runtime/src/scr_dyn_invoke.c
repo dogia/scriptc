@@ -458,7 +458,8 @@ static ScrDyn *scr_dyn_invoke_impl(
       scr_dyn_this_pop();
       return r;
     }
-    if (dyn_name_is(method, "bind") || dyn_name_is(method, "toString")) {
+    if (dyn_name_is(method, "bind")) return scr_dyn_bind(recv, args, argc);
+    if (dyn_name_is(method, "toString")) {
       dyn_throw_unsupported("Function", method);
       return NULL;
     }

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { BOOL, F64, NULL_T, STRING, UNDEFINED_T, VOID, arrayOf, mapOf, setOf, type IrExpr, type IrModule, type IrType, type IrUnionDef } from "./ir.js";
+import { BOOL, DYN, F64, NULL_T, STRING, UNDEFINED_T, VOID, arrayOf, mapOf, setOf, type IrExpr, type IrModule, type IrType, type IrUnionDef } from "./ir.js";
 import { deserializeModule, serializeModule } from "./serialize.js";
 import { validateModule } from "./validate.js";
 
@@ -46,6 +46,23 @@ function expressionModule(expr: IrExpr, unions: IrUnionDef[]): IrModule {
     functions: [{ name: "main", params: [], locals: [], returnType: VOID, body: [{ kind: "exprStmt", expr, loc }], loc }],
   };
 }
+
+test.each(["callValue", "dynCall"] as const)("%s requires a checked-value receiver and preserves it in serialization", (kind) => {
+  const funcType: IrType = { kind: "func", params: [], ret: DYN };
+  const closure: IrExpr = { kind: "closure", fnName: "callback", captures: [], type: funcType, loc };
+  const receiver: IrExpr = { kind: "dynFrom", value: { kind: "unitLit", unit: "undefined", type: UNDEFINED_T, loc }, type: DYN, loc };
+  const call: IrExpr = kind === "callValue"
+    ? { kind, callee: closure, receiver, args: [], type: DYN, loc }
+    : { kind, callee: { kind: "dynFrom", value: closure, type: DYN, loc }, receiver, calleeName: "callback", args: [], type: DYN, loc };
+  const mod = expressionModule(call, []);
+  mod.functions.push({ name: "callback", params: [], locals: [], returnType: DYN, body: [{ kind: "return", value: receiver, loc }], loc });
+  expect(validateModule(mod)).toEqual([]);
+  expect(deserializeModule(serializeModule(mod))).toEqual(mod);
+  call.receiver = { kind: "numLit", value: 1, type: F64, loc };
+  expect(validateModule(mod).some((error) => error.message.includes(`${kind} receiver`))).toBe(true);
+  call.receiver = { kind: "varRef", localId: "missing", type: DYN, loc };
+  expect(validateModule(mod).some((error) => error.message.includes("missing"))).toBe(true);
+});
 
 function optionalUnionModule(arms: IrType[] = [BOOL, F64, UNDEFINED_T]): IrModule {
   const type: IrType = { kind: "union", unionId: "receiver" };

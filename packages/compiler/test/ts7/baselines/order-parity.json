@@ -10752,6 +10752,43 @@
     "<repo>/tests/corpus/text-codec-var.ts"
    ],
    "diags": []
+  },
+  "<repo>/tests/corpus/native-factory-records.js": {
+   "order": [
+    "<repo>/tests/corpus/native-factory-records.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/native-method-values.js": {
+   "order": [
+    "<repo>/tests/corpus/native-method-values.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/native-method-values.ts": {
+   "order": [
+    "<repo>/tests/corpus/native-method-values.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/error-cause-writes.js": {
+   "order": [
+    "<repo>/tests/corpus/error-cause-writes.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/renderer-null-state.js": {
+   "order": [
+    "<repo>/tests/corpus/renderer-null-state.js"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/module-fallback-functions/main.js": {
+   "order": [
+    "<repo>/tests/corpus/module-fallback-functions/platform.js",
+    "<repo>/tests/corpus/module-fallback-functions/main.js"
+   ],
+   "diags": []
   }
  }
 }

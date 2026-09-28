@@ -1206,6 +1206,44 @@ ScrDyn *scr_dyn_apply(const ScrDyn *d, const ScrDyn *args, const char *what) {
   return scr_dyn_call(d, args->v.arr.items, args->v.arr.len, what);
 }
 
+static ScrDyn *scr_dyn_bound_call(ScrClosure *closure, ScrDyn *const *args, size_t argc) {
+  ScrDyn *target = scr_box_get_ref(closure->caps[0]);
+  ScrDyn *receiver = scr_box_get_ref(closure->caps[1]);
+  ScrDyn *bound = scr_box_get_ref(closure->caps[2]);
+  ScrDyn *all = scr_dyn_new_arr();
+  for (size_t i = 0; i < bound->v.arr.len; i++) scr_dyn_arr_push(all, scr_dyn_retain(bound->v.arr.items[i]));
+  for (size_t i = 0; i < argc; i++) scr_dyn_arr_push(all, scr_dyn_retain(args[i]));
+  scr_dyn_this_push_dyn(receiver);
+  ScrDyn *result = scr_dyn_apply(target, all, "bound function");
+  scr_dyn_this_pop();
+  scr_dyn_release(all);
+  scr_dyn_release(bound);
+  scr_dyn_release(receiver);
+  scr_dyn_release(target);
+  return result;
+}
+
+ScrDyn *scr_dyn_bind(ScrDyn *target, ScrDyn *const *args, size_t argc) {
+  ScrDyn *bound = scr_dyn_new_arr();
+  for (size_t i = 1; i < argc; i++) scr_dyn_arr_push(bound, scr_dyn_retain(args[i]));
+  ScrStr *prefix = scr_str_new("bound ", 6);
+  const char *original = target->v.fn.name ? target->v.fn.name : "";
+  ScrStr *suffix = scr_str_new(original, strlen(original));
+  ScrStr *name = scr_str_concat(prefix, suffix);
+  scr_str_release(prefix);
+  scr_str_release(suffix);
+  ScrClosure *closure = scr_closure_new(NULL, 4);
+  for (size_t i = 0; i < 3; i++) closure->caps[i] = scr_box_new_obj(scr_dyn_retain_v, scr_dyn_release_v, NULL);
+  closure->caps[3] = scr_box_new(SCR_BOX_STR);
+  scr_box_set_ref(closure->caps[0], scr_dyn_retain(target));
+  scr_box_set_ref(closure->caps[1], scr_dyn_retain(argc ? args[0] : scr_dyn_undefined()));
+  scr_box_set_ref(closure->caps[2], bound);
+  scr_box_set_ref(closure->caps[3], name);
+  size_t bound_count = argc ? argc - 1 : 0;
+  uint32_t arity = bound_count < target->v.fn.arity ? target->v.fn.arity - (uint32_t)bound_count : 0;
+  return scr_dyn_new_func(closure, &scr_dyn_bound_call, arity, "%bound", name->data);
+}
+
 /* ── native handles in the checked-dynamic tree (SCR_DYN_HANDLE) ───────────────────────
  * Per-tag ops stamped by the owning units at main() (scr_http_dyn_install
  * / scr_net_dyn_install — the scr_net_install hook story), so this
@@ -1611,7 +1649,7 @@ void scr_dyn_this_push_dyn(const ScrDyn *v) {
   ScrDynThisEnt *e = scr_dyn_this_grow();
   e->ptr = NULL;
   e->tag = 0;
-  e->dv = scr_dyn_retain((ScrDyn *)v);
+  e->dv = v ? scr_dyn_retain((ScrDyn *)v) : NULL;
 }
 
 void scr_dyn_this_pop(void) {
@@ -1685,6 +1723,7 @@ static bool scr_dyn_property_same_value(const ScrDyn *a, const ScrDyn *b) {
 static void scr_dyn_descriptor_fields_drop(ScrDyn **fields) {
   for (size_t i = 0; i < 6; i++) scr_dyn_release(fields[i]);
 }
+static void scr_error_sync_cause(ScrDyn *view, const ScrStr *key);
 
 ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor) {
   if (target->kind == SCR_DYN_PROXY || descriptor->kind == SCR_DYN_PROXY) {
@@ -1795,6 +1834,7 @@ ScrDyn *scr_dyn_define_property(ScrDyn *target, ScrDyn *key, ScrDyn *descriptor)
     entry->configurable = configurable;
   }
   scr_dyn_descriptor_fields_drop(fields);
+  scr_error_sync_cause(target, name);
   scr_str_release(name);
   return scr_dyn_retain(target);
 }
@@ -2110,7 +2150,10 @@ ScrDyn *scr_dyn_from_error(const ScrError *e) {
   scr_dyn_obj_set(d, "name", 4, scr_dyn_new_str(e->name));
   scr_dyn_obj_set(d, "message", 7, scr_dyn_new_str(e->message));
   if (e->code) scr_dyn_obj_set(d, "code", 4, scr_dyn_new_str(e->code));
-  if (e->error_cause) scr_dyn_obj_set(d, "cause", 5, scr_dyn_retain(e->error_cause));
+  if (e->error_cause) {
+    scr_dyn_obj_set(d, "cause", 5, scr_dyn_retain(e->error_cause));
+    d->v.obj.entries[d->v.obj.len - 1].enumerable = e->cause_enumerable;
+  }
   /* DOMException: `code` is the WebIDL legacy NUMBER (never the errno
    * string slot), and the options form's cause crosses as itself. */
   if (e->vt == &scr_error_vts[SCR_ERR_DOMEX]) {
@@ -2173,6 +2216,10 @@ ScrError *scr_error_from_dyn(const ScrDyn *d) {
   if (cause) {
     scr_error_install_cause_drop(&scr_error_cause_drop_impl);
     e->error_cause = scr_dyn_retain(cause);
+    for (size_t i = 0; i < d->v.obj.len; i++) {
+      const ScrDynEntry *entry = &d->v.obj.entries[i];
+      if (entry->key_len == 5 && memcmp(entry->key, "cause", 5) == 0) e->cause_enumerable = entry->enumerable;
+    }
   }
   scr_errdyn_put(e, (ScrDyn *)d);
   return e;
@@ -2205,6 +2252,22 @@ void scr_errdyn_put(ScrError *e, ScrDyn *d) {
   scr_errdyn_n++;
 }
 
+/* Error.cause has one live value even when the Error already crossed a
+ * checked-value boundary. Reflective data-property edits update its slot. */
+static void scr_error_sync_cause(ScrDyn *view, const ScrStr *key) {
+  if (key->len != 5 || memcmp(key->data, "cause", 5) != 0) return;
+  ScrDynEntry *entry = scr_dyn_entry(view, key);
+  for (size_t i = 0; i < scr_errdyn_n; i++) {
+    if (scr_errdyn_cache[i].dyn != view) continue;
+    ScrError *e = scr_errdyn_cache[i].err;
+    if (e->vt == &scr_error_vts[SCR_ERR_DOMEX]) continue;
+    ScrDyn *replacement = entry ? scr_dyn_retain(entry->value) : NULL;
+    scr_error_install_cause_drop(&scr_error_cause_drop_impl);
+    scr_dyn_release(e->error_cause);
+    e->error_cause = replacement;
+    e->cause_enumerable = entry && entry->enumerable;
+  }
+}
 
 /* Receiver-kind-dispatched toString() on a checked-dynamic value (the
  * dyn method surface — a stream's 'data'/for-await chunk is the common
@@ -2644,6 +2707,7 @@ void scr_dyn_key_set(ScrDyn *recv, ScrStr *key, ScrDyn *value) {
       }
     }
     scr_dyn_obj_set(recv, key->data, key->len, scr_dyn_retain(value));
+    scr_error_sync_cause(recv, key);
     return;
   }
   if (recv->kind == SCR_DYN_ARR) {
@@ -3443,7 +3507,14 @@ static void scr_json_delete_member(ScrDyn *object, const ScrStr *key) {
 void scr_dyn_key_delete(ScrDyn *recv, const ScrStr *key) {
   if (recv->kind == SCR_DYN_PROXY) { scr_dyn_proxy_delete(recv, key); return; }
   if (recv->kind == SCR_DYN_OBJ) {
+    ScrDynEntry *entry = scr_dyn_entry(recv, key);
+    if (entry && !entry->configurable) {
+      static const char msg[] = "Cannot delete property";
+      scr_throw_error_msg(SCR_ERR_TYPE, msg, sizeof msg - 1);
+      return;
+    }
     scr_json_delete_member(recv, key);
+    scr_error_sync_cause(recv, key);
     return;
   }
   if (recv->kind == SCR_DYN_UNDEF || recv->kind == SCR_DYN_NULL) {
@@ -4488,7 +4559,38 @@ ScrError *scr_error_new_options(int kind, const ScrDyn *message, const ScrDyn *o
 }
 
 ScrDyn *scr_error_cause(ScrError *e) {
+  for (size_t i = 0; i < scr_errdyn_n; i++) {
+    if (scr_errdyn_cache[i].err == e) return scr_dyn_obj_read(scr_errdyn_cache[i].dyn, "cause", 5);
+  }
   return e->error_cause ? scr_dyn_retain(e->error_cause) : scr_dyn_undefined();
+}
+
+void scr_error_set_cause(ScrError *e, ScrDyn *value) {
+  for (size_t i = 0; i < scr_errdyn_n; i++) {
+    if (scr_errdyn_cache[i].err != e) continue;
+    ScrStr *key = scr_str_new("cause", 5);
+    scr_dyn_key_set(scr_errdyn_cache[i].dyn, key, value);
+    scr_str_release(key);
+    return;
+  }
+  scr_error_install_cause_drop(&scr_error_cause_drop_impl);
+  ScrDyn *replacement = scr_dyn_retain(value);
+  if (!e->error_cause) e->cause_enumerable = true;
+  scr_dyn_release(e->error_cause);
+  e->error_cause = replacement;
+}
+
+void scr_error_delete_cause(ScrError *e) {
+  for (size_t i = 0; i < scr_errdyn_n; i++) {
+    if (scr_errdyn_cache[i].err != e) continue;
+    ScrStr *key = scr_str_new("cause", 5);
+    scr_dyn_key_delete(scr_errdyn_cache[i].dyn, key);
+    scr_str_release(key);
+    return;
+  }
+  scr_dyn_release(e->error_cause);
+  e->error_cause = NULL;
+  e->cause_enumerable = false;
 }
 
 static void scr_domex_cause_drop_impl(void *obj) {

@@ -520,6 +520,7 @@ typedef struct ScrError {
                     * carry a matching third field, so user subclasses
                     * embed the slot and release it NULL-guarded. */
   struct ScrDyn *error_cause; /* NULL = absent; dyn undefined = present */
+  bool cause_enumerable; /* assignment creates an enumerable own property */
 } ScrError;
 
 enum {
@@ -550,6 +551,7 @@ typedef struct ScrDomException {
   ScrStr *message; /* "" when constructed without one */
   ScrStr *code;    /* the Node string-code slot (stays NULL here) */
   struct ScrDyn *error_cause; /* shared ScrError prefix; unused by DOMException */
+  bool cause_enumerable;
   double dom_code; /* the WebIDL legacy code (0 when the name is off-table) */
   bool has_cause;  /* the options form carried a `cause` member */
   struct ScrDyn *cause; /* owned; NULL when has_cause is false */
@@ -601,6 +603,8 @@ void scr_error_init_options(void *obj, int kind, const struct ScrDyn *message, c
 void scr_error_install_cause_drop(void (*fn)(void *obj));
 bool scr_error_has_cause(ScrError *e);
 struct ScrDyn *scr_error_cause(ScrError *e); /* +1, undefined when absent */
+void scr_error_set_cause(ScrError *e, struct ScrDyn *value); /* borrowed operands */
+void scr_error_delete_cause(ScrError *e);
 /* ECMA Error.prototype.toString: "", name, message, or "name: message".
  * Borrows e, returns +1. */
 ScrStr *scr_error_to_string(ScrError *e);
@@ -3753,6 +3757,8 @@ ScrDyn *scr_dyn_call(const ScrDyn *d, ScrDyn *const *args, size_t argc, const ch
  * `f(...args)` after the emitted argument array is built): argv IS the
  * array's items. Borrows both; result owned (+1), or NULL pending. */
 ScrDyn *scr_dyn_apply(const ScrDyn *d, const ScrDyn *args, const char *what);
+/* Function.bind borrows its target and arguments, returns a fresh callable. */
+ScrDyn *scr_dyn_bind(ScrDyn *target, ScrDyn *const *args, size_t argc);
 
 /* Path spine for dynCheck error messages — a compile-time-shaped linked
  * list the emitted builders stack-allocate per recursion level: `key`

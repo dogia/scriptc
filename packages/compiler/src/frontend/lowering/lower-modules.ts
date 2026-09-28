@@ -17,7 +17,7 @@ import { BOOL, DYN, F64, IrClassDef, IrExpr, IrFunction, IrGlobal, IrRecordShape
 import { ENTRY_NAME, PoisonError, boundIdentifiersOf, dynFallbackType, dynUndefinedExpr, importCallHandleType, newFnCtx, staticImportNamespaceType, uncheckedOverloadHandleCall } from "./lowerer.js";
 import { builtinMemberRequireDecl, builtinNamespaceDestructureModuleOf, createRequireBindingDecl, createRequireNamespaceDecl, createRequireProgramModuleDecl, createRequireSpecOf, isPromisifyCall, registerBuiltinCallableAlias } from "./lower-builtins.js";
 import { bindingContextualGenericFnNodeOf, bindingGenericFnAliasInfoOf, bindingGenericFnInfoOf, bindingGenericFnNodeOf, bindingNeverReassigned, deadUnmappableBinding, implicitLocalFnInfoOf, implicitLocalFnNodeOf, nullishGenericBindingUnitOf, registerOverloadedCallableAlias } from "./lower-calls.js";
-import { isVarDeclared, numericIteratorSourceOf, provenanceElidedConstDecl } from "./lower-stmts.js";
+import { hasJsTypeAnnotation, isVarDeclared, numericIteratorSourceOf, provenanceElidedConstDecl } from "./lower-stmts.js";
 import { streamClassAliasDecl } from "./lower-stream.js";
 import { stdlibGlobalAliasDecl, stdlibGlobalAliasNameOf } from "./surfaces.js";
 import { collectNamespaceStmt, nsPathPrefix, trapDeclRootOf } from "./lower-namespaces.js";
@@ -820,6 +820,17 @@ function jsDynHoldableInitializer(lowerer: Lowerer, init: ts.Expression | undefi
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   if (e.kind === ts.SyntaxKind.NullKeyword) return true;
   if (ts.isIdentifier(e) && e.text === "undefined") return true;
+  if (ts.isConditionalExpression(e)) {
+    return jsDynHoldableInitializer(lowerer, e.whenTrue) && jsDynHoldableInitializer(lowerer, e.whenFalse);
+  }
+  if (ts.isBinaryExpression(e) && (e.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      e.operatorToken.kind === ts.SyntaxKind.BarBarToken || e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)) {
+    return jsDynHoldableInitializer(lowerer, e.left) && jsDynHoldableInitializer(lowerer, e.right);
+  }
+  if (ts.isIdentifier(e) || ts.isArrowFunction(e) || ts.isFunctionExpression(e)) {
+    const type = lowerer.mapTypeOf(lowerer.typeOf(e)) ?? dynFallbackType(lowerer, e, lowerer.typeOf(e));
+    if (type?.kind === "func" && canBoxFuncIntoDyn(type, (id) => lowerer.shapes.get(id), (id) => lowerer.unions.get(id))) return true;
+  }
   if (
     (ts.isCallExpression(e) || ts.isPropertyAccessExpression(e) || ts.isIdentifier(e)) &&
     (lowerer.typeOf(e).flags & ts.TypeFlags.Any) !== 0
@@ -1513,7 +1524,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
             if (
               isJsSourceFile(sf) && !lowerer.mapTypeOf(lowerer.typeOf(nameNode)) &&
               ts.isIdentifier(decl.name) && nameNode === decl.name && decl.initializer &&
-              (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
+              jsDynHoldableInitializer(lowerer, decl.initializer)
             ) {
               const fallback = dynFallbackType(lowerer, nameNode, lowerer.typeOf(nameNode));
               const symbol = lowerer.checker.getSymbolAtLocation(nameNode);
@@ -1555,6 +1566,14 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
                   (uncheckedOverloadHandleCall(lowerer, decl.initializer) ? JSVAL : null) : null)
                 : null;
             let type = handleT ?? lowerer.irTypeOf(nameNode);
+            // JavaScript bind inference can leave an artificial tuple-rest
+            // signature. Keep the returned callable's runtime arity intact.
+            if (isJsSourceFile(sf) && type.kind === "func" && decl.initializer &&
+                ts.isCallExpression(decl.initializer) && ts.isPropertyAccessExpression(decl.initializer.expression) &&
+                decl.initializer.expression.name.text === "bind" && lowerer.isStdlibMember(decl.initializer.expression) &&
+                decl.type === undefined && !hasJsTypeAnnotation(decl)) {
+              type = DYN;
+            }
             // An evolving-`any` array's DERIVED file-scope binding under
             // --dynamic (`const kept = fns.filter(...)` where `fns`
             // registered array<jsval> at its `any[]` declaration): the
@@ -1620,6 +1639,7 @@ export function collectGlobals(lowerer: Lowerer, sf: ts.SourceFile, topStmts: ts
               isJsSourceFile(sf) &&
               type.kind === "func" &&
               type.ret.kind === "record" &&
+              lowerer.dynConvertible(type.ret) &&
               decl.initializer !== undefined &&
               (ts.isFunctionExpression(decl.initializer) || ts.isArrowFunction(decl.initializer)) &&
               decl.initializer.type === undefined &&

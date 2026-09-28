@@ -99,6 +99,9 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
         // boxed thunk builds its own typed copies. The callee's source
         // spelling rides along for Node's "<name> is not a function".
         const callee = host.emitExpr(e.callee);
+        const receiver = e.receiver === undefined ? null : host.emitExpr(e.receiver);
+        host.declare("declare void @scr_dyn_this_push_dyn(ptr)");
+        host.declare("declare void @scr_dyn_this_pop()");
         if (e.spreads !== undefined && e.spreads.length > 0) {
           // The RUNTIME-ARITY form (`f(...args)`): one fresh dyn array
           // collects the arguments left-to-right — plain args move in
@@ -127,7 +130,9 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
             }
           });
           const t = B.tmp();
+          B.line(`call void @scr_dyn_this_push_dyn(ptr ${receiver?.name ?? "null"})`);
           B.line(`${t} = call ptr @scr_dyn_apply(ptr ${callee.name}, ptr ${pack}, ptr ${host.cstr(e.calleeName)})`);
+          B.line("call void @scr_dyn_this_pop()");
           const out = host.own({ name: t, type: e.type });
           host.emitPendingCheck();
           return out;
@@ -146,7 +151,9 @@ export function emitDynamicExpr(host: LlvmEmitterContext, e: ExprOf<"dynFrom" | 
         }
         host.declare(`declare ptr @scr_dyn_call(ptr, ptr, ${host.sizeType}, ptr)`);
         const t = B.tmp();
+        B.line(`call void @scr_dyn_this_push_dyn(ptr ${receiver?.name ?? "null"})`);
         B.line(`${t} = call ptr @scr_dyn_call(ptr ${callee.name}, ptr ${argsPtr}, ${host.sizeType} ${args.length}, ptr ${host.cstr(e.calleeName)})`);
+        B.line("call void @scr_dyn_this_pop()");
         const out = host.own({ name: t, type: e.type });
         host.emitPendingCheck();
         return out;

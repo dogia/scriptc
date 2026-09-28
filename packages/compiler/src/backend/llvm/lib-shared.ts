@@ -61,6 +61,8 @@ export const LIB_FN_SYMS: Record<string, string> = {
   // refuses by name like the rest of the throwing tier.
   "str.encodeUriComponent": "scr_str_encode_uri_component",
   "error.cause": "scr_error_cause",
+  "error.setCause": "scr_error_set_cause",
+  "error.deleteCause": "scr_error_delete_cause",
   "error.hasCause": "scr_error_has_cause",
   // DOMException: construction and the read surface never throw; the
   // WebIDL clone's option validation throws (may-throw pending check).

@@ -419,6 +419,7 @@ export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCa
         const ft = e.callee.type;
         if (e.args.length !== ft.params.length) throw new LlvmUnsupportedError("callValue:arity", e.loc);
         const callee = host.emitExpr(e.callee);
+        const receiver = e.receiver === undefined ? null : host.emitExpr(e.receiver);
         const args = e.args.map((a) => host.emitExpr(a));
         for (const a of args) host.moveTemp(a);
         const fnp = B.tmp();
@@ -429,13 +430,18 @@ export function emitCallExpr(host: LlvmEmitterContext, e: ExprOf<"call" | "ffiCa
           `ptr ${callee.name}`,
           ...args.map((a, i) => `${host.llType(ft.params[i]!)} ${a.name}`),
         ].join(", ");
+        host.declare("declare void @scr_dyn_this_push_dyn(ptr)");
+        host.declare("declare void @scr_dyn_this_pop()");
+        B.line(`call void @scr_dyn_this_push_dyn(ptr ${receiver?.name ?? "null"})`);
         if (e.type.kind === "void") {
           B.line(`call void ${fn}(${argList})`);
+          B.line("call void @scr_dyn_this_pop()");
           if (host.indirectMayThrow) host.emitPendingCheck();
           return { name: "", type: e.type };
         }
         const t = B.tmp();
         B.line(`${t} = call ${host.llType(e.type)} ${fn}(${argList})`);
+        B.line("call void @scr_dyn_this_pop()");
         // The check runs AFTER the result temp joins the frame: an unwind
         // releases it (the dummy is NULL for refcounted returns).
         const out = host.own({ name: t, type: e.type });

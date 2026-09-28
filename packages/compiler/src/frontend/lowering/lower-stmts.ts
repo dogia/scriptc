@@ -3792,7 +3792,11 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     ) {
       type = DYN;
     }
-    const preservesObjectIdentity = init.type.kind === "dyn" && inferredObjectType?.kind === "record" &&
+    const preservesObjectIdentity = init.type.kind === "dyn" &&
+      (inferredObjectType?.kind === "record" ||
+        (isJsSourceFile(decl.getSourceFile()) && inferredObjectType?.kind === "func") ||
+        (isJsSourceFile(decl.getSourceFile()) && inferredObjectType !== null &&
+          (isUnitType(inferredObjectType) || inferredObjectType.kind === "union" && lowerer.unions.get(inferredObjectType.unionId)?.arms.every(isUnitType)))) &&
       !decl.type && !hasJsTypeAnnotation(decl);
     if (expandsObject || preservesObjectIdentity) {
       type = DYN;
@@ -4144,7 +4148,7 @@ export function lowerVarDecl(lowerer: Lowerer, decl: ts.VariableDeclaration, isL
     return expands;
   }
 
-  function hasJsTypeAnnotation(decl: ts.VariableDeclaration): boolean {
+  export function hasJsTypeAnnotation(decl: ts.VariableDeclaration): boolean {
     const statement = decl.parent?.parent;
     return !!statement && /@type\b/.test(decl.getSourceFile().text.slice(statement.pos, decl.getStart()));
   }
@@ -4387,6 +4391,12 @@ function lowerBranchSwitch(
       lowerer.unsupported("SC1090", expr, "'delete' of non-property expressions");
     }
     fenceNodeModuleMutation(lowerer, target, "delete");
+    if (ts.isPropertyAccessExpression(target) && target.name.text === "cause") {
+      const field = lowerer.fieldTarget(target);
+      if (field?.container === "errorCause") {
+        return { kind: "exprStmt", expr: { kind: "libCall", fn: "error.deleteCause", args: [field.obj], type: VOID, loc }, loc };
+      }
+    }
     const globalKey = ts.isElementAccessExpression(target) ? globalSymbolKey(lowerer, target.expression, target.argumentExpression) : null;
     if (globalKey) return { kind: "exprStmt", expr: { kind: "libCall", fn: "dyn.globalSymbolDelete", args: [globalKey], type: VOID, loc }, loc };
     const lowerKey = (): IrExpr => {

@@ -1068,6 +1068,8 @@ export const LIB_FN_SIGS: Record<IrLibFn, { argTypes: (IrType | null)[]; result:
   "error.ctorOptions": { argTypes: [null, DYN, DYN], result: VOID },
   "error.cause": { argTypes: [null], result: DYN },
   "error.hasCause": { argTypes: [null], result: BOOL },
+  "error.setCause": { argTypes: [null, DYN], result: VOID },
+  "error.deleteCause": { argTypes: [null], result: VOID },
   "error.nodeThrow": { argTypes: [F64, STRING, STRING], result: VOID },
   "dyn.toStringCoerce": { argTypes: [DYN], result: STRING },
   "dyn.toNumberCoerce": { argTypes: [DYN], result: F64 },
@@ -3180,6 +3182,10 @@ function validateFunction(
       }
       case "callValue": {
         checkExpr(e.callee);
+        if (e.receiver !== undefined) {
+          checkExpr(e.receiver);
+          expectType(e.receiver, DYN, "callValue receiver");
+        }
         for (const a of e.args) checkExpr(a);
         if (e.callee.type.kind !== "func") {
           err(`callValue callee is ${e.callee.type.kind}, not func`, e.loc);
@@ -3630,6 +3636,10 @@ function validateFunction(
       }
       case "dynCall": {
         checkExpr(e.callee);
+        if (e.receiver !== undefined) {
+          checkExpr(e.receiver);
+          expectType(e.receiver, DYN, "dynCall receiver");
+        }
         expectType(e.callee, DYN, "dynCall callee");
         if (e.type.kind !== "dyn") err(`dynCall must be dyn-typed, got ${e.type.kind}`, e.loc);
         for (const a of e.args) {
@@ -5205,7 +5215,7 @@ function validateFunction(
             break;
           }
         }
-        if (e.fn === "error.cause" || e.fn === "error.hasCause") {
+        if (e.fn === "error.cause" || e.fn === "error.hasCause" || e.fn === "error.setCause" || e.fn === "error.deleteCause") {
           const recv = e.args[0];
           let cls = recv?.type.kind === "object" ? classes.get(recv.type.className) : undefined;
           while (cls?.base) cls = classes.get(cls.base);

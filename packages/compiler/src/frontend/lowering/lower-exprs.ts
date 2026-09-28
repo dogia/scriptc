@@ -44,11 +44,13 @@ import { lowerAbstractEquality } from "./abstract-equality.js";
 import { coerceStringSearchValue, defaultAfterUndefined, lowerStaticallyUndefinedArgument } from "./optional-arguments.js";
 import { recordTextCodecClass } from "../../ir/ir.js";
 import { classSymbolKeyOf } from "./symbol-fields.js";
+import { lowerClassMethodValue } from "./class-method-values.js";
 
 /** An assignable `obj.field` target — a class field, a record field, or a
  * class ACCESSOR property (reads become getter calls, writes setter calls;
  * fieldType is the property's one type). */
 export type FieldTarget =
+  | { container: "errorCause"; obj: IrExpr; field: "cause"; fieldType: IrType }
   | { container: "class"; obj: IrExpr; className: string; field: string; fieldType: IrType }
   | { container: "record"; obj: IrExpr; shapeId: string; field: string; fieldType: IrType }
   // An UNDECLARED key of an index-signature shape in dot spelling
@@ -1858,6 +1860,7 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
       if (
         (isJsSourceFile(expr.getSourceFile()) &&
           (lowerer.mapTypeOf(lowerer.typeOf(expr.expression)) === null ||
+            (lowerer.typeOf(expr.expression).flags & ts.TypeFlags.Never) !== 0 ||
             // A never-tainted receiver type maps (never rides as f64) but
             // its VALUE lowered checked-dynamic — same dyn read.
             neverTaintedJsType(lowerer, expr.expression, lowerer.typeOf(expr.expression)))) ||
@@ -2457,6 +2460,10 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
     // instead of misreading the payload (the dyn boundary's usual stance).
     // Object/array narrowings stay dyn-typed and keep their fences.
     if (expr.type.kind === "dyn") {
+      // A null-initialized JS field can later receive an object even when
+      // checker flow calls its non-null branch never. The live checked
+      // value remains authoritative; never is not a numeric guard.
+      if (isJsSourceFile(node.getSourceFile()) && (lowerer.typeOf(node).flags & ts.TypeFlags.Never) !== 0) return expr;
       const narrowed = lowerer.mapTypeOf(lowerer.typeOf(node));
       if (
         narrowed &&
@@ -9091,11 +9098,8 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
     return { kind: "call", callee: helper, args: [recv], type: recordT, loc };
   }
 
-/** Field read `obj.f` on class-instance and record receivers, through the
-   * shared FieldTarget union (fieldGet / recordGet). Bound method references
-   * on classes are rejected specifically; func-typed record fields are
-   * ordinary closure values, so bare references to them work (unlike class
-   * methods, which have no bound-value form). */
+/** Field reads use the shared FieldTarget union. Native method reads select
+ * an interned unbound callable; invocation supplies its receiver separately. */
   export function lowerFieldRead(lowerer: Lowerer, expr: ts.PropertyAccessExpression): IrExpr | null {
     const target = lowerer.fieldTarget(expr);
     if (target) return lowerer.fieldGetExpr(target, locOf(expr), expr);
@@ -9112,7 +9116,8 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
       (lowerer.findMethodOn(lowerer.classes.get(receiverIr.className) ?? null, expr.name.text) ||
         findGenericMethodOn(lowerer, lowerer.classes.get(receiverIr.className) ?? null, expr.name.text))
     ) {
-      lowerer.unsupported("SC1090", expr, `bound method references (call '${expr.name.text}' directly)`);
+      const info = lowerer.classes.get(receiverIr.className);
+      if (info) return lowerClassMethodValue(lowerer, expr, info);
     }
     // An object-literal GENERIC method as a VALUE (`o.m` — the member is
     // excluded from the record shape): the pinned-value rule verbatim when
@@ -9454,6 +9459,13 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
         }
         return obj;
       };
+      if (access.name.text === "cause" && receiverIr.className !== "%DOMException") {
+        let root = info;
+        while (root.base) root = root.base;
+        if (root.def.name === "%Error") {
+          return { container: "errorCause", obj: lowerObjectReceiver(), field: "cause", fieldType: DYN };
+        }
+      }
       if (fieldType) {
         const obj = lowerObjectReceiver();
         return { container: "class", obj, className: receiverIr.className, field: access.name.text, fieldType };
@@ -9651,6 +9663,9 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
    * tsc-clean (the property types as the setter's param), but Node yields
    * undefined, which these property types cannot represent. */
   export function fieldGetExpr(lowerer: Lowerer, target: FieldTarget, loc: SrcLoc, blame: ts.Node): IrExpr {
+    if (target.container === "errorCause") {
+      return { kind: "libCall", fn: "error.cause", args: [target.obj], type: DYN, loc };
+    }
     // A record-shaped CHECKER target whose receiver VALUE lives in the checked-dynamic tree
     // (a JS file-scope object-literal global): the checked-dynamic keyed
     // read — dynKeyGet (a missing key answers the dyn undefined, exactly
@@ -9762,6 +9777,9 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
    * call). A write to a getter-only property never gets here in a clean
    * program (tsc's TS2540 is the fence); the rejection is the backstop. */
   export function fieldSetStmt(lowerer: Lowerer, target: FieldTarget, value: IrExpr, loc: SrcLoc, blame: ts.Node): IrStmt {
+    if (target.container === "errorCause") {
+      return { kind: "exprStmt", expr: { kind: "libCall", fn: "error.setCause", args: [target.obj, value], type: VOID, loc }, loc };
+    }
     // A record-shaped CHECKER target whose receiver VALUE lives in the checked-dynamic tree:
     // the checked-dynamic keyed write — dyn.keySet (later writes win,
     // insertion order; Node's TypeErrors on non-object receivers), the

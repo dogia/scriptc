@@ -2616,18 +2616,22 @@ function emitCallExpr(
       }
       case "callValue": {
         const callee = emitter.emitExpr(e.callee);
+        const receiver = e.receiver === undefined ? null : emitter.emitExpr(e.receiver);
         const args = e.args.map((a) => emitter.emitExpr(a));
         for (const a of args) emitter.moveTemp(a); // callee owns its params
         if (e.callee.type.kind !== "func") throw new InternalCompilerError("emitter bug: callValue on non-func");
         const cast = cFnPtrCast(e.callee.type);
         const argList = [callee.name, ...args.map((a) => a.name)].join(", ");
         const call = `(${cast}${callee.name}->fn)(${argList})`;
+        emitter.line(`scr_dyn_this_push_dyn(${receiver?.name ?? "NULL"});`);
         if (e.type.kind === "void") {
           emitter.line(`${call};${emitter.srcComment(e.loc)}`);
+          emitter.line("scr_dyn_this_pop();");
           if (emitter.indirectMayThrow) emitter.emitPendingCheck();
           return { name: "", type: e.type };
         }
         const t = emitter.newTemp(e.type, call);
+        emitter.line("scr_dyn_this_pop();");
         if (emitter.indirectMayThrow) emitter.emitPendingCheck();
         return t;
       }
@@ -2920,6 +2924,14 @@ function emitDynamicExpr(
         // with the frame as usual. The callee's source spelling rides
         // along for Node's "<name> is not a function" TypeError.
         const callee = emitter.emitExpr(e.callee);
+        const receiver = e.receiver === undefined ? null : emitter.emitExpr(e.receiver);
+        const invoke = (call: string): Temp => {
+          emitter.line(`scr_dyn_this_push_dyn(${receiver?.name ?? "NULL"});`);
+          const result = emitter.newTemp(e.type, call);
+          emitter.line("scr_dyn_this_pop();");
+          emitter.emitPendingCheck();
+          return result;
+        };
         const what = cStringLiteral(Buffer.from(e.calleeName, "utf8"));
         if (e.spreads !== undefined && e.spreads.length > 0) {
           // The RUNTIME-ARITY form (`f(...args)`): one fresh dyn array
@@ -2943,7 +2955,7 @@ function emitDynamicExpr(
               emitter.line(`scr_dyn_arr_push(${pack.name}, ${v.name});`);
             }
           });
-          return emitter.fallibleTemp(e.type, `scr_dyn_apply(${callee.name}, ${pack.name}, ${what})`);
+          return invoke(`scr_dyn_apply(${callee.name}, ${pack.name}, ${what})`);
         }
         const args = e.args.map((a) => emitter.emitExpr(a));
         let argsExpr = "NULL";
@@ -2952,10 +2964,7 @@ function emitDynamicExpr(
           emitter.line(`ScrDyn *${arr}[${args.length}] = { ${args.map((a) => a.name).join(", ")} };`);
           argsExpr = arr;
         }
-        return emitter.fallibleTemp(
-          e.type,
-          `scr_dyn_call(${callee.name}, ${argsExpr}, ${args.length}, ${what})`,
-        );
+        return invoke(`scr_dyn_call(${callee.name}, ${argsExpr}, ${args.length}, ${what})`);
       }
       case "dynInvoke": {
         // Prototype-method dispatch on a dyn receiver: everything is
@@ -8258,6 +8267,10 @@ function emitErrorsEventsLibCall(state: LibCallState): Temp {
             return finish(`scr_error_cause((ScrError *)${arg(0)})`);
           case "error.hasCause":
             return finish(`scr_error_has_cause((ScrError *)${arg(0)})`);
+          case "error.setCause":
+            return finish(`scr_error_set_cause((ScrError *)${arg(0)}, ${arg(1)})`);
+          case "error.deleteCause":
+            return finish(`scr_error_delete_cause((ScrError *)${arg(0)})`);
           case "error.toString":
             // Borrowed receiver; +1 "name: message" (Node's toString rules).
             return finish(`scr_error_to_string((ScrError *)${arg(0)})`);

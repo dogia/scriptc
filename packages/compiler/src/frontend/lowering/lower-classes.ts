@@ -363,6 +363,7 @@ export interface GenericClassInfo {
             { name: "message", type: STRING },
             { name: "%code", type: STRING },
             { name: "%cause", type: DYN },
+            { name: "%causeEnumerable", type: BOOL },
           ],
           loc,
         },
@@ -2192,6 +2193,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
             ) {
               const assign = lhs;
               const name = assign.name.text;
+              if (errorRooted && name === "cause") continue;
               // Later assignments to an already-declared field (own or
               // inherited) are writes, not declarations.
               if (fields.has(name) || hasAccessor(name)) continue;
@@ -2295,6 +2297,7 @@ export function collectClassShapeInner(lowerer: Lowerer, decl: ts.ClassLikeDecla
         // static layouts cannot represent. Named fence, at the first
         // assignment site.
         for (const p of instType ? lowerer.checker.getPropertiesOfType(instType) : []) {
+          if (errorRooted && p.name === "cause") continue;
           if (fields.has(p.name) || methods.has(p.name)) continue;
           if (hasAccessor(p.name)) continue;
           if (base && (base.fields.has(p.name) || lowerer.findMethodOn(base, p.name))) continue;
