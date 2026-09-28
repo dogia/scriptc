@@ -7,13 +7,12 @@
  * which is what keeps the forEach desugar's plain indices stable under
  * arbitrary mutation from the callback.
  *
- * Cycle capability is per-map, decided at construction: val_trace non-NULL
- * means the value type carries a collector header, so records/objects stored
- * as values could point back at this map — the map allocates with the hidden
- * cycle header, its trace visits every live value, and the collector
- * teardown releases the complement (string keys) per the trace/teardown
- * contract in scr_runtime.h. Scalar-, string- and array-valued maps keep the
- * lean 1-word header and never touch the collector.
+ * Cycle capability is per-map, decided at construction: either key_trace
+ * or val_trace means that side carries a collector header and could point
+ * back at this map. Such maps allocate with a hidden cycle header, trace
+ * each live edge on the corresponding side, and release only the untraced
+ * complement during collector teardown. Maps with neither trace adapter
+ * keep the lean 1-word header and never touch the collector.
  */
 #include "scr_runtime.h"
 
@@ -78,12 +77,28 @@ static uint64_t scr_map_slot_from_ptr(void *p) { return (uint64_t)(uintptr_t)p; 
 
 static void *scr_map_slot_to_ptr(uint64_t s) { return (void *)(uintptr_t)s; }
 
+/* Union boxes are a compiler representation, not JavaScript objects. Keep
+ * the box as the owned key, but hash and compare its reference payload. */
+static uint64_t scr_map_identity(const ScrMap *m, uint64_t key) {
+  if (m->key_kind == SCR_MAP_KEY_UNION_REF) {
+    const ScrUnion *u = (const ScrUnion *)scr_map_slot_to_ptr(key);
+    return scr_map_slot_from_ptr(scr_union_peek(u));
+  }
+  return key;
+}
+
+static uint64_t scr_map_hash_key(const ScrMap *m, uint64_t key) {
+  if (m->key_kind == SCR_MAP_KEY_STR) return scr_map_hash_str((ScrStr *)scr_map_slot_to_ptr(key));
+  uint64_t identity = scr_map_identity(m, key);
+  return scr_map_fnv1a((const unsigned char *)&identity, sizeof identity);
+}
+
 /* Stored keys are pre-normalized, so bit equality IS SameValueZero for f64
  * keys (probe keys normalize through the same function). */
 static bool scr_map_key_eq(const ScrMap *m, uint64_t stored, uint64_t probe) {
   /* f64 keys are pre-normalized and REF keys are pointers, so bit equality
    * IS the honest compare for both (SameValueZero; reference identity). */
-  if (m->key_kind != SCR_MAP_KEY_STR) return stored == probe;
+  if (m->key_kind != SCR_MAP_KEY_STR) return scr_map_identity(m, stored) == scr_map_identity(m, probe);
   return scr_str_eq((ScrStr *)scr_map_slot_to_ptr(stored),
                      (ScrStr *)scr_map_slot_to_ptr(probe));
 }
@@ -113,9 +128,7 @@ static void scr_map_rebuild_buckets(ScrMap *m, size_t nbuckets) {
   size_t mask = nbuckets - 1;
   for (size_t e = 0; e < m->nentries; e++) {
     if (!m->entries[e].live) continue;
-    uint64_t hash = m->key_kind != SCR_MAP_KEY_STR
-                        ? scr_map_fnv1a((const unsigned char *)&m->entries[e].key, 8)
-                        : scr_map_hash_str((ScrStr *)scr_map_slot_to_ptr(m->entries[e].key));
+    uint64_t hash = scr_map_hash_key(m, m->entries[e].key);
     size_t i = hash & mask;
     while (buckets[i] != SCR_MAP_EMPTY) i = (i + 1) & mask;
     buckets[i] = e;
@@ -167,7 +180,7 @@ static void scr_map_reserve_append(ScrMap *m) {
 static void scr_map_release_key(ScrMap *m, uint64_t key) {
   if (m->key_kind == SCR_MAP_KEY_STR) {
     scr_str_release((ScrStr *)scr_map_slot_to_ptr(key));
-  } else if (m->key_kind == SCR_MAP_KEY_REF) {
+  } else if (m->key_kind == SCR_MAP_KEY_REF || m->key_kind == SCR_MAP_KEY_UNION_REF) {
     m->key_release(scr_map_slot_to_ptr(key));
   }
 }
@@ -181,16 +194,20 @@ static void scr_map_release_val(ScrMap *m, uint64_t val) {
 static void scr_map_trace(void *o, ScrTraceVisit visit, void *ctx) {
   ScrMap *m = (ScrMap *)o;
   for (size_t e = 0; e < m->nentries; e++) {
-    if (m->entries[e].live) visit(scr_map_slot_to_ptr(m->entries[e].val), ctx);
+    if (!m->entries[e].live) continue;
+    if (m->key_trace) visit(scr_map_slot_to_ptr(m->entries[e].key), ctx);
+    if (m->val_trace) visit(scr_map_slot_to_ptr(m->entries[e].val), ctx);
   }
 }
 
-/* Collector teardown: the trace visits every live VALUE (traced edges were
- * already accounted), so the complement released here is the keys. */
+/* The collector accounts for traced edges. Release only their complement:
+ * an identity-key map may trace keys, values, or both independently. */
 static void scr_map_gcfree(void *o) {
   ScrMap *m = (ScrMap *)o;
   for (size_t e = 0; e < m->nentries; e++) {
-    if (m->entries[e].live) scr_map_release_key(m, m->entries[e].key);
+    if (!m->entries[e].live) continue;
+    if (!m->key_trace) scr_map_release_key(m, m->entries[e].key);
+    if (!m->val_trace) scr_map_release_val(m, m->entries[e].val);
   }
   free(m->entries);
   free(m->buckets);
@@ -203,9 +220,17 @@ static void scr_map_gcfree(void *o) {
 ScrMap *scr_map_new(ScrMapKeyKind key_kind, ScrMapValKind val_kind,
                      void *(*val_retain)(void *), void (*val_release)(void *),
                      ScrTraceFn val_trace) {
+  return scr_map_new_typed(key_kind, val_kind, NULL, NULL, NULL, val_retain, val_release, val_trace);
+}
+
+ScrMap *scr_map_new_typed(ScrMapKeyKind key_kind, ScrMapValKind val_kind,
+                         void *(*key_retain)(void *), void (*key_release)(void *),
+                         ScrTraceFn key_trace,
+                         void *(*val_retain)(void *), void (*val_release)(void *),
+                         ScrTraceFn val_trace) {
   ScrMap *m;
-  if (val_trace) {
-    /* Cycle-capable values can point back: collector header + trace. */
+  if (key_trace || val_trace) {
+    /* Either side can point back: collector header + trace. */
     m = scr_cyc_alloc(sizeof *m, &scr_map_trace, &scr_map_gcfree);
   } else {
     m = calloc(1, sizeof *m);
@@ -217,6 +242,9 @@ ScrMap *scr_map_new(ScrMapKeyKind key_kind, ScrMapValKind val_kind,
   m->val_retain = val_retain;
   m->val_release = val_release;
   m->val_trace = val_trace;
+  m->key_retain = key_retain;
+  m->key_release = key_release;
+  m->key_trace = key_trace;
 #ifdef SCR_RC_AUDIT
   scr_live_maps++;
 #endif
@@ -226,7 +254,7 @@ ScrMap *scr_map_new(ScrMapKeyKind key_kind, ScrMapValKind val_kind,
 ScrMap *scr_map_retain(ScrMap *m) {
   if (m->rc != SIZE_MAX) {
     m->rc++;
-    if (m->val_trace) scr_cyc_mark_live(m);
+    if (m->key_trace || m->val_trace) scr_cyc_mark_live(m);
   }
   return m;
 }
@@ -234,7 +262,7 @@ ScrMap *scr_map_retain(ScrMap *m) {
 void scr_map_release(ScrMap *m) {
   if (!m || m->rc == SIZE_MAX) return; /* NULL: an uninitialized `let` local */
   if (--m->rc == 0) {
-    if (m->val_trace) scr_cyc_on_dead(m);
+    if (m->key_trace || m->val_trace) scr_cyc_on_dead(m);
     for (size_t e = 0; e < m->nentries; e++) {
       if (!m->entries[e].live) continue;
       scr_map_release_key(m, m->entries[e].key);
@@ -245,9 +273,9 @@ void scr_map_release(ScrMap *m) {
 #ifdef SCR_RC_AUDIT
     scr_live_maps--;
 #endif
-    if (m->val_trace) scr_cyc_free(m);
+    if (m->key_trace || m->val_trace) scr_cyc_free(m);
     else free(m);
-  } else if (m->val_trace) {
+  } else if (m->key_trace || m->val_trace) {
     scr_cyc_on_release(m); /* possible cycle root; may collect — m is done */
   }
 }
@@ -312,7 +340,7 @@ bool scr_map_delete_str(ScrMap *m, const ScrStr *key) {
  * SCR_MAP_KEY_REF note). Probes never retain; storage does. */
 static size_t scr_map_find_ref(const ScrMap *m, const void *key) {
   uint64_t k = scr_map_slot_from_ptr((void *)key);
-  return scr_map_find(m, scr_map_fnv1a((const unsigned char *)&k, 8), k);
+  return scr_map_find(m, scr_map_hash_key(m, k), k);
 }
 
 bool scr_map_has_ref(const ScrMap *m, const void *key) {
@@ -345,7 +373,7 @@ static void scr_map_set(ScrMap *m, uint64_t hash, uint64_t key, uint64_t val) {
   m->nlive++;
   if (m->key_kind == SCR_MAP_KEY_STR) {
     scr_str_retain((ScrStr *)scr_map_slot_to_ptr(key)); /* key is borrowed */
-  } else if (m->key_kind == SCR_MAP_KEY_REF) {
+  } else if (m->key_kind == SCR_MAP_KEY_REF || m->key_kind == SCR_MAP_KEY_UNION_REF) {
     m->key_retain(scr_map_slot_to_ptr(key)); /* key is borrowed */
   }
   size_t mask = m->nbuckets - 1;
@@ -389,14 +417,21 @@ void scr_map_set_str_ref(ScrMap *m, ScrStr *key, void *v) {
 
 void scr_map_set_ref_f64(ScrMap *m, void *key, double v) {
   uint64_t k = scr_map_slot_from_ptr(key);
-  scr_map_set(m, scr_map_fnv1a((const unsigned char *)&k, 8), k, scr_map_slot_from_f64(v));
+  scr_map_set(m, scr_map_hash_key(m, k), k, scr_map_slot_from_f64(v));
+}
+
+void scr_map_set_ref_bool(ScrMap *m, void *key, bool v) {
+  uint64_t k = scr_map_slot_from_ptr(key);
+  scr_map_set(m, scr_map_hash_key(m, k), k, (uint64_t)(v ? 1 : 0));
+}
+
+void scr_map_set_ref_ref(ScrMap *m, void *key, void *v) {
+  uint64_t k = scr_map_slot_from_ptr(key);
+  scr_map_set(m, scr_map_hash_key(m, k), k, scr_map_slot_from_ptr(v));
 }
 
 ScrMap *scr_set_new_ref(void *(*elem_retain)(void *), void (*elem_release)(void *)) {
-  ScrMap *m = scr_map_new(SCR_MAP_KEY_REF, SCR_MAP_VAL_F64, NULL, NULL, NULL);
-  m->key_retain = elem_retain;
-  m->key_release = elem_release;
-  return m;
+  return scr_map_new_typed(SCR_MAP_KEY_REF, SCR_MAP_VAL_F64, elem_retain, elem_release, NULL, NULL, NULL, NULL);
 }
 
 /* ── get ───────────────────────────────────────────────────────────────── */
@@ -448,6 +483,26 @@ void *scr_map_get_str_ref(const ScrMap *m, const ScrStr *key) {
   size_t e = scr_map_find_str(m, key);
   if (e == SCR_MAP_EMPTY) return NULL;
   return m->val_retain(scr_map_slot_to_ptr(m->entries[e].val)); /* +1 */
+}
+
+bool scr_map_get_ref_f64(const ScrMap *m, const void *key, double *out) {
+  size_t e = scr_map_find_ref(m, key);
+  if (e == SCR_MAP_EMPTY) return false;
+  *out = scr_map_slot_to_f64(m->entries[e].val);
+  return true;
+}
+
+bool scr_map_get_ref_bool(const ScrMap *m, const void *key, bool *out) {
+  size_t e = scr_map_find_ref(m, key);
+  if (e == SCR_MAP_EMPTY) return false;
+  *out = m->entries[e].val != 0;
+  return true;
+}
+
+void *scr_map_get_ref_ref(const ScrMap *m, const void *key) {
+  size_t e = scr_map_find_ref(m, key);
+  if (e == SCR_MAP_EMPTY) return NULL;
+  return m->val_retain(scr_map_slot_to_ptr(m->entries[e].val));
 }
 
 /* ── iteration primitives (the forEach desugar) ────────────────────────── */
@@ -508,7 +563,7 @@ void scr_map_iter_exit(ScrMap *m) {
  * duplicates overwrite the unit value in place, so first insertion
  * position wins (SameValueZero, exactly JS). The map is a set (value kind
  * pinned to f64, every stored value 0); elements are the set's key kind —
- * f64 or string, matching the array's element kind. */
+ * f64, string, or an identity reference matching the array's element kind. */
 void scr_set_add_all(ScrMap *set, ScrArr *values) {
   size_t n = values->len;
   for (size_t i = 0; i < n; i++) {
@@ -516,7 +571,7 @@ void scr_set_add_all(ScrMap *set, ScrArr *values) {
       ScrStr *s = (ScrStr *)scr_arr_get_ref(values, (double)i); /* +1 */
       scr_map_set_str_f64(set, s, 0);                           /* borrows; retains stored copy */
       scr_str_release(s);
-    } else if (set->key_kind == SCR_MAP_KEY_REF) {
+    } else if (set->key_kind == SCR_MAP_KEY_REF || set->key_kind == SCR_MAP_KEY_UNION_REF) {
       void *p = scr_arr_get_ref(values, (double)i); /* +1 */
       scr_map_set_ref_f64(set, p, 0);               /* borrows; retains stored copy */
       set->key_release(p);

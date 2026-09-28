@@ -11,7 +11,7 @@
  * Anything outside the tier refuses loudly (LlvmUnsupportedError naming
  * the type kind) — the tables never guess. */
 import type { IrModule, IrRecordShape, IrType } from "../../ir/ir.js";
-import { isRefCounted, mapOf, POINTER_KINDS, runtimeRcStem, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, STRING } from "../../ir/ir.js";
+import { isIdentityCollectionKey, isRefCounted, mapOf, POINTER_KINDS, runtimeRcStem, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES, STRING } from "../../ir/ir.js";
 import {
   mangleClassRelease,
   mangleClassRetain,
@@ -150,7 +150,11 @@ export function traceAdapter(host: ShapeHost, t: IrType): string | null {
       }
       return `@${mangleClassTrace(t.className)}`;
     case "map":
-      if (traceAdapter(host, t.value) === null) return null;
+      if (traceAdapter(host, t.key) === null && traceAdapter(host, t.value) === null) return null;
+      host.declare(`declare void @scr_map_trace_v(ptr, ptr, ptr)`);
+      return "@scr_map_trace_v";
+    case "set":
+      if (traceAdapter(host, t.elem) === null) return null;
       host.declare(`declare void @scr_map_trace_v(ptr, ptr, ptr)`);
       return "@scr_map_trace_v";
     case "array":
@@ -290,15 +294,14 @@ export function llFieldType(t: IrType): "double" | "i8" | "ptr" {
 export function mapKeyAccess(key: IrType): "f64" | "str" | "ref" {
   if (key.kind === "f64") return "f64";
   if (key.kind === "string") return "str";
-  if (key.kind === "symbol") return "ref";
-  if (key.kind === "netServer") return "ref"; // handle identity (Set<Server>)
+  if (isIdentityCollectionKey(key) || key.kind === "union") return "ref";
   throw new LlvmUnsupportedError(`mapKey:${key.kind}`);
 }
 
 /** The ScrMapKeyKind / ScrMapValKind constants for scr_map_new. */
 export function mapKeyKindNum(key: IrType): number {
   const acc = mapKeyAccess(key);
-  return acc === "f64" ? 0 : acc === "str" ? 1 : 2;
+  return key.kind === "union" ? 3 : acc === "f64" ? 0 : acc === "str" ? 1 : 2;
 }
 
 export function mapValKindNum(value: IrType): number {

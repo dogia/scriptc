@@ -134,7 +134,7 @@ stdlib-fence.ts:30:12 - error SC2020: 'new Set(values)' is part of the standard 
      |            ^~~~~~~~~~~~~~~~~~~~~~~~
   31 | // (new Error / TypeError / RangeError / SyntaxError now LOWER — the error
 
-  hint: construct the Set empty and add() each value — only a string, array, or fixed tuple of already-legal elements (string or number) seeds a Set
+  hint: construct the Set empty and add() each value — only a string, array, or fixed tuple of already-legal elements (numbers, strings, or identity references) seeds a Set
 
 stdlib-fence.ts:34:7 - error SC2020: 'AggregateError' is part of the standard library types but has no scriptc lowering yet
 
@@ -230,24 +230,6 @@ stdlib-fence.ts:52:1 - error SC2020: '.forEach with 2 arguments' is part of the 
   53 | const pos = "abc".includes("b", 1); // the position form lowers now (indexOf's clamp)
 
   hint: the thisArg parameter has no lowering — use an arrow function
-
-stdlib-fence.ts:54:13 - error SC2020: 'JSON.parse with a reviver' is part of the standard library types but has no scriptc lowering yet
-
-  53 | const pos = "abc".includes("b", 1); // the position form lowers now (indexOf's clamp)
-  54 | const rev = JSON.parse("1", (_k, v) => v);
-     |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  55 | // (stringify with a null replacer + LITERAL space now lowers — the pretty
-
-  hint: parse to `unknown` and validate with a checked cast ('as T') instead
-
-stdlib-fence.ts:59:18 - error SC2020: 'JSON.stringify with replacer/space parameters' is part of the standard library types but has no scriptc lowering yet
-
-  58 | const toStringify = { a: 1 };
-  59 | const replaced = JSON.stringify(toStringify, (_k, v) => v);
-     |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  60 | const width = 2;
-
-  hint: the serializer is type-directed — shape the value before stringifying
 
 stdlib-fence.ts:61:16 - error SC2020: 'JSON.stringify with replacer/space parameters' is part of the standard library types but has no scriptc lowering yet
 

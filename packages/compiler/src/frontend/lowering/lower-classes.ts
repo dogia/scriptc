@@ -755,7 +755,7 @@ function inferredEmptyCollectionFieldType(
     if (collection === "Map" && node.expression.name.text === "set" && node.arguments.length === 2) {
       const key = mappedArgument(node.arguments[0]!);
       const value = mappedArgument(node.arguments[1]!);
-      if (key !== null && value !== null && isSupportedMapKey(key) && isSupportedMapValue(value)) {
+      if (key !== null && value !== null && isSupportedMapKey(key, key.kind === "union" ? lowerer.unions.get(key.unionId)?.arms : undefined) && isSupportedMapValue(value)) {
         mapKeys.push(key);
         mapValues.push(value);
       }
@@ -766,7 +766,7 @@ function inferredEmptyCollectionFieldType(
       node.arguments.length === 1
     ) {
       const element = mappedArgument(node.arguments[0]!);
-      if (element !== null && isSupportedSetElem(element)) setElements.push(element);
+      if (element !== null && isSupportedSetElem(element, element.kind === "union" ? lowerer.unions.get(element.unionId)?.arms : undefined)) setElements.push(element);
     }
     return undefined;
   };
@@ -5285,7 +5285,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
         if (mapped?.kind === "map") {
           if (!entriesLit) return { kind: "mapNew", type: mapped, loc };
           const seed = entriesLit.map((pair) => ({
-            key: lowerer.lowerExprExpecting(pair.elements[0]!, mapped.key),
+            key: lowerer.lowerCollectionKey(pair.elements[0]!, mapped.key),
             value: lowerer.lowerExprExpecting(pair.elements[1]!, mapped.value),
           }));
           return { kind: "mapNew", seed, type: mapped, loc };
@@ -5308,12 +5308,12 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
           return { kind: "dynObjLit", type: DYN, loc };
         }
         const keyIr = targs[0] ? lowerer.mapTypeOf(targs[0]) : null;
-        if (targs[0] && (!keyIr || !isSupportedMapKey(keyIr))) {
+        if (targs[0] && (!keyIr || !isSupportedMapKey(keyIr, keyIr.kind === "union" ? lowerer.unions.get(keyIr.unionId)?.arms : undefined))) {
           lowerer.unsupported(
             "SC1090",
             expr,
             `Map keys of type '${lowerer.checker.typeToString(targs[0])}' ` +
-              `(Map keys must be string or number)`,
+              `(Map keys must be numbers, strings, identity references, or unions of identity references)`,
           );
         }
         if (targs[1]) {
@@ -5358,7 +5358,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
           // union — unmappable, so the generic literal path can't type it);
           // an array-typed VALUE seed lowers as itself.
           if (ts.isArrayLiteralExpression(argNode) && !argNode.elements.some(ts.isSpreadElement)) {
-            const elems = argNode.elements.map((el) => lowerer.lowerExprExpecting(el, mapped.elem));
+            const elems = argNode.elements.map((el) => lowerer.lowerCollectionKey(el, mapped.elem));
             const seed: IrExpr = { kind: "arrayLit", elems, type: arrayOf(mapped.elem), loc };
             return { kind: "setNew", seed, type: mapped, loc };
           }
@@ -5372,7 +5372,11 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
               return { kind: "setNew", seed: strCharsCall(lowerer, source, loc), type: mapped, loc };
             }
             if (argIr?.kind === "array" && typeEquals(argIr.elem, mapped.elem)) {
-              let seed = lowerer.lowerExpr(argNode);
+              // Copying scalar elements is unobservable, but a checked
+              // dynamic exit would mint different record/array identities.
+              let seed = mapped.elem.kind === "f64" || mapped.elem.kind === "string"
+                ? lowerer.lowerExpr(argNode)
+                : lowerer.lowerCollectionKey(argNode, argIr);
               // A T[]-DECLARED seed whose value is an island handle (a
               // package's exported array — the binding never held a
               // static array): the VALIDATED exit copies the engine
@@ -5399,7 +5403,9 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
                 const seedType = { kind: "array" as const, elem: mapped.elem };
                 const helper = lowerer.tupleArrayWidthHelper(argIr.shapeId, seedType, loc);
                 if (helper) {
-                  const tuple = lowerer.lowerExpr(argNode);
+                  const tuple = mapped.elem.kind === "f64" || mapped.elem.kind === "string"
+                    ? lowerer.lowerExpr(argNode)
+                    : lowerer.lowerCollectionKey(argNode, argIr);
                   if (typeEquals(tuple.type, argIr)) {
                     const seed: IrExpr = { kind: "call", callee: helper, args: [tuple], type: seedType, loc };
                     return { kind: "setNew", seed, type: mapped, loc };
@@ -5439,7 +5445,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
             "new Set(values)",
             expr,
             "construct the Set empty and add() each value — only a string, array, or fixed tuple of " +
-              "already-legal elements (string or number) seeds a Set",
+              "already-legal elements (numbers, strings, or identity references) seeds a Set",
           );
         }
         if (mapped?.kind === "set") return { kind: "setNew", type: mapped, loc };
@@ -5449,7 +5455,7 @@ export function lowerNew(lowerer: Lowerer, expr: ts.NewExpression): IrExpr {
             "SC1090",
             expr,
             `Set elements of type '${lowerer.checker.typeToString(targs[0])}' ` +
-              `(Set elements must be string or number — Map's key kinds — or a server handle, which stores under reference identity)`,
+              `(Set elements must be numbers, strings, identity references, or unions of identity references)`,
           );
         }
         lowerer.badType(expr, tsType);

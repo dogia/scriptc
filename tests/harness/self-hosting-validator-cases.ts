@@ -1,4 +1,4 @@
-import { BOOL, F64, STRING, VOID, arrayOf, type IrExpr, type IrModule, type IrStmt } from "../../packages/compiler/src/ir/ir.js";
+import { BOOL, F64, STRING, VOID, arrayOf, mapOf, setOf, type IrExpr, type IrModule, type IrStmt, type IrType } from "../../packages/compiler/src/ir/ir.js";
 import { boolLit, numLit, strLit, varRef } from "../../packages/compiler/src/ir/build.js";
 
 const loc = { file: "validator-input.ts", start: 12, end: 34 };
@@ -81,6 +81,20 @@ export function validatorCases(): ValidatorCase[] {
   add("array element type", (m) => {
     m.functions[0]!.body = [expression({ kind: "arrayLit", elems: [strLit("wrong", loc)], type: arrayOf(F64), loc })];
   }, "expected f64");
+  for (const collection of ["map", "set"] as const) {
+    for (const mixed of [false, true]) {
+      add(`${collection} ${mixed ? "mixed" : "identity"} key union`, (m) => {
+        const reference: IrType = { kind: "record", shapeId: "key" };
+        const key: IrType = { kind: "union", unionId: "keys" };
+        m.records = [{ id: "key", fields: [{ name: "id", type: F64 }] }];
+        m.unions = [{ id: "keys", arms: [reference, mixed ? STRING : arrayOf(F64)] }];
+        const expr: IrExpr = collection === "map"
+          ? { kind: "mapNew", type: mapOf(key, F64), loc }
+          : { kind: "setNew", type: setOf(key), loc };
+        m.functions[0]!.body = [expression(expr)];
+      }, mixed ? (collection === "map" ? "mapNew key kind union" : "setNew element kind union") : undefined);
+    }
+  }
   add("library signature", (m) => {
     m.functions[0]!.body = [expression({ kind: "libCall", fn: "number.isFinite", args: [strLit("wrong", loc)], type: BOOL, loc })];
   }, "expected f64");

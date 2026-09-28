@@ -725,11 +725,12 @@ function emitRecordCloneC(
         return mangleClassTrace(t.className);
       case "record":
         return emitter.tracedShapes.has(`record:${t.shapeId}`) ? mangleRecordTrace(t.shapeId) : null;
-      // Cycle-capable exactly when the VALUE type is (mirrors the
-      // constructor fixpoint's map rule): such maps allocate with the
-      // collector header and their runtime trace visits every live value.
+      // Cycle-capable when either the key or value type is (the same
+      // rule as the constructor and the tracing fixed point).
       case "map":
-        return emitter.traceAdapterC(t.value) !== null ? "scr_map_trace_v" : null;
+        return emitter.traceAdapterC(t.key) !== null || emitter.traceAdapterC(t.value) !== null ? "scr_map_trace_v" : null;
+      case "set":
+        return emitter.traceAdapterC(t.elem) !== null ? "scr_map_trace_v" : null;
       // Arrays mirror maps: cycle-capable exactly when the ELEMENT type is
       // (a record/object/union element — or a cycle-capable inner array —
       // can point back at the array holding it). Such arrays allocate with

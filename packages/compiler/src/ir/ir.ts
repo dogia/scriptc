@@ -48,18 +48,16 @@ export type IrType =
   | { kind: "array"; elem: IrType } // heap, refcounted, monomorphic elements
   /** ES `Map<K, V>` — heap, refcounted, insertion-ordered hash map with ONE
    * runtime representation (ScrMap) and type-directed key/value handling,
-   * exactly the array pattern (never per-instantiation structs). Keys are
-   * f64 or string (SameValueZero); values are f64, string, bool, record,
-   * object, union, or array — anything isRefCounted or scalar EXCEPT
-   * func/promise/dyn/jsval/map (frontend-fenced, validator-checked). */
+   * exactly the array pattern (never per-instantiation structs). Keys use
+   * numeric SameValueZero, string content, or reference identity, including
+   * payload identity for unions of reference keys. isSupportedMapKey and
+   * isSupportedMapValue define the frontend/validator storage fences. */
   | { kind: "map"; key: IrType; value: IrType }
   /** ES `Set<T>` — heap, refcounted, insertion-ordered. Map's sibling with
    * the value slot removed: ONE runtime representation (the backend lowers
    * sets onto the map runtime with a constant unit value), elements are
-   * exactly Map's KEY types — f64 or string, SameValueZero. Same container
-   * fences as map (no union arms, no array elements, no map values, no sets
-   * of sets, not JSON-safe) and never cycle-capable: elements are scalars
-   * or strings, which cannot point back. */
+   * exactly Map's KEY types and use the same equality. Reference elements
+   * carry retain/release and, when cycle-capable, tracing adapters. */
   | { kind: "set"; elem: IrType }
   /** A regular expression — heap, refcounted, IMMUTABLE. No lastIndex
    * statefulness exists: /g and /y are supported only inside
@@ -580,28 +578,25 @@ export function setOf(elem: IrType): IrType {
   return { kind: "set", elem };
 }
 
-/** The Map KEY fence: string (content) or number (SameValueZero) — the two
- * kinds a hash of the VALUE is honest for. Booleans, objects, and the rest
- * of JS's anything-goes keys stay out. Shared by the frontend's
- * type mapping/diagnostics and the validator. Set ELEMENTS use the same
- * fence: a set is hashed storage of its elements exactly as a map is of
- * its keys (isSupportedSetElem is this predicate under its own name). */
-export function isSupportedMapKey(t: IrType): boolean {
-  return t.kind === "f64" || t.kind === "string";
+/** Values whose native reference represents JavaScript identity. Records,
+ * classes and arrays can point back at their collection, so constructors
+ * must carry key tracing as well as retain/release adapters. */
+export function isIdentityCollectionKey(t: IrType): boolean {
+  return t.kind === "record" || t.kind === "object" || t.kind === "array" ||
+    t.kind === "netServer" || t.kind === "symbol";
 }
 
-/** The Set ELEMENT fence — Map's key fence plus the refcounted HANDLE
- * kinds stored under identity hashing (SameValueZero for JS objects IS
- * reference identity, so a Set of server handles — portless's auxiliary-
- * server registry — is honest hashed storage; SCR_MAP_KEY_REF in the
- * runtime). netServer is the one handle admitted so far: it drops its
- * listener closures at close, so a set-in-listener cycle is temporary —
- * the child precedent's story. Symbols are identity values by DESIGN —
- * SameValueZero on a symbol IS pointer identity, so a Set of symbols (the
- * sentinel-registry idiom) is the same honest hashed storage with no
- * cycle risk at all (symbols hold only strings). */
-export function isSupportedSetElem(t: IrType): boolean {
-  return isSupportedMapKey(t) || t.kind === "netServer" || t.kind === "symbol";
+/** Numbers use SameValueZero, strings use content, and reference keys use
+ * identity. A union of identity arms hashes its payload, never its temporary
+ * wrapper. Mixed scalar/reference unions remain outside this contract. */
+export function isSupportedMapKey(t: IrType, unionArms?: IrType[]): boolean {
+  return t.kind === "f64" || t.kind === "string" || isIdentityCollectionKey(t) ||
+    (t.kind === "union" && unionArms !== undefined && unionArms.length > 0 && unionArms.every(isIdentityCollectionKey));
+}
+
+/** Set elements and Map keys share storage, equality and ownership rules. */
+export function isSupportedSetElem(t: IrType, unionArms?: IrType[]): boolean {
+  return isSupportedMapKey(t, unionArms);
 }
 
 /** The Map VALUE fence: scalars plus every refcounted kind EXCEPT

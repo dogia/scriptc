@@ -6,7 +6,7 @@ import { InternalCompilerError } from "../../errors.js";
  * functions of IrType/values — every emission module leans on these, so they
  * live in ONE place with no emitter state. */
 import type { IrBytesElem, IrType } from "../../ir/ir.js";
-import { POINTER_KINDS, type PointerKind, runtimeRcStem, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES } from "../../ir/ir.js";
+import { isIdentityCollectionKey, POINTER_KINDS, type PointerKind, runtimeRcStem, RUNTIME_EMITTER_CLASS, RUNTIME_ERROR_CLASSES, RUNTIME_STREAM_CLASSES } from "../../ir/ir.js";
 import {
   mangleClassRelease,
   mangleClassRetain,
@@ -408,16 +408,16 @@ export function elemAccess(elem: IrType): "f64" | "bool" | "ref" {
 export function mapKeyAccess(key: IrType): "f64" | "str" | "ref" {
   if (key.kind === "f64") return "f64";
   if (key.kind === "string") return "str";
-  // Handle-kind SET elements (identity hashing — isSupportedSetElem);
-  // Map keys proper stay f64/string.
-  if (key.kind === "netServer" || key.kind === "symbol") return "ref";
+  // Identity references share a pointer ABI; union keys select a separate
+  // hash/equality kind below so their wrapper is not treated as the key.
+  if (isIdentityCollectionKey(key) || key.kind === "union") return "ref";
   throw new InternalCompilerError(`emitter bug: map key of ${key.kind} (frontend rejects these)`);
 }
 
 /** The runtime's key-kind/value-kind tags for scr_map_new. */
 export function mapKeyKindC(key: IrType): string {
   const acc = mapKeyAccess(key);
-  return acc === "str" ? "SCR_MAP_KEY_STR" : acc === "ref" ? "SCR_MAP_KEY_REF" : "SCR_MAP_KEY_F64";
+  return key.kind === "union" ? "SCR_MAP_KEY_UNION_REF" : acc === "str" ? "SCR_MAP_KEY_STR" : acc === "ref" ? "SCR_MAP_KEY_REF" : "SCR_MAP_KEY_F64";
 }
 
 export function mapValKindC(value: IrType): string {

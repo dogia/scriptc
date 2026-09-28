@@ -2928,7 +2928,7 @@ function validateFunction(
           err(`mapNew must be map-typed, got ${e.type.kind}`, e.loc);
           break;
         }
-        if (!isSupportedMapKey(e.type.key)) {
+        if (!isSupportedMapKey(e.type.key, e.type.key.kind === "union" ? unions.get(e.type.key.unionId)?.arms : undefined)) {
           err(`mapNew key kind ${e.type.key.kind} (frontend must fence)`, e.loc);
         }
         if (!isSupportedMapValue(e.type.value)) {
@@ -3013,7 +3013,7 @@ function validateFunction(
           err(`setNew must be set-typed, got ${e.type.kind}`, e.loc);
           break;
         }
-        if (!isSupportedSetElem(e.type.elem)) {
+        if (!isSupportedSetElem(e.type.elem, e.type.elem.kind === "union" ? unions.get(e.type.elem.unionId)?.arms : undefined)) {
           err(`setNew element kind ${e.type.elem.kind} (frontend must fence)`, e.loc);
         }
         // The seed is one T[]-typed expression (T = the element type).

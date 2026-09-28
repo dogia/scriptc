@@ -1,7 +1,7 @@
 // SC2009: supported shapes over a component type outside its slot — the
 // container is not the blocker, and each message names the component.
 
-// Map keys are limited to numbers and strings.
+// Boolean Map keys remain outside the supported key domain.
 const byFlag = new Map<boolean, string>();
 console.log(byFlag);
 
@@ -9,7 +9,7 @@ console.log(byFlag);
 const listeners = new Map<string, () => void>();
 console.log(listeners);
 
-// Set elements are limited to numbers and strings.
+// Boolean Set elements remain outside the supported element domain.
 const flags = new Set<boolean>();
 console.log(flags);
 
@@ -17,7 +17,7 @@ console.log(flags);
 const rows: Map<string, number>[] = [];
 console.log(rows);
 
-// A Map arm has no home in a compiled union.
+// Nullable Maps compile and remain as working context.
 function report(maybe: Map<string, number> | undefined): number {
   return maybe === undefined ? 0 : maybe.size;
 }

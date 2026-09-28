@@ -5,8 +5,9 @@ import { funcOf, mapOf, RUNTIME_EMITTER_CLASS, STRING, VOID } from "../ir/ir.js"
  * Greatest fixpoint over shapes and unions: start optimistic (everything
  * cycle-capable), repeatedly drop shapes with no cycle-capable field and
  * unions with no cycle-capable arm until stable. Closures and promises
- * are always cycle-capable; strings never are; arrays/maps inherit their
- * element/value type's capability. A HIERARCHY is one unit of capability
+ * are always cycle-capable; strings never are; arrays/Sets inherit their
+ * element type's capability and Maps inherit either key or value capability.
+ * A HIERARCHY is one unit of capability
  * (a base-typed slot can hold any subclass and retain touches the cycle
  * header, so header presence must be uniform across an extends tree): a
  * unit is cycle-capable iff ANY member is — every backend uses the same grouping. */
@@ -67,7 +68,8 @@ export function computeTraced(mod: IrModule): { shapes: Set<string>; unions: Set
       case "union":
         return tracedUnions.has(t.unionId);
       case "map":
-        return cycleCapable(t.value);
+        return cycleCapable(t.key) || cycleCapable(t.value);
+      case "set":
       case "array":
         return cycleCapable(t.elem);
       default:

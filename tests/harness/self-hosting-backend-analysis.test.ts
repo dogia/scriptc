@@ -1,10 +1,11 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { expect, test } from "vitest";
-import { analyze, compile, compileC, deserializeModule, emitCModule, serializeModule, validateModule } from "@scriptc/compiler";
+import { compile, compileC, deserializeModule, emitCModule, serializeModule, validateModule, type AnalyzeResult } from "@scriptc/compiler";
 import { emitLlvmModule } from "../../packages/compiler/src/backend/llvm/emitter.js";
 import { everyStmtList } from "../../packages/compiler/src/ir/traverse.js";
 import { moduleUsesInspect, moduleUsesDynInvoke, moduleUsesRegex, moduleUsesCopying, type IrModule } from "../../packages/compiler/src/ir/ir.js";
@@ -13,6 +14,7 @@ import { backendAnalysisCases } from "./self-hosting-backend-cases.js";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const entry = join(root, "tests/fixtures/self-hosting/backend-analysis.ts");
 const options = { cwd: root, timeout: 30_000, maxBuffer: 32 * 1024 * 1024 };
+const execFileAsync = promisify(execFile);
 interface Analysis {
   mayThrow: string[];
   indirect: boolean;
@@ -35,8 +37,19 @@ function counts(mod: IrModule): { calls: number; reads: number; records: number 
   return out;
 }
 
-test("the production optimization and backend analysis pipeline lowers entirely statically", () => {
-  const { coverage } = analyze(entry, { dynamic: false });
+test("the production optimization and backend analysis pipeline lowers entirely statically", async () => {
+  // Lowering this entire stage is synchronous and can outlast Vitest's
+  // status-RPC timeout. Keep its worker responsive while the child lowers
+  // the same source API; compiler failures still fail the awaited process.
+  const sourceApi = pathToFileURL(join(root, "packages/compiler/src/index.ts")).href;
+  const { stdout } = await execFileAsync(process.execPath, [
+    "--import", "tsx", "--input-type=module", "--eval",
+    `import { analyze } from ${JSON.stringify(sourceApi)};
+     const { coverage } = analyze(process.argv[1], { dynamic: false });
+     console.log(JSON.stringify({ preflightFailed: coverage.preflightFailed, diagnostics: coverage.diagnostics, stats: coverage.stats }));`,
+    entry,
+  ], { ...options, timeout: 180_000 });
+  const coverage = JSON.parse(stdout) as AnalyzeResult["coverage"];
   expect(coverage.preflightFailed).toBe(false);
   expect(coverage.diagnostics).toEqual([]);
   expect(coverage.stats.statementsTotal).toBeGreaterThan(3800);

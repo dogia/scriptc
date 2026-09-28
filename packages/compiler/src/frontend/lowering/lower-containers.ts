@@ -3277,7 +3277,7 @@ function buildArrayFromArrayFn(lowerer: Lowerer, name: string, elem: IrType,
     }
 
     if (name === "get") {
-      const k = lowerer.lowerExprExpecting(call.arguments[0]!, receiverIr.key);
+      const k = lowerer.lowerCollectionKey(call.arguments[0]!, receiverIr.key);
       // The checker types the call `V | undefined`, which interns the
       // result union. `undefined` sorts LAST among all possible arm
       // typeKeys, so when V is itself a union its arms keep their tags in
@@ -3287,12 +3287,12 @@ function buildArrayFromArrayFn(lowerer: Lowerer, name: string, elem: IrType,
       return { kind: "mapIntrinsic", method: "get", receiver, args: [k], type, loc };
     }
     if (name === "set") {
-      const k = lowerer.lowerExprExpecting(call.arguments[0]!, receiverIr.key);
+      const k = lowerer.lowerCollectionKey(call.arguments[0]!, receiverIr.key);
       const v = lowerer.lowerExprExpecting(call.arguments[1]!, receiverIr.value);
       return { kind: "mapIntrinsic", method: "set", receiver, args: [k, v], type: VOID, loc };
     }
     if (name === "has" || name === "delete") {
-      const k = lowerer.lowerExprExpecting(call.arguments[0]!, receiverIr.key);
+      const k = lowerer.lowerCollectionKey(call.arguments[0]!, receiverIr.key);
       return { kind: "mapIntrinsic", method: name, receiver, args: [k], type: BOOL, loc };
     }
     if (name === "clear") {
@@ -3657,11 +3657,11 @@ const MAP_ITER_METHODS = new Set(["keys", "values", "entries"]);
       return lowerSetCombineCall(lowerer, call, name, receiver, receiverIr);
     }
     if (name === "add") {
-      const v = lowerer.lowerExprExpecting(call.arguments[0]!, receiverIr.elem);
+      const v = lowerer.lowerCollectionKey(call.arguments[0]!, receiverIr.elem);
       return { kind: "setIntrinsic", method: "add", receiver, args: [v], type: VOID, loc };
     }
     if (name === "has" || name === "delete") {
-      const v = lowerer.lowerExprExpecting(call.arguments[0]!, receiverIr.elem);
+      const v = lowerer.lowerCollectionKey(call.arguments[0]!, receiverIr.elem);
       return { kind: "setIntrinsic", method: name, receiver, args: [v], type: BOOL, loc };
     }
     if (name === "clear") {

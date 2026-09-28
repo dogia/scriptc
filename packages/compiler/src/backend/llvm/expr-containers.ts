@@ -507,15 +507,19 @@ export function emitMapNew(host: LlvmEmitterContext, e: IrExpr & { kind: "mapNew
     const B = host.B;
     const value = e.type.value;
     const rc = isRefCounted(value) ? vAdapters(host, value) : { retain: "null", release: "null" };
-    host.declare(`declare ptr @scr_map_new(i32, i32, ptr, ptr, ptr)`);
     const m = B.tmp();
-    B.line(
-      `${m} = call ptr @scr_map_new(i32 ${mapKeyKindNum(e.type.key)}, i32 ${mapValKindNum(value)}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${isRefCounted(value) ? traceArg(host, value) : "null"})`,
-    );
+    const kAcc = mapKeyAccess(e.type.key);
+    if (kAcc === "ref") {
+      const keyRc = vAdapters(host, e.type.key);
+      host.declare(`declare ptr @scr_map_new_typed(i32, i32, ptr, ptr, ptr, ptr, ptr, ptr)`);
+      B.line(`${m} = call ptr @scr_map_new_typed(i32 ${mapKeyKindNum(e.type.key)}, i32 ${mapValKindNum(value)}, ptr ${keyRc.retain}, ptr ${keyRc.release}, ptr ${traceArg(host, e.type.key)}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, value)})`);
+    } else {
+      host.declare(`declare ptr @scr_map_new(i32, i32, ptr, ptr, ptr)`);
+      B.line(`${m} = call ptr @scr_map_new(i32 ${mapKeyKindNum(e.type.key)}, i32 ${mapValKindNum(value)}, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, value)})`);
+    }
     const out = host.own({ name: m, type: e.type });
     // Seeded construction: set() each pair in source order — a repeated
     // key overwrites (the runtime releases the old value).
-    const kAcc = mapKeyAccess(e.type.key);
     const vAcc = elemAccess(value);
     for (const pair of e.seed ?? []) {
       const k = host.emitExpr(pair.key);
@@ -726,8 +730,8 @@ export function emitSetNew(host: LlvmEmitterContext, e: IrExpr & { kind: "setNew
     const s = B.tmp();
     if (kAcc === "ref") {
       const rc = vAdapters(host, e.type.elem);
-      host.declare(`declare ptr @scr_set_new_ref(ptr, ptr)`);
-      B.line(`${s} = call ptr @scr_set_new_ref(ptr ${rc.retain}, ptr ${rc.release})`);
+      host.declare(`declare ptr @scr_map_new_typed(i32, i32, ptr, ptr, ptr, ptr, ptr, ptr)`);
+      B.line(`${s} = call ptr @scr_map_new_typed(i32 ${mapKeyKindNum(e.type.elem)}, i32 0, ptr ${rc.retain}, ptr ${rc.release}, ptr ${traceArg(host, e.type.elem)}, ptr null, ptr null, ptr null)`);
     } else {
       host.declare(`declare ptr @scr_map_new(i32, i32, ptr, ptr, ptr)`);
       B.line(`${s} = call ptr @scr_map_new(i32 ${mapKeyKindNum(e.type.elem)}, i32 0, ptr null, ptr null, ptr null)`);

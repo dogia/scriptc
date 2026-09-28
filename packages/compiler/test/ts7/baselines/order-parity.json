@@ -7499,6 +7499,30 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/3108-identity-map-keys.ts": {
+   "order": [
+    "<repo>/tests/corpus/3108-identity-map-keys.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3109-identity-union-collections.ts": {
+   "order": [
+    "<repo>/tests/corpus/3109-identity-union-collections.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3110-identity-collection-mutation.ts": {
+   "order": [
+    "<repo>/tests/corpus/3110-identity-collection-mutation.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/3111-identity-collection-cycles.ts": {
+   "order": [
+    "<repo>/tests/corpus/3111-identity-collection-cycles.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/400-fib.ts": {
    "order": [
     "<repo>/tests/corpus/400-fib.ts"
@@ -8958,6 +8982,12 @@
   "<repo>/tests/diagnostics/http2-response-trailers.ts": {
    "order": [
     "<repo>/tests/diagnostics/http2-response-trailers.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/diagnostics/identity-collection-keys.ts": {
+   "order": [
+    "<repo>/tests/diagnostics/identity-collection-keys.ts"
    ],
    "diags": []
   },

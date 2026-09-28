@@ -1737,19 +1737,19 @@ function mapTypeInner(type: ts.Type, ctx: TypeMapperCtx): IrType | null {
     const args = checker.getTypeArguments(widened as ts.TypeReference);
     if (args.length !== 2) return null;
     const key = mapType(args[0]!, ctx);
-    if (!key || !isSupportedMapKey(key)) return null;
+    if (!key || !isSupportedMapKey(key, key.kind === "union" ? ctx.unions.get(key.unionId)?.arms : undefined)) return null;
     const value = mapType(args[1]!, ctx);
     if (!value || !isSupportedMapValue(value)) return null;
     return mapOf(key, value);
   }
-  // Set<T>: Map's sibling — same provenance rule, elements fenced to Map's
-  // KEY kinds (f64/string, SameValueZero). Anything else stays unmapped;
+  // Set<T>: Map's sibling — same provenance rule and key domain.
+  // Anything else stays unmapped;
   // the `new Set` lowering names the offending element type specifically.
   if (isStdlibInterface("Set") || isStdlibInterface("ReadonlySet")) {
     const args = checker.getTypeArguments(widened as ts.TypeReference);
     if (args.length !== 1) return null;
     const elem = mapType(args[0]!, ctx);
-    if (!elem || !isSupportedSetElem(elem)) return null;
+    if (!elem || !isSupportedSetElem(elem, elem.kind === "union" ? ctx.unions.get(elem.unionId)?.arms : undefined)) return null;
     return setOf(elem);
   }
   const collectionView = mapCollectionView(widened, ctx);
@@ -4059,14 +4059,14 @@ export function describeComponentBlocker(widened: ts.Type, ctx: TypeMapperCtx): 
       if (!mapped) {
         return `the ${container} shape is supported, but its ${role} type '${text(arg)}' does not compile`;
       }
-      if ((container === "Map" || container === "ReadonlyMap") && i === 0 && !isSupportedMapKey(mapped)) {
-        return `the ${container} shape is supported, but keys are limited to numbers and strings — '${text(arg)}' is outside that domain`;
+      if ((container === "Map" || container === "ReadonlyMap") && i === 0 && !isSupportedMapKey(mapped, mapped.kind === "union" ? ctx.unions.get(mapped.unionId)?.arms : undefined)) {
+        return `the ${container} shape is supported, but '${text(arg)}' is outside its supported key domain (numbers, strings, identity references, or unions of identity references)`;
       }
       if ((container === "Map" || container === "ReadonlyMap") && i === 1 && !isSupportedMapValue(mapped)) {
         return `the ${container} shape is supported, but '${text(arg)}' values have no Map slot yet (functions, promises, and nested Maps stay out)`;
       }
-      if ((container === "Set" || container === "ReadonlySet") && !isSupportedSetElem(mapped)) {
-        return `the ${container} shape is supported, but elements are limited to numbers and strings — '${text(arg)}' is outside that domain`;
+      if ((container === "Set" || container === "ReadonlySet") && !isSupportedSetElem(mapped, mapped.kind === "union" ? ctx.unions.get(mapped.unionId)?.arms : undefined)) {
+        return `the ${container} shape is supported, but '${text(arg)}' is outside its supported element domain (numbers, strings, identity references, or unions of identity references)`;
       }
     }
     // Every argument passed the per-slot checks and the type still failed:

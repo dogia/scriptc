@@ -1,18 +1,16 @@
 // Set support boundaries: what stays rejected at LOWERING, with specific
-// messages. Elements are Map's KEY types (string or number — SameValueZero
-// hashing is honest for exactly those); everything else is fenced.
+// messages. Elements share Map's key domain; unsupported forms remain fenced.
 
 // Array seeds lower (`new Set(["a", "b"])` is a corpus program now); a
 // other iterable seed — another Set — typechecks against the lib
 // but keeps the fence: never silently an empty set.
 const seeded = new Set(new Set(["a", "b"]));
 
-// Elements must be string or number — the new-site diagnostic names the
+// Boolean elements remain unsupported — the new-site diagnostic names the
 // element type.
 const byFlag = new Set<boolean>();
 
-// Record elements would need pointer-identity hashing and cycle tracing —
-// fenced for now.
+// Record elements now use pointer identity and cycle tracing.
 const recs = new Set<{ id: number }>();
 
 // Set-typed slots elsewhere report the ordinary unsupported-type diagnostic.
@@ -20,7 +18,7 @@ function useBad(s: Set<boolean>): number {
   return s.size;
 }
 
-// Sets as union arms have no narrowing test — rejected like Map arms.
+// Nullable Set arms compile and remain as working context.
 function maybeSet(cond: boolean): Set<string> | undefined {
   return undefined;
 }

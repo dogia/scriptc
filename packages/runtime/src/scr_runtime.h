@@ -1213,39 +1213,35 @@ ScrArr *scr_regex_match_all_into(ScrStr *s, ScrRegex *re, ScrArr *indices);
  * are visited (they append), deleted entries are skipped (tombstones), and
  * a delete + re-add moves the key to the end (Node-verified).
  *
- * Keys are string (content) or number with SameValueZero: NaN equals NaN
+ * Keys are identity references, string (content), or number with SameValueZero: NaN equals NaN
  * (canonicalized before hashing) and -0 is normalized to +0 at insertion,
  * exactly like JS (a stored -0 key reads back as +0). Hash is FNV-1a over
- * the string bytes / the canonicalized f64 bit pattern.
+ * the reference address, string bytes, or canonicalized f64 bit pattern.
  *
  * Values are one uniform kind per map (like ScrArr elements): f64, bool, or
  * a refcounted pointer whose RC entry points arrive as function pointers at
  * construction (the SCR_BOX_OBJ technique — the runtime cannot know
- * per-class/per-record layouts). val_trace is non-NULL exactly when the
- * value type carries a cycle header: such maps are CYCLE-CAPABLE (a record/
- * object value can point back at the map holding it) and allocate with the
- * hidden collector header — their trace visits every live value, and the
- * collector teardown releases the complement (keys). Scalar-, string- and
- * array-valued maps keep the lean 1-word header (none of those can point
- * back at an owner).
+ * per-class/per-record layouts). key_trace and val_trace are non-NULL when
+ * their respective types carry cycle headers. Either side can point back
+ * at its map, so either adapter requires a hidden collector header. Trace
+ * visits each live edge on the traced sides; collector teardown releases
+ * the untraced complement. Maps with neither adapter use a lean RC header.
  *
- * Ownership: set BORROWS the key (the map retains string keys it stores)
+ * Ownership: set BORROWS the key (the map retains string/reference keys it stores)
  * and OWNS the value (+1 moves in; replacing releases the old value).
  * get/has/delete borrow the key; get returns +1 on ref values (NULL = not
  * found) or fills an out-param and returns a found flag for scalars.
- * delete releases the entry's key and value. iter_key_str and iter_val_ref
+ * delete releases the entry's key and value. iter_key_str/ref and iter_val_ref
  * return +1. iter_enter/iter_exit bracket a forEach loop: while the depth
  * is nonzero, growth keeps tombstones (indices stay stable) and clear only
  * tombstones entries — live-iteration semantics stay exact.
  */
 
-/* SCR_MAP_KEY_REF: refcounted-pointer keys hashed and compared by IDENTITY
- * (the pointer bits) — SameValueZero for JS objects IS reference identity,
- * so a Set of handle values (Set<http.Server>, the portless auxiliary-
- * server registry) is honest hashed storage. REF keys carry their own
- * retain/release adapters (scr_set_new_ref); only SETS use the kind so
- * far — the Map-key surface stays f64/string. */
-typedef enum { SCR_MAP_KEY_F64, SCR_MAP_KEY_STR, SCR_MAP_KEY_REF } ScrMapKeyKind;
+/* REF keys hash/compare pointer identity and carry their own RC adapters.
+ * UNION_REF owns the union wrapper but hashes/compares its reference payload;
+ * the frontend permits only unions of reference-identity arms for this kind.
+ * Both key kinds serve Maps and Sets. */
+typedef enum { SCR_MAP_KEY_F64, SCR_MAP_KEY_STR, SCR_MAP_KEY_REF, SCR_MAP_KEY_UNION_REF } ScrMapKeyKind;
 typedef enum { SCR_MAP_VAL_F64, SCR_MAP_VAL_BOOL, SCR_MAP_VAL_REF } ScrMapValKind;
 
 typedef struct {
@@ -1259,13 +1255,14 @@ typedef struct ScrMap {
   ScrMapKeyKind key_kind;
   ScrMapValKind val_kind;
   /* SCR_MAP_VAL_REF only; val_trace non-NULL iff the value type carries a
-   * cycle header (which is also the map's own headered-allocation flag). */
+   * cycle header. The map has a header when either trace is non-NULL. */
   void *(*val_retain)(void *);
   void (*val_release)(void *);
   ScrTraceFn val_trace;
-  /* SCR_MAP_KEY_REF only (scr_set_new_ref); NULL otherwise. */
+  /* SCR_MAP_KEY_REF and SCR_MAP_KEY_UNION_REF only; NULL otherwise. */
   void *(*key_retain)(void *);
   void (*key_release)(void *);
+  ScrTraceFn key_trace;
   size_t nentries; /* dense entries used, tombstones included */
   size_t nlive;    /* live entries (Map.size) */
   size_t ecap;     /* entries capacity */
@@ -1281,6 +1278,15 @@ typedef struct ScrMap {
 ScrMap *scr_map_new(ScrMapKeyKind key_kind, ScrMapValKind val_kind,
                      void *(*val_retain)(void *), void (*val_release)(void *),
                      ScrTraceFn val_trace); /* returns +1 */
+/* Typed identity keys retain their original representation for iteration.
+ * UNION_REF compares the wrapped reference, so reboxing cannot change key
+ * identity. The compiler admits only unions of identity-bearing arms.
+ * Either trace adapter requires a collector header on the map itself. */
+ScrMap *scr_map_new_typed(ScrMapKeyKind key_kind, ScrMapValKind val_kind,
+                         void *(*key_retain)(void *), void (*key_release)(void *),
+                         ScrTraceFn key_trace,
+                         void *(*val_retain)(void *), void (*val_release)(void *),
+                         ScrTraceFn val_trace);
 ScrMap *scr_map_retain(ScrMap *m);
 void scr_map_release(ScrMap *m); /* NULL-tolerant */
 void *scr_map_retain_v(void *m);
@@ -1297,7 +1303,7 @@ bool scr_map_delete_f64(ScrMap *m, double key);
 bool scr_map_delete_str(ScrMap *m, const ScrStr *key);
 bool scr_map_delete_ref(ScrMap *m, const void *key);
 
-/* set: key borrowed (string keys are retained when stored), value moves in
+/* set: key borrowed (string/reference keys are retained when stored), value moves in
  * for _ref (replacing releases the old value; the stored key is kept, like
  * JS — only the value changes on overwrite). */
 void scr_map_set_f64_f64(ScrMap *m, double key, double v);
@@ -1306,7 +1312,9 @@ void scr_map_set_f64_ref(ScrMap *m, double key, void *v);
 void scr_map_set_str_f64(ScrMap *m, ScrStr *key, double v);
 void scr_map_set_str_bool(ScrMap *m, ScrStr *key, bool v);
 void scr_map_set_str_ref(ScrMap *m, ScrStr *key, void *v);
-void scr_map_set_ref_f64(ScrMap *m, void *key, double v); /* REF-key sets */
+void scr_map_set_ref_f64(ScrMap *m, void *key, double v);
+void scr_map_set_ref_bool(ScrMap *m, void *key, bool v);
+void scr_map_set_ref_ref(ScrMap *m, void *key, void *v);
 
 /* get: scalar variants fill *out and return the found flag; ref variants
  * return +1 or NULL (values are never NULL, so NULL means "absent"). The
@@ -1318,6 +1326,9 @@ void *scr_map_get_f64_ref(const ScrMap *m, double key);
 bool scr_map_get_str_f64(const ScrMap *m, const ScrStr *key, double *out);
 bool scr_map_get_str_bool(const ScrMap *m, const ScrStr *key, bool *out);
 void *scr_map_get_str_ref(const ScrMap *m, const ScrStr *key);
+bool scr_map_get_ref_f64(const ScrMap *m, const void *key, double *out);
+bool scr_map_get_ref_bool(const ScrMap *m, const void *key, bool *out);
+void *scr_map_get_ref_ref(const ScrMap *m, const void *key);
 
 /* Iteration primitives behind the compiler's forEach desugar: an index loop
  * over the dense entries array, re-reading iter_count every pass (appends

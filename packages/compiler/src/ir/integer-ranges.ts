@@ -1,4 +1,5 @@
 import type { IrExpr, IrFunction, IrStmt } from "./ir.js";
+import { everyExprChild, everyStmtChild } from "./traverse.js";
 
 /** Exactly representable integers, excluding negative zero. These facts
  * justify signed i64 arithmetic as well as unchecked ToUint32 conversion. */
@@ -27,12 +28,12 @@ export function analyzeIntegerRanges(fn: IrFunction): IntegerRanges {
     } : null);
     return range;
   }
-  function opaque(value: unknown): void {
-    if (Array.isArray(value)) { value.forEach(opaque); return; }
-    if (value === null || typeof value !== "object") return;
-    const node = value as Record<string, unknown>;
-    if (typeof node["kind"] === "string") ranges.set(value as IrExpr, null);
-    for (const [key, child] of Object.entries(node)) if (key !== "type" && key !== "loc") opaque(child);
+  function opaqueExpr(value: IrExpr): boolean {
+    ranges.set(value, null);
+    return everyExprChild(value, opaqueExpr, opaqueStmt);
+  }
+  function opaqueStmt(value: IrStmt): boolean {
+    return everyStmtChild(value, opaqueExpr, opaqueStmt);
   }
   function expr(e: IrExpr, facts: Facts): IntegerRange | null {
     let range: IntegerRange | null = null;
@@ -62,7 +63,7 @@ export function analyzeIntegerRanges(fn: IrFunction): IntegerRanges {
         break;
       default:
         facts.clear();
-        opaque(e);
+        opaqueExpr(e);
         return null;
     }
     return remember(e, range);
@@ -85,14 +86,43 @@ export function analyzeIntegerRanges(fn: IrFunction): IntegerRanges {
         case "exprStmt": expr(s.expr, facts); break;
         default:
           facts.clear();
-          // Only statement-list children are analyzed. Headers, conditions,
-          // case selectors and every other expression remain conservative.
-          for (const [key, value] of Object.entries(s)) {
-            if (key === "loc") continue;
-            if (["body", "then", "else_", "tryBody", "catchBody", "finallyBody"].includes(key) && Array.isArray(value)) body(value as IrStmt[]);
-            else if (s.kind === "switch" && key === "cases") {
-              for (const c of s.cases) { opaque(c.test); body(c.body); }
-            } else opaque(value);
+          // Only statement lists start fresh fact environments. Headers,
+          // conditions and selectors stay opaque; typed traversal preserves
+          // the original expression identities rather than taking snapshots.
+          switch (s.kind) {
+            case "block": body(s.body); break;
+            case "if":
+              opaqueExpr(s.cond);
+              body(s.then);
+              if (s.else_) body(s.else_);
+              break;
+            case "while": case "doWhile":
+              opaqueExpr(s.cond);
+              body(s.body);
+              break;
+            case "for":
+              if (s.init) opaqueStmt(s.init);
+              if (s.cond) opaqueExpr(s.cond);
+              if (s.update) opaqueStmt(s.update);
+              body(s.body);
+              break;
+            case "forOf":
+              opaqueExpr(s.iterable);
+              body(s.body);
+              break;
+            case "switch":
+              opaqueExpr(s.disc);
+              for (const c of s.cases) {
+                if (c.test) opaqueExpr(c.test);
+                body(c.body);
+              }
+              break;
+            case "tryCatch":
+              body(s.tryBody);
+              if (s.catchBody) body(s.catchBody);
+              if (s.finallyBody) body(s.finallyBody);
+              break;
+            default: opaqueStmt(s);
           }
       }
     }

@@ -7871,12 +7871,46 @@ export class Lowerer {
     return [...units].sort().join(" or ");
   }
 
-  /** Lowers an expression that flows into a slot of a known expected type,
-   * then applies the coercion path (coerceInto). A fresh array literal
-   * takes the slot's array type directly — the caller-supplied `expected`
-   * lowerArrayLiteral documents, for the positions where tsc's contextual
-   * API answers nothing or names a wider type than the chosen record
-   * field. Empty arrays also need it to avoid building never[] as f64[]. */
+  /** A key conversion may rebox or upcast a reference, but must never copy
+   * its referent. Apply the ordinary checked narrowing to absent arms from
+   * runtime-optional reads; only present reference arms participate here. */
+  lowerCollectionKey(node: ts.Expression, expected: IrType): IrExpr {
+    let literal = node;
+    while (ts.isParenthesizedExpression(literal)) literal = literal.expression;
+    // Fresh literals have no previous outer identity to preserve. Build them
+    // for their storage layout, just as ordinary contextual literals do.
+    if (ts.isObjectLiteralExpression(literal) || ts.isArrayLiteralExpression(literal) || expected.kind === "f64" || expected.kind === "string") {
+      return this.lowerExprExpecting(node, expected);
+    }
+    // Assertions can perform their own conversion before slot coercion.
+    // Inspect the assertion chain so a width copy cannot hide behind its
+    // already-converted result type. Union-arm checks only unwrap a box.
+    let asserted = literal;
+    while (ts.isAsExpression(asserted) || ts.isTypeAssertion(asserted) || ts.isNonNullExpression(asserted) || ts.isParenthesizedExpression(asserted)) {
+      if (ts.isAsExpression(asserted) || ts.isTypeAssertion(asserted)) {
+        const from = this.mapTypeOf(this.typeOf(asserted.expression));
+        const to = this.mapTypeOf(this.checker.getTypeFromTypeNode(asserted.type));
+        if (from?.kind === "dyn" || from?.kind === "jsval" || (from?.kind === "record" && to?.kind === "record" && !typeEquals(from, to))) {
+          this.noLowering("collection key assertion requiring a structural copy or dynamic conversion", asserted,
+            "use the original reference with the same type as the collection key");
+        }
+      }
+      asserted = asserted.expression;
+    }
+    const value = this.lowerExpr(node);
+    const source = (value.type.kind === "union" ? this.unions.get(value.type.unionId)?.arms ?? [] : [value.type]).filter((type) => !isUnitType(type));
+    const target = expected.kind === "union" ? this.unions.get(expected.unionId)?.arms ?? [] : [expected];
+    const preservesIdentity = source.length > 0 && source.every((from) => target.some((to) =>
+      typeEquals(from, to) || (from.kind === "object" && to.kind === "object" && this.isSubclassOf(from.className, to.className))));
+    if (!preservesIdentity || value.kind === "dynCheck" || value.kind === "jsExit") {
+      this.noLowering(`collection key conversion from '${this.fmt(value.type)}' to '${this.fmt(expected)}' requiring a structural copy or dynamic conversion`, node,
+        "use the same reference type for the key and collection; copying a key would change its identity");
+    }
+    return this.coerceInto(node, value, expected);
+  }
+
+  /** Lower for a known destination, then apply ordinary value coercion.
+   * Fresh arrays and records use the destination layout directly. */
   lowerExprExpecting(node: ts.Expression, expected: IrType | undefined): IrExpr {
     if (expected?.kind === "array") {
       let x: ts.Expression = node;

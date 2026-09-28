@@ -2194,19 +2194,20 @@ function emitContainerExpr(
         }
       }
       case "mapNew": {
-        // Empty map: the runtime stores the value kind's RC entry points as
-        // function pointers (scalar values pass NULLs). The trace argument
-        // doubles as the cycle-capability flag: non-NULL exactly when the
-        // value type carries a collector header (record/object/union values
-        // can point back at the map) — such maps allocate with the header,
-        // scalar/string/array-valued maps stay lean (docs/memory.md).
+        // Each reference side supplies its own RC adapters. Either trace
+        // adapter requires a collector header: keys as well as values can
+        // hold a path back to the map.
         if (e.type.kind !== "map") throw new InternalCompilerError("emitter bug: mapNew of non-map type");
         const value = e.type.value;
         const rc = isRefCounted(value) ? vAdapters(value) : null;
+        const keyRc = mapKeyAccess(e.type.key) === "ref" ? vAdapters(e.type.key) : null;
+        const args = `${mapKeyKindC(e.type.key)}, ${mapValKindC(value)}, `;
+        const valueArgs = `${rc ? `&${rc.retain}` : "NULL"}, ${rc ? `&${rc.release}` : "NULL"}, ${emitter.traceArgC(value)}`;
         const m = emitter.newTemp(
           e.type,
-          `scr_map_new(${mapKeyKindC(e.type.key)}, ${mapValKindC(value)}, ` +
-            `${rc ? `&${rc.retain}` : "NULL"}, ${rc ? `&${rc.release}` : "NULL"}, ${emitter.traceArgC(value)})`,
+          keyRc
+            ? `scr_map_new_typed(${args}&${keyRc.retain}, &${keyRc.release}, ${emitter.traceArgC(e.type.key)}, ${valueArgs})`
+            : `scr_map_new(${args}${valueArgs})`,
         );
         // Seeded construction: set() each pair in source order — exactly
         // the statements the user would write on an empty map, so a
@@ -2227,18 +2228,17 @@ function emitContainerExpr(
       case "setNew": {
         // Empty set: the map runtime with the element as the KEY and the
         // value slot pinned to the scalar kind (every stored value is 0.0,
-        // never read back). No RC entry points, no trace: f64/string
-        // elements cannot point back, so sets are never cycle-capable and
-        // always allocate lean.
+        // never read back). Identity elements supply key RC/trace adapters;
+        // scalar and string elements use the lean constructor.
         if (e.type.kind !== "set") throw new InternalCompilerError("emitter bug: setNew of non-set type");
-        // Handle-kind elements (identity hashing) carry their RC adapters
+        // Reference elements (identity hashing) carry their RC adapters
         // at construction — the scr_arr_new_ref technique.
         const elemAcc = mapKeyAccess(e.type.elem);
         const rcAdapters = elemAcc === "ref" ? vAdapters(e.type.elem) : null;
         const s = emitter.newTemp(
           e.type,
           rcAdapters
-            ? `scr_set_new_ref(&${rcAdapters.retain}, &${rcAdapters.release})`
+            ? `scr_map_new_typed(${mapKeyKindC(e.type.elem)}, SCR_MAP_VAL_F64, &${rcAdapters.retain}, &${rcAdapters.release}, ${emitter.traceArgC(e.type.elem)}, NULL, NULL, NULL)`
             : `scr_map_new(${mapKeyKindC(e.type.elem)}, SCR_MAP_VAL_F64, NULL, NULL, NULL)`,
         );
         // Seeded construction (`new Set(values)`): one borrowed T[] whose

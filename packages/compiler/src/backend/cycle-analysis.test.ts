@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { F64, STRING, VOID, RUNTIME_EMITTER_CLASS, arrayOf, funcOf, mapOf, type IrModule, type IrRecordShape, type IrType } from "../ir/ir.js";
+import { F64, STRING, VOID, RUNTIME_EMITTER_CLASS, arrayOf, funcOf, mapOf, setOf, type IrModule, type IrRecordShape, type IrType } from "../ir/ir.js";
 import { computeTraced } from "./cycle-analysis.js";
 import { CEmitter } from "./c/c-emitter.js";
 import { computeTraced as llvmTraced } from "./llvm/shapes.js";
@@ -98,4 +98,39 @@ test("separate calls do not share mutable fixed-point state", () => {
   mod.records = [shape("same", [STRING])];
   check(mod, []);
   expect([...previous.shapes]).toEqual(["record:same"]);
+});
+
+test("map keys and set elements can close cycles without reference values", () => {
+  const mod = module();
+  mod.records = [
+    shape("key", [mapOf(ref("key"), F64)]),
+    shape("member", [setOf(ref("member"))]),
+    shape("outer", [mapOf(ref("key"), STRING)]),
+    shape("leaf", [F64]),
+    shape("acyclic", [mapOf(ref("leaf"), STRING), setOf(ref("leaf"))]),
+  ];
+  check(mod, ["record:key", "record:member", "record:outer"]);
+});
+
+test("boxed keys and nested array elements retain cycle capability", () => {
+  const mod = module();
+  const key: IrType = { kind: "union", unionId: "key" };
+  mod.records = [
+    shape("node", [mapOf(key, F64)]),
+    shape("list", [setOf(arrayOf(ref("list")))]),
+    shape("leaf", [F64]),
+  ];
+  mod.unions = [{ id: "key", arms: [ref("node"), ref("leaf")] }];
+  check(mod, ["record:node", "record:list"], ["key"]);
+});
+
+test("a map-key cycle in one subclass headers the whole hierarchy", () => {
+  const mod = module();
+  const base: IrType = { kind: "object", className: "Base" };
+  mod.classes = [
+    { name: "Base", fields: [], loc },
+    { name: "Child", base: "Base", fields: [{ name: "owners", type: mapOf(base, F64) }], loc },
+    { name: "Sibling", base: "Base", fields: [], loc },
+  ];
+  check(mod, ["object:Base", "object:Child", "object:Sibling"]);
 });
