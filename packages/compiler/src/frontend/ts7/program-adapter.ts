@@ -18,7 +18,7 @@ import { InternalCompilerError } from "../../errors.js";
 
 import { writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { API } from "typescript/unstable/sync";
+import { Ts7Api } from "./rpc-api.js";
 import type {
   CompilerOptions,
   Diagnostic,
@@ -135,7 +135,7 @@ function preserveTransportBoms(project: Project): void {
  * the snapshot. */
 export class Ts7Host {
   private readonly virtualFiles = new Map<string, string>();
-  private readonly api: API;
+  private readonly api: Ts7Api;
   private closed = false;
 
   constructor(options?: {
@@ -153,7 +153,7 @@ export class Ts7Host {
   }) {
     const virtualFiles = this.virtualFiles;
     const shadow = options?.fsShadow ?? null;
-    this.api = new API({
+    this.api = new Ts7Api({
       cwd: options?.cwd ?? process.cwd(),
       ...(options?.collectTiming !== undefined ? { collectTiming: options.collectTiming } : {}),
       fs: {
