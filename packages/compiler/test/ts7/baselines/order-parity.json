@@ -8578,6 +8578,12 @@
    ],
    "diags": []
   },
+  "<repo>/tests/corpus/bigint-union-conversion.ts": {
+   "order": [
+    "<repo>/tests/corpus/bigint-union-conversion.ts"
+   ],
+   "diags": []
+  },
   "<repo>/tests/corpus/console-imports.cjs": {
    "order": [
     "<repo>/tests/corpus/console-imports.cjs"
@@ -8587,6 +8593,12 @@
   "<repo>/tests/corpus/generic-visitor-void.ts": {
    "order": [
     "<repo>/tests/corpus/generic-visitor-void.ts"
+   ],
+   "diags": []
+  },
+  "<repo>/tests/corpus/instanceof-class-record-union.ts": {
+   "order": [
+    "<repo>/tests/corpus/instanceof-class-record-union.ts"
    ],
    "diags": []
   },

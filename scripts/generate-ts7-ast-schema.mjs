@@ -45,6 +45,45 @@ if (process.argv.includes("--check")) {
   writeFileSync(target, output);
 }
 
+// The semantic client consumes the same pinned numeric discriminants as
+// tsgo. Keep these independent of the SDK's runtime module graph too.
+const semanticLines = [
+  `// Generated from typescript@${version} by scripts/generate-ts7-ast-schema.mjs.`,
+  "// TypeScript is Copyright Microsoft Corporation, licensed under Apache-2.0.",
+  "// Regenerate when changing the TypeScript pin; do not edit by hand.",
+];
+for (const name of ["TypeFlags", "ObjectFlags", "SymbolFlags", "SignatureFlags", "SignatureKind", "TypePredicateKind"]) {
+  const basename = name[0].toLowerCase() + name.slice(1);
+  const values = require(join(packageRoot, "dist/enums", `${basename}.js`))[name];
+  semanticLines.push("", `export const Semantic${name} = {`);
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value === "number") semanticLines.push(`  ${key}: ${value},`);
+  }
+  semanticLines.push("} as const;");
+}
+const protoDeclarations = readFileSync(join(packageRoot, "dist/api/proto.d.ts"), "utf8");
+const semanticTypes = new Map([
+  ["SymbolResponse", "SemanticSymbolData"],
+  ["TypeResponse", "SemanticTypeData"],
+  ["SignatureResponse", "SemanticSignatureData"],
+  ["TypePredicateResponse", "SemanticTypePredicateData"],
+  ["IndexInfoResponse", "SemanticIndexInfoData"],
+]);
+for (const [name] of semanticTypes) {
+  const declaration = protoDeclarations.match(new RegExp(`export interface ${name} \\{[\\s\\S]*?\\n\\}`));
+  if (!declaration) throw new Error(`Missing TypeScript semantic response: ${name}`);
+  let text = declaration[0].replace(/\b(Path|__String)\b/g, "string");
+  for (const [original, generated] of semanticTypes) text = text.replaceAll(original, generated);
+  semanticLines.push("", text);
+}
+const semanticOutput = semanticLines.join("\n") + "\n";
+const semanticTarget = join(root, "packages/compiler/src/frontend/ts7/semantic-schema.generated.ts");
+if (process.argv.includes("--check")) {
+  if (readFileSync(semanticTarget, "utf8") !== semanticOutput) throw new Error("TypeScript semantic schema is stale; run node scripts/generate-ts7-ast-schema.mjs");
+} else {
+  writeFileSync(semanticTarget, semanticOutput);
+}
+
 // Child names alone cannot distinguish arrays from nodes (attributes and
 // children can be either). Read that distinction from the pinned client's
 // declarations, and require every wire property to have a declared getter.

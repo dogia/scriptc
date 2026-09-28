@@ -8,6 +8,8 @@ import { Ts7RpcClient } from "../../src/frontend/ts7/rpc-client.js";
 import type { Ts7FileSystem } from "../../src/frontend/ts7/rpc-filesystem.js";
 import { spawnTs7Wire } from "../../src/frontend/ts7/rpc-process.js";
 import { AstNode } from "../../src/frontend/ts7/ast-node.js";
+import { SemanticChecker } from "../../src/frontend/ts7/semantic-checker.js";
+import { SemanticNodeHandle, SemanticSignature, SemanticSymbol, SemanticType } from "../../src/frontend/ts7/semantic-model.js";
 
 function tsgoPath(path: string): string {
   return process.platform === "win32" ? path.replaceAll("\\", "/") : path;
@@ -68,8 +70,12 @@ test("production RPC bridge preserves pinned SDK parser/checker behavior", () =>
     expect(source).toBeInstanceOf(AstNode);
     expect(project.program.getSourceFile(path)).toBe(source);
     const first = project.checker.getTypeAtPosition(path, source.text.indexOf("answer"));
+    expect(project.checker).toBeInstanceOf(SemanticChecker);
+    expect(first).toBeInstanceOf(SemanticType);
     expect(project.checker.getTypeAtPosition(path, source.text.indexOf("answer"))).toBe(first);
     const symbol = project.checker.getSymbolAtPosition(path, source.text.indexOf("answer"));
+    expect(symbol).toBeInstanceOf(SemanticSymbol);
+    expect(symbol!.declarations[0]).toBeInstanceOf(SemanticNodeHandle);
     expect(project.checker.getSymbolAtPosition(path, source.text.indexOf("answer"))).toBe(symbol);
     expect(symbol!.declarations[0]!.resolve()).toBe(symbol!.declarations[0]!.resolve());
     const declaration = symbol!.declarations[0]!.resolve()!;
@@ -119,6 +125,65 @@ test("snapshots share unchanged source files and release independently", () => {
     expect(() => api.getTimingInfo()).toThrow("closed");
   } finally {
     api.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("native semantic registries preserve project scope and snapshot lifetimes", () => {
+  const dir = mkdtempSync(join(tempRoot, "scriptc-ts7-semantic-scopes-"));
+  const firstConfig = tsgoPath(join(dir, "first.json"));
+  const secondConfig = tsgoPath(join(dir, "second.json"));
+  const path = tsgoPath(join(dir, "shared.ts"));
+  for (const config of [firstConfig, secondConfig]) writeFileSync(config, JSON.stringify({ compilerOptions: { strict: true, target: "esnext", types: [] }, files: [path] }));
+  const source = "export function identity<T>(value: T): T { return value; }\nexport const answer = 42;\n";
+  writeFileSync(path, source);
+  const api = new Ts7Api({ cwd: dir, fs: fallback });
+  const sdk = new API({ cwd: dir });
+  function facts(snapshot: Snapshot) {
+    const a = snapshot.getProject(firstConfig)!;
+    const b = snapshot.getProject(secondConfig)!;
+    const answer = source.indexOf("answer");
+    const symbolA = a.checker.getSymbolAtPosition(path, answer)!;
+    const symbolB = b.checker.getSymbolAtPosition(path, answer)!;
+    const typeA = a.checker.getTypeAtPosition(path, answer)!;
+    const typeB = b.checker.getTypeAtPosition(path, answer)!;
+    const fileA = a.program.getSourceFile(path)!;
+    const fileB = b.program.getSourceFile(path)!;
+    const signatureA = a.checker.getSignatureFromDeclaration(fileA.statements[0]!)!;
+    const signatureB = b.checker.getSignatureFromDeclaration(fileB.statements[0]!)!;
+    return {
+      shape: {
+        sharedSymbol: symbolA === symbolB, sharedType: typeA === typeB, sharedSignature: signatureA === signatureB,
+        sameDeclaration: symbolA.declarations[0]!.resolve() === symbolB.declarations[0]!.resolve(),
+        explicitDeclaration: symbolB.declarations[0]!.resolve(b) === (fileB.statements[1] as import("typescript/unstable/ast").VariableStatement).declarationList.declarations[0],
+        texts: [a.checker.typeToString(typeA), b.checker.typeToString(typeB)],
+        parameters: signatureA.getParameters().map((symbol) => symbol.name),
+      },
+      symbolA, typeA, signatureA, fileA,
+    };
+  }
+  try {
+    const first = api.updateSnapshot({ openProjects: [firstConfig, secondConfig] });
+    const actual = facts(first);
+    expect(actual.shape).toEqual(facts(sdk.updateSnapshot({ openProjects: [firstConfig, secondConfig] })).shape);
+    expect(actual.signatureA).toBeInstanceOf(SemanticSignature);
+    expect(actual.typeA).toBeInstanceOf(SemanticType);
+    const second = api.updateSnapshot({ openProjects: [] });
+    const next = facts(second);
+    expect(next.fileA).toBe(actual.fileA);
+    expect(next.typeA).not.toBe(actual.typeA);
+    expect(next.symbolA).not.toBe(actual.symbolA);
+    expect(next.signatureA).not.toBe(actual.signatureA);
+    first.dispose();
+    expect(() => actual.typeA.getSymbol()).toThrow("disposed");
+    expect(() => actual.symbolA.declarations[0]!.resolve()).toThrow("disposed");
+    expect(next.signatureA.getParameters()[0]!.name).toBe("value");
+    expect(second.getProject(firstConfig)!.checker.typeToString(next.typeA)).toBe("42");
+    second.dispose();
+    expect(() => next.signatureA.getParameters()).toThrow("disposed");
+  } finally {
+    api.close();
+    sdk.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -1,0 +1,413 @@
+import type { SemanticSignatureData as SignatureResponse, SemanticSymbolData as SymbolResponse, SemanticTypeData as TypeResponse } from "./semantic-schema.generated.js";
+import { AstNode } from "./ast-node.js";
+import { parseAstNodeHandle } from "./ast-wire.js";
+import type { SemanticChecker, SemanticJsDocTag } from "./semantic-checker.js";
+import { parseSemanticJson } from "./semantic-json.js";
+import { SemanticObjectFlags as ObjectFlags, SemanticSignatureFlags as SignatureFlags, SemanticTypeFlags as TypeFlags } from "./semantic-schema.generated.js";
+
+/** JSON and binary operations stay at the transport boundary. The concrete
+ * semantic objects below need neither the SDK nor a JavaScript engine. */
+export interface SemanticTransport {
+  text: (method: string, payload: string) => string;
+  binary: (method: string, payload: string) => Uint8Array;
+}
+
+export type SemanticDocument = string | { uri: string };
+
+/** The pinned checker protocol's request fields. A single concrete record
+ * keeps generic response decoding independent of structural object spread. */
+export interface SemanticQuery {
+  snapshot?: number | undefined;
+  project?: string | undefined;
+  objectId?: number | undefined;
+  location?: string | undefined;
+  locations?: string[] | undefined;
+  file?: SemanticDocument | undefined;
+  position?: number | undefined;
+  positions?: readonly number[] | undefined;
+  type?: number | undefined;
+  symbol?: number | undefined;
+  symbols?: number[] | undefined;
+  signature?: number | undefined;
+  source?: number | undefined;
+  target?: number | undefined;
+  kind?: number | undefined;
+  name?: string | undefined;
+  flags?: number | undefined;
+  meaning?: number | undefined;
+  excludeGlobals?: boolean | undefined;
+  index?: number | undefined;
+  node?: string | undefined;
+  signatureDecl?: string | undefined;
+  triggerCharacter?: string | undefined;
+  includeSymbol?: boolean | undefined;
+}
+
+export class SemanticProgram {
+  constructor(private readonly sourceFile: (path: string) => AstNode | undefined) {}
+  getSourceFile(path: string): AstNode | undefined { return this.sourceFile(path); }
+}
+
+/** Symbols are snapshot-wide; TypeScript type and signature handles are
+ * project-local. Preserve both scopes even when numeric handles coincide. */
+export class SemanticSnapshot {
+  private readonly projects = new Map<string, SemanticProject>();
+  private readonly symbols = new Map<number, SemanticSymbol>();
+  private disposed = false;
+
+  constructor(readonly id: number, readonly transport: SemanticTransport) {}
+
+  addProject(id: string, sourceFile: (path: string) => AstNode | undefined): SemanticProject {
+    this.ensureActive();
+    if (this.projects.has(id)) throw new Error(`Duplicate TypeScript project ${id}`);
+    const project = new SemanticProject(id, this, new SemanticProgram(sourceFile));
+    this.projects.set(id, project);
+    return project;
+  }
+
+  getProject(id: string): SemanticProject {
+    this.ensureActive();
+    const project = this.projects.get(id);
+    if (project === undefined) throw new Error(`Unknown TypeScript canonical project ${id}`);
+    return project;
+  }
+
+  symbol(data: SymbolResponse): SemanticSymbol {
+    this.ensureActive();
+    let symbol = this.symbols.get(data.id);
+    if (symbol === undefined) {
+      symbol = new SemanticSymbol(data, this.getProject(data.project));
+      this.symbols.set(data.id, symbol);
+    }
+    return symbol;
+  }
+
+  cachedSymbol(id: number): SemanticSymbol | undefined {
+    this.ensureActive();
+    return this.symbols.get(id);
+  }
+
+  ensureActive(): void {
+    if (this.disposed) throw new Error("TypeScript semantic snapshot is disposed");
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const project of this.projects.values()) project.dispose();
+    this.projects.clear();
+    this.symbols.clear();
+  }
+}
+
+export class SemanticProject {
+  private readonly types = new Map<number, SemanticType>();
+  private readonly signatures = new Map<number, SemanticSignature>();
+  private disposed = false;
+
+  constructor(readonly id: string, readonly snapshot: SemanticSnapshot, readonly program: SemanticProgram) {}
+
+  ensureActive(): void {
+    this.snapshot.ensureActive();
+    if (this.disposed) throw new Error("TypeScript semantic project is disposed");
+  }
+
+  request<T>(method: string, query: SemanticQuery = {}): T {
+    this.ensureActive();
+    query.snapshot = this.snapshot.id;
+    query.project = this.id;
+    return parseSemanticJson<T>(this.snapshot.transport.text(method, JSON.stringify(query)));
+  }
+
+  requestBinary(method: string, query: SemanticQuery): Uint8Array {
+    this.ensureActive();
+    query.snapshot = this.snapshot.id;
+    query.project = this.id;
+    return this.snapshot.transport.binary(method, JSON.stringify(query));
+  }
+
+  type(data: TypeResponse): SemanticType {
+    this.ensureActive();
+    let type = this.types.get(data.id);
+    if (type === undefined) {
+      type = new SemanticType(data, this);
+      this.types.set(data.id, type);
+    }
+    return type;
+  }
+
+  signature(data: SignatureResponse): SemanticSignature {
+    this.ensureActive();
+    let signature = this.signatures.get(data.id);
+    if (signature === undefined) {
+      signature = new SemanticSignature(data, this);
+      this.signatures.set(data.id, signature);
+    }
+    return signature;
+  }
+
+  symbol(data: SymbolResponse): SemanticSymbol {
+    this.ensureActive();
+    return this.snapshot.symbol(data);
+  }
+
+  fetchType(source: number, method: string, handle: number | undefined | false): SemanticType | undefined {
+    this.ensureActive();
+    if (handle !== false) {
+      if (handle === undefined || handle === 0) return undefined;
+      const cached = this.types.get(handle);
+      if (cached !== undefined) return cached;
+    }
+    const data = this.request<TypeResponse | null>(method, { objectId: source });
+    if (data === null) throw new Error(`${method} returned null type for ${source}`);
+    return this.type(data);
+  }
+
+  fetchSymbol(source: number, method: string, handle: number | undefined): SemanticSymbol | undefined {
+    this.ensureActive();
+    if (handle === undefined || handle === 0) return undefined;
+    const cached = this.snapshot.cachedSymbol(handle);
+    if (cached !== undefined) return cached;
+    const data = this.request<SymbolResponse | null>(method, { objectId: source });
+    if (data === null) throw new Error(`${method} returned null symbol for ${source}`);
+    return this.symbol(data);
+  }
+
+  fetchSignature(source: number, method: string, handle: number | undefined): SemanticSignature | undefined {
+    this.ensureActive();
+    if (handle === undefined || handle === 0) return undefined;
+    const cached = this.signatures.get(handle);
+    if (cached !== undefined) return cached;
+    const data = this.request<SignatureResponse | null>(method, { objectId: source });
+    if (data === null) throw new Error(`${method} returned null signature for ${source}`);
+    return this.signature(data);
+  }
+
+  fetchTypes(source: number, method: string, handles?: readonly number[]): SemanticType[] {
+    this.ensureActive();
+    if (handles !== undefined) {
+      const cached: SemanticType[] = [];
+      for (const id of handles) {
+        const type = this.types.get(id);
+        if (type === undefined) break;
+        cached.push(type);
+      }
+      if (cached.length === handles.length) return cached;
+    }
+    const data = this.request<TypeResponse[] | null>(method, { objectId: source });
+    return (data ?? []).map((item) => this.type(item));
+  }
+
+  fetchSymbols(source: number, method: string, handles?: readonly number[]): SemanticSymbol[] {
+    this.ensureActive();
+    if (handles !== undefined) {
+      const cached: SemanticSymbol[] = [];
+      for (const id of handles) {
+        const symbol = this.snapshot.cachedSymbol(id);
+        if (symbol === undefined) break;
+        cached.push(symbol);
+      }
+      if (cached.length === handles.length) return cached;
+    }
+    const data = this.request<SymbolResponse[] | null>(method, { objectId: source });
+    return (data ?? []).map((item) => this.symbol(item));
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.types.clear();
+    this.signatures.clear();
+  }
+}
+
+/** A handle records its producing project, so declaration resolution is
+ * unambiguous even when a symbol is reused by a second project's checker. */
+export class SemanticNodeHandle {
+  readonly index: number;
+  readonly kind: number;
+  readonly path: string;
+
+  constructor(readonly handle: string, readonly canonicalProject: SemanticProject) {
+    const parsed = parseAstNodeHandle(handle);
+    this.index = parsed.index;
+    this.kind = parsed.kind;
+    this.path = parsed.path;
+  }
+
+  resolve(project: SemanticProject = this.canonicalProject): AstNode | undefined {
+    this.canonicalProject.ensureActive();
+    const file = project.program.getSourceFile(this.path);
+    return file?.file.resolve(this.handle);
+  }
+}
+
+export class SemanticSymbol {
+  readonly id: number;
+  readonly escapedName: string;
+  readonly name: string;
+  readonly flags: number;
+  readonly checkFlags: number;
+  readonly declarations: SemanticNodeHandle[];
+  readonly valueDeclaration: SemanticNodeHandle | undefined;
+  private readonly parent: number | undefined;
+  private readonly exportSymbol: number | undefined;
+  private membersCache: Map<string, SemanticSymbol> | undefined;
+  private exportsCache: Map<string, SemanticSymbol> | undefined;
+
+  constructor(data: SymbolResponse, readonly canonicalProject: SemanticProject) {
+    this.id = data.id;
+    this.escapedName = data.name;
+    this.name = data.name.startsWith("___") ? data.name.slice(1) : data.name;
+    this.flags = data.flags;
+    this.checkFlags = data.checkFlags;
+    this.declarations = (data.declarations ?? []).map((handle) => new SemanticNodeHandle(handle, canonicalProject));
+    this.valueDeclaration = data.valueDeclaration ? new SemanticNodeHandle(data.valueDeclaration, canonicalProject) : undefined;
+    this.parent = data.parent;
+    this.exportSymbol = data.exportSymbol;
+  }
+
+  getParent(): SemanticSymbol | undefined {
+    return this.canonicalProject.fetchSymbol(this.id, "getParentOfSymbol", this.parent);
+  }
+  getExportSymbol(): SemanticSymbol {
+    this.canonicalProject.ensureActive();
+    if (this.exportSymbol === undefined || this.exportSymbol === 0) return this;
+    const result = this.canonicalProject.fetchSymbol(this.id, "getExportSymbolOfSymbol", this.exportSymbol);
+    if (result === undefined) throw new Error(`Missing export symbol for ${this.id}`);
+    return result;
+  }
+  private table(method: string): Map<string, SemanticSymbol> {
+    const table = new Map<string, SemanticSymbol>();
+    for (const symbol of this.canonicalProject.fetchSymbols(this.id, method)) table.set(symbol.escapedName, symbol);
+    return table;
+  }
+  getMembers(): Map<string, SemanticSymbol> {
+    this.canonicalProject.ensureActive();
+    if (this.membersCache === undefined) this.membersCache = this.table("getMembersOfSymbol");
+    return this.membersCache;
+  }
+  getExports(): Map<string, SemanticSymbol> {
+    this.canonicalProject.ensureActive();
+    if (this.exportsCache === undefined) this.exportsCache = this.table("getExportsOfSymbol");
+    return this.exportsCache;
+  }
+  getJsDocTags(checker: SemanticChecker): SemanticJsDocTag[] { return checker.getJsDocTagsOfSymbol(this); }
+  getDocumentationComment(checker: SemanticChecker): string { return checker.getDocumentationCommentOfSymbol(this); }
+}
+
+/** Kind-specific accessors share one nominal layout. The legacy frontend
+ * still narrows its type-only SDK interfaces at the boundary; native code
+ * uses this concrete class and tests the same flag predicates. */
+export class SemanticType {
+  readonly id: number;
+  readonly flags: number;
+  readonly objectFlags: number | undefined;
+  readonly value: string | number | boolean | bigint | undefined;
+  readonly intrinsicName: string | undefined;
+  readonly isThisType: boolean | undefined;
+  readonly elementFlags: number[] | undefined;
+  readonly fixedLength: number | undefined;
+  readonly readonly: boolean | undefined;
+  readonly texts: string[] | undefined;
+  private trueType: number | false = false;
+  private falseType: number | false = false;
+
+  constructor(private readonly data: TypeResponse, readonly project: SemanticProject) {
+    this.id = data.id;
+    this.flags = data.flags;
+    this.objectFlags = data.objectFlags;
+    const value = data.value;
+    if ((data.flags & TypeFlags.BigIntLiteral) !== 0 && value != null) {
+      if (typeof value !== "string") throw new Error("TypeScript bigint literal is not a decimal string");
+      this.value = BigInt(value);
+    } else {
+      this.value = value ?? undefined;
+    }
+    this.intrinsicName = data.intrinsicName;
+    this.isThisType = data.isThisType;
+    this.elementFlags = data.elementFlags;
+    this.fixedLength = data.fixedLength;
+    this.readonly = data.readonly;
+    this.texts = data.texts;
+  }
+
+  getSymbol(): SemanticSymbol | undefined { return this.project.fetchSymbol(this.id, "getSymbolOfType", this.data.symbol); }
+  getAliasSymbol(): SemanticSymbol | undefined { return this.project.fetchSymbol(this.id, "getAliasSymbolOfType", this.data.aliasSymbol); }
+  getTarget(): SemanticType | undefined { return this.project.fetchType(this.id, "getTargetOfType", this.data.target); }
+  getFreshType(): SemanticType | undefined { return this.project.fetchType(this.id, "getFreshTypeOfType", this.data.freshType); }
+  getRegularType(): SemanticType | undefined { return this.project.fetchType(this.id, "getRegularTypeOfType", this.data.regularType); }
+  getObjectType(): SemanticType | undefined { return this.project.fetchType(this.id, "getObjectTypeOfType", this.data.objectType); }
+  getIndexType(): SemanticType | undefined { return this.project.fetchType(this.id, "getIndexTypeOfType", this.data.indexType); }
+  getCheckType(): SemanticType | undefined { return this.project.fetchType(this.id, "getCheckTypeOfType", this.data.checkType); }
+  getExtendsType(): SemanticType | undefined { return this.project.fetchType(this.id, "getExtendsTypeOfType", this.data.extendsType); }
+  getBaseType(): SemanticType | undefined { return this.project.fetchType(this.id, "getBaseTypeOfType", this.data.baseType); }
+  getConstraint(): SemanticType | undefined { return this.project.fetchType(this.id, "getConstraintOfType", this.data.substConstraint); }
+  getTypeParameters(): SemanticType[] { return this.project.fetchTypes(this.id, "getTypeParametersOfType", this.data.typeParameters ?? []); }
+  getOuterTypeParameters(): SemanticType[] { return this.project.fetchTypes(this.id, "getOuterTypeParametersOfType", this.data.outerTypeParameters ?? []); }
+  getLocalTypeParameters(): SemanticType[] { return this.project.fetchTypes(this.id, "getLocalTypeParametersOfType", this.data.localTypeParameters ?? []); }
+  getAliasTypeArguments(): SemanticType[] { return this.project.fetchTypes(this.id, "getAliasTypeArgumentsOfType", this.data.aliasTypeArguments ?? []); }
+  getTypes(): SemanticType[] | undefined {
+    this.project.ensureActive();
+    if ((this.flags & (TypeFlags.UnionOrIntersection | TypeFlags.TemplateLiteral)) === 0) return undefined;
+    return this.project.fetchTypes(this.id, "getTypesOfType");
+  }
+  getBaseTypes(): SemanticType[] | undefined {
+    this.project.ensureActive();
+    if (!this.isClassOrInterface()) return undefined;
+    const data = this.project.request<TypeResponse[] | null>("getBaseTypes", { type: this.id });
+    return (data ?? []).map((item) => this.project.type(item));
+  }
+  getTrueType(): SemanticType {
+    const result = this.project.fetchType(this.id, "getTrueTypeOfConditionalType", this.trueType);
+    if (result === undefined) throw new Error(`Missing conditional true type for ${this.id}`);
+    this.trueType = result.id;
+    return result;
+  }
+  getFalseType(): SemanticType {
+    const result = this.project.fetchType(this.id, "getFalseTypeOfConditionalType", this.falseType);
+    if (result === undefined) throw new Error(`Missing conditional false type for ${this.id}`);
+    this.falseType = result.id;
+    return result;
+  }
+  isClassOrInterface(): boolean { return this.isObjectType() && ((this.objectFlags ?? 0) & ObjectFlags.ClassOrInterface) !== 0; }
+  isUnionType(): boolean { return (this.flags & TypeFlags.Union) !== 0; }
+  isIntersectionType(): boolean { return (this.flags & TypeFlags.Intersection) !== 0; }
+  isObjectType(): boolean { return (this.flags & TypeFlags.Object) !== 0; }
+  isIntrinsicType(): boolean { return (this.flags & TypeFlags.Intrinsic) !== 0; }
+  isErrorType(): boolean { return this.isIntrinsicType() && this.intrinsicName === "error"; }
+  isLiteralType(): boolean { return (this.flags & TypeFlags.Literal) !== 0; }
+  isStringLiteralType(): boolean { return (this.flags & TypeFlags.StringLiteral) !== 0; }
+  isNumberLiteralType(): boolean { return (this.flags & TypeFlags.NumberLiteral) !== 0; }
+  isBigIntLiteralType(): boolean { return (this.flags & TypeFlags.BigIntLiteral) !== 0; }
+  isBooleanLiteralType(): boolean { return (this.flags & TypeFlags.BooleanLiteral) !== 0; }
+  isTypeReference(): boolean { return this.isObjectType() && ((this.objectFlags ?? 0) & ObjectFlags.Reference) !== 0; }
+  isTupleType(): boolean { return this.isObjectType() && ((this.objectFlags ?? 0) & ObjectFlags.Tuple) !== 0; }
+  isIndexType(): boolean { return (this.flags & TypeFlags.Index) !== 0; }
+  isIndexedAccessType(): boolean { return (this.flags & TypeFlags.IndexedAccess) !== 0; }
+  isConditionalType(): boolean { return (this.flags & TypeFlags.Conditional) !== 0; }
+  isSubstitutionType(): boolean { return (this.flags & TypeFlags.Substitution) !== 0; }
+  isTemplateLiteralType(): boolean { return (this.flags & TypeFlags.TemplateLiteral) !== 0; }
+  isStringMappingType(): boolean { return (this.flags & TypeFlags.StringMapping) !== 0; }
+  isTypeParameter(): boolean { return (this.flags & TypeFlags.TypeParameter) !== 0; }
+}
+
+export class SemanticSignature {
+  readonly id: number;
+  readonly flags: number;
+  readonly declaration: SemanticNodeHandle | undefined;
+
+  constructor(private readonly data: SignatureResponse, readonly project: SemanticProject) {
+    this.id = data.id;
+    this.flags = data.flags;
+    this.declaration = data.declaration ? new SemanticNodeHandle(data.declaration, project) : undefined;
+  }
+
+  getTypeParameters(): SemanticType[] { return this.project.fetchTypes(this.id, "getTypeParametersOfSignature", this.data.typeParameters ?? []); }
+  getParameters(): SemanticSymbol[] { return this.project.fetchSymbols(this.id, "getParametersOfSignature", this.data.parameters ?? []); }
+  getThisParameter(): SemanticSymbol | undefined { return this.project.fetchSymbol(this.id, "getThisParameterOfSignature", this.data.thisParameter); }
+  getTarget(): SemanticSignature | undefined { return this.project.fetchSignature(this.id, "getTargetOfSignature", this.data.target); }
+  get hasRestParameter(): boolean { return (this.flags & SignatureFlags.HasRestParameter) !== 0; }
+  get isConstruct(): boolean { return (this.flags & SignatureFlags.Construct) !== 0; }
+  get isAbstract(): boolean { return (this.flags & SignatureFlags.Abstract) !== 0; }
+}

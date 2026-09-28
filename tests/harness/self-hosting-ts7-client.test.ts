@@ -92,15 +92,17 @@ for (const backend of ["c", "llvm"] as const) {
       expect(built.backend).toBe(backend);
       const oracle = await runClient(process.execPath, ["--import", "tsx", entry], dir, join(dir, "oracle.json"));
       const native = await runClient(built.binaryPath, [], dir, join(dir, "native.json"));
-      const { surrogateBoundary: oracleSurrogates, ...oracleFacts } = JSON.parse(oracle);
-      const { surrogateBoundary: nativeSurrogates, ...nativeFacts } = JSON.parse(native);
+      const { surrogateBoundary: oracleSurrogates, semanticSurrogateBoundary: oracleSemanticSurrogates, ...oracleFacts } = JSON.parse(oracle);
+      const { surrogateBoundary: nativeSurrogates, semanticSurrogateBoundary: nativeSemanticSurrogates, ...nativeFacts } = JSON.parse(native);
       // The native runtime's documented UTF-16 limit must surface as an
       // explicit AST refusal; replacing a checker name would be corruption.
       expect(oracleSurrogates).toBe("preserved");
       expect(nativeSurrogates).toBe("refused");
+      expect(oracleSemanticSurrogates).toBe("preserved");
+      expect(nativeSemanticSurrogates).toBe("refused");
       expect(nativeFacts).toEqual(oracleFacts);
       expect(nativeFacts).toEqual({
-        typeText: "42", symbol: "answer", diagnostics: [2322], echo: true, binaryAst: true, astIdentity: true,
+        typeText: "42", symbol: "answer", diagnostics: [2322], echo: true, binaryAst: true, astIdentity: true, semanticModel: true,
         virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
       });
     } finally {

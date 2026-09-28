@@ -3804,24 +3804,11 @@ export function lowerCall(lowerer: Lowerer, expr: ts.CallExpression): IrExpr {
         lowerer.noLowering(`BigInt with ${expr.arguments.length} arguments`, expr);
       }
       const argNode = expr.arguments[0]!;
-      const arg = lowerer.lowerExpr(argNode);
-      if (arg.type.kind === "bigint") return arg;
-      if (arg.type.kind === "string") {
-        return { kind: "libCall", fn: "bigint.parse", args: [arg], type: BIGINT_T, loc };
-      }
-      if (arg.type.kind === "f64") {
-        return { kind: "libCall", fn: "bigint.fromF64", args: [arg], type: BIGINT_T, loc };
-      }
-      if (arg.type.kind === "bool") {
-        return {
-          kind: "ternary",
-          cond: arg,
-          then: { kind: "libCall", fn: "bigint.parse", args: [{ kind: "strLit", value: "1", type: STRING, loc }], type: BIGINT_T, loc },
-          else_: { kind: "libCall", fn: "bigint.parse", args: [{ kind: "strLit", value: "0", type: STRING, loc }], type: BIGINT_T, loc },
-          type: BIGINT_T,
-          loc,
-        };
-      }
+      // Captured optional storage can change after TypeScript's guard.
+      // BigInt consumes the stored value, including its nullish tag.
+      const arg = optionalCallValue(lowerer, argNode) ?? lowerer.lowerExpr(argNode);
+      const converted = lowerBigIntConstructorValue(lowerer, arg, loc);
+      if (converted) return converted;
       lowerer.noLowering(`BigInt of ${lowerer.fmt(arg.type)} values`, argNode, "string, number, boolean, and bigint arguments are supported");
     }
 
@@ -5096,6 +5083,56 @@ function lowerNumberConstructorValue(lowerer: Lowerer, argNode: ts.Expression, l
       ? "unions of numbers, booleans, strings, null, and undefined lower — narrow other arms first"
       : undefined,
   );
+}
+
+/** A runtime-optional local retains its full tagged storage even after a
+ * checker guard. Dispatch BigInt by the actual value, including nullish
+ * TypeErrors, rather than interpreting that storage as the narrowed arm. */
+function lowerBigIntConstructorValue(lowerer: Lowerer, arg: IrExpr, loc: SrcLoc): IrExpr | null {
+  if (arg.type.kind === "bigint") return arg;
+  if (arg.type.kind === "string") return { kind: "libCall", fn: "bigint.parse", args: [arg], type: BIGINT_T, loc };
+  if (arg.type.kind === "f64") return { kind: "libCall", fn: "bigint.fromF64", args: [arg], type: BIGINT_T, loc };
+  if (arg.type.kind === "bool") {
+    return {
+      kind: "ternary", cond: arg,
+      then: { kind: "libCall", fn: "bigint.parse", args: [{ kind: "strLit", value: "1", type: STRING, loc }], type: BIGINT_T, loc },
+      else_: { kind: "libCall", fn: "bigint.parse", args: [{ kind: "strLit", value: "0", type: STRING, loc }], type: BIGINT_T, loc },
+      type: BIGINT_T, loc,
+    };
+  }
+  if (isUnitType(arg.type)) {
+    const name = arg.type.kind === "nullT" ? "null" : "undefined";
+    return defaultAfterUndefined(arg, nodeThrowExpr(1, "", `Cannot convert ${name} to a BigInt`, BIGINT_T, loc));
+  }
+  if (arg.type.kind !== "union") return null;
+  const unionId = arg.type.unionId;
+  const arms = lowerer.unions.get(unionId)?.arms;
+  if (!arms || !arms.every((arm) => arm.kind === "bigint" || arm.kind === "string" || arm.kind === "f64" || arm.kind === "bool" || isUnitType(arm))) return null;
+  const key = `bigint.scalar:${unionId}`;
+  let helper = lowerer.widthHelpers.get(key);
+  if (!helper) {
+    helper = `%bigint.scalar.${lowerer.widthHelpers.size}`;
+    lowerer.widthHelpers.set(key, helper);
+    const value = varRef("value.0", arg.type, loc);
+    const body: IrStmt[] = [];
+    arms.forEach((arm, tag) => {
+      const narrowed: IrExpr = isUnitType(arm)
+        ? { kind: "unitLit", unit: arm.kind === "nullT" ? "null" : "undefined", type: arm, loc }
+        : { kind: "unionNarrow", unionId, tag, value, type: arm, loc };
+      const converted = lowerBigIntConstructorValue(lowerer, narrowed, loc);
+      if (!converted) throw new InternalCompilerError("BigInt scalar union has an unsupported arm");
+      const ret: IrStmt = { kind: "return", value: converted, loc };
+      body.push(tag === arms.length - 1 ? ret : {
+        kind: "if", cond: { kind: "unionIsTag", unionId, tag, negated: false, value, type: BOOL, loc },
+        then: [ret], else_: null, loc,
+      });
+    });
+    lowerer.liftedFns.push({
+      name: helper, params: [{ localId: "value.0", name: "value", type: arg.type }],
+      returnType: BIGINT_T, locals: [{ id: "value.0", name: "value", type: arg.type, mutable: false }], body, loc,
+    });
+  }
+  return { kind: "call", callee: helper, args: [arg], type: BIGINT_T, loc };
 }
 
 function immediatePrimitiveWrapperToString(lowerer: Lowerer, node: ts.Expression): IrExpr | null {

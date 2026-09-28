@@ -6,6 +6,10 @@ import { Ts7Wire } from "../../../packages/compiler/src/frontend/ts7/rpc-wire.js
 import { AstFile, AstNode } from "../../../packages/compiler/src/frontend/ts7/ast-node.js";
 import { AstKind, KIND_NODE_LIST, astChildNames } from "../../../packages/compiler/src/frontend/ts7/ast-schema.generated.js";
 import { decodeAstString } from "../../../packages/compiler/src/frontend/ts7/ast-bytes.js";
+import { SemanticSnapshot } from "../../../packages/compiler/src/frontend/ts7/semantic-model.js";
+import { SemanticChecker } from "../../../packages/compiler/src/frontend/ts7/semantic-checker.js";
+import { parseSemanticJson } from "../../../packages/compiler/src/frontend/ts7/semantic-json.js";
+import { checkSemanticModel, semanticSource } from "./ts7-semantic-cases.js";
 
 // The harness connects these inherited descriptors straight to native tsgo.
 // No JavaScript helper reads, interprets, or relays protocol messages.
@@ -56,6 +60,25 @@ function checkSurrogateBoundary(): string {
     if (!(error instanceof Error) || error.message !== "TypeScript AST: runtime cannot preserve lone UTF-16 surrogates") throw error;
     return "refused";
   }
+}
+
+function checkSemanticSurrogateBoundary(): string {
+  check(parseSemanticJson<string>('"\\ud83c\\udf0d"') === "🌍", "semantic JSON surrogate pair");
+  check(parseSemanticJson<string>('"\\\\ud800"') === "\\ud800", "semantic JSON escaped backslash");
+  let refused = 0;
+  const hex = "0123456789abcdef";
+  for (let unit = 0xd800; unit <= 0xdfff; unit++) {
+    try {
+      const escape = hex.charAt((unit >> 12) & 15) + hex.charAt((unit >> 8) & 15) + hex.charAt((unit >> 4) & 15) + hex.charAt(unit & 15);
+      const value = parseSemanticJson<string>('"\\u' + escape + '"');
+      check(value.length === 1 && value.charCodeAt(0) === unit, "lossless semantic JSON code unit");
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "TypeScript semantic response: runtime cannot preserve lone UTF-16 surrogates") throw error;
+      refused++;
+    }
+  }
+  check(refused === 0 || refused === 2048, "consistent semantic JSON surrogate boundary");
+  return refused === 0 ? "preserved" : "refused";
 }
 
 function checkAst(ast: AstFile, source: string): void {
@@ -109,7 +132,7 @@ function checkFailures(): void {
     let offset = 0;
     let closes = 0;
     const wire = new Ts7Wire({
-      read: (buffer, start, _length) => {
+      read: (buffer, start) => {
         if (offset === bytes.length) return 0;
         buffer[start] = bytes[offset++]!;
         return 1;
@@ -134,15 +157,15 @@ function checkFailures(): void {
     let offset = 0;
     let closes = 0;
     const local = new Ts7RpcClient(new Ts7Wire({
-      read: (buffer, start, _length) => {
+      read: (buffer, start) => {
         if (offset === bytes.length) return 0;
         buffer[start] = bytes[offset++]!;
         return 1;
       },
-      write: (buffer, start, _length) => { output.push(buffer[start]!); return 1; },
+      write: (buffer, start) => { output.push(buffer[start]!); return 1; },
       close: () => { closes++; },
     }));
-    local.registerCallback("x", (_payload) => {
+    local.registerCallback("x", () => {
       if (throws) throw new Error("callback failed");
       // Reject a nested request before it can put bytes on this stream.
       let nestedFailed = false;
@@ -176,6 +199,7 @@ content += '/** Box documentation. */\nexport class Box { readonly value = 2; me
 content += 'export const many = [';
 for (let index = 0; index < 40; index++) content += `${index},`;
 content += '];\nexport const template = `head\\n${answer}tail`;\n';
+content += semanticSource();
 let reads = 0;
 registerTs7FileSystem(client, {
   readFile: (path) => {
@@ -190,9 +214,9 @@ registerTs7FileSystem(client, {
     return undefined;
   },
   fileExists: (path) => path === file || path === empty || path === configPath ? true : path === hidden ? false : undefined,
-  directoryExists: (_path) => undefined,
-  realpath: (_path) => undefined,
-  getAccessibleEntries: (_path) => undefined,
+  directoryExists: () => undefined,
+  realpath: () => undefined,
+  getAccessibleEntries: () => undefined,
 });
 
 try {
@@ -245,6 +269,21 @@ try {
   check(nodeType.id === type.id && nodeSymbol.id === symbol.id, "native AST checker query");
   check(tree.resolve(nodeSymbol.declarations![0]!) === declaration, "checker declaration identity");
 
+  const semanticSnapshot = new SemanticSnapshot(snapshot.snapshot, {
+    text: (method, payload) => client.requestText(method, payload),
+    binary: (method, payload) => client.requestBytes(method, Buffer.from(payload)),
+  });
+  const context = semanticSnapshot.addProject(project.id, (path) => path === file || path === tree.root.path ? tree.root : undefined);
+  const checker = new SemanticChecker(context);
+  const ownedType = checker.getTypeAtLocation(identifier)!;
+  const ownedSymbol = checker.getSymbolAtLocation(identifier)!;
+  check(ownedType.id === type.id && ownedSymbol.id === symbol.id, "semantic model handles");
+  check(checker.getTypeAtPosition(file, content.indexOf("answer")) === ownedType, "semantic type identity");
+  check(checker.getSymbolAtPosition(file, content.indexOf("answer")) === ownedSymbol, "semantic symbol identity");
+  check(ownedSymbol.declarations[0]!.resolve() === declaration, "semantic declaration identity");
+  check(checker.typeToString(ownedType) === "42" && ownedType.isNumberLiteralType() && ownedType.value === 42, "semantic literal metadata");
+  checkSemanticModel(semanticSnapshot, checker, tree);
+
   // A server-side refusal completes its request. It must not poison the
   // channel: the frontend's checker panic fence relies on this recovery.
   let refused = false;
@@ -268,6 +307,7 @@ try {
   writeFileSync(report, JSON.stringify({
     typeText, symbol: symbol.name, diagnostics: diagnostics.map((diagnostic) => diagnostic.code),
     surrogateBoundary: checkSurrogateBoundary(),
+    semanticSurrogateBoundary: checkSemanticSurrogateBoundary(), semanticModel: true,
     echo: true, binaryAst: true, astIdentity: true, virtualFiles: true, retainedSnapshot: true, serverErrorRecovery: true, protocolFailures: true,
   }));
 } finally {

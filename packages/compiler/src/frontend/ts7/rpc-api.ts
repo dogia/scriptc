@@ -7,7 +7,7 @@ import { registerTs7FileSystem, TS7_FILE_SYSTEM_CALLBACKS, type Ts7FileSystem } 
 import { spawnTs7Wire } from "./rpc-process.js";
 import { installNativeAst } from "./ast-sdk.js";
 
-// The pinned SDK still owns snapshots and checker object identity.
+// The pinned SDK still owns snapshots and program metadata.
 // These hidden helpers have no public package exports. Derive their types
 // from Snapshot's constructor rather than duplicating the SDK's contracts.
 // This bridge can go away when those object models also compile statically;
@@ -51,11 +51,16 @@ class SnapshotClient {
   }
 
   apiRequestBinary(method: string, params: unknown): Uint8Array | undefined {
-    const payload = Buffer.from(JSON.stringify(params), "utf8");
+    const result = this.requestEncoded(method, JSON.stringify(params));
+    return result.length === 0 ? undefined : result;
+  }
+
+  requestEncoded(method: string, json: string): Uint8Array {
+    const payload = Buffer.from(json, "utf8");
     const start = performance.now();
     const result = this.rpc.requestBytes(method, payload);
     this.timing?.record({ method, roundTripMs: performance.now() - start, bytesSent: payload.length, bytesReceived: result.length });
-    return result.length === 0 ? undefined : result;
+    return result;
   }
 
   getTimingCollector(): TimingCollector | undefined {
@@ -71,8 +76,8 @@ class SnapshotClient {
 }
 
 /** The API operations scriptc uses, backed by its own synchronous client.
- * Keep upstream Snapshot/Project objects until their checker registries
- * have a native replacement. ASTs use the owned model. No upstream API
+ * Keep upstream Snapshot/Project objects for lifecycle and metadata. ASTs
+ * and checker registries use concrete native models. No upstream API
  * or Client instance is constructed, and all requests use Ts7RpcClient. */
 export class Ts7Api {
   private readonly client: SnapshotClient;
@@ -116,10 +121,17 @@ export class Ts7Api {
     // The upstream class's private fields make its Client nominal. Only
     // these three public operations are used by Snapshot and its children.
     const snapshot = new Snapshot(data, this.client as unknown as SdkClient, this.cache, canonical, () => {
+      releaseSemantic();
       this.snapshots.delete(snapshot);
       if (snapshot !== this.latest) this.cache.releaseSnapshot(snapshot.id);
     });
-    for (const project of snapshot.getProjects()) installNativeAst(snapshot.id, project, this.client as unknown as SdkClient, this.cache, canonical);
+    const releaseSemantic = installNativeAst(snapshot, this.client as unknown as SdkClient, this.cache, canonical, {
+      text: (method, payload) => {
+        const bytes = this.client.requestEncoded(method, payload);
+        return bytes.length === 0 ? "null" : Buffer.from(bytes).toString("utf8");
+      },
+      binary: (method, payload) => this.client.requestEncoded(method, payload),
+    });
     this.latest = snapshot;
     this.snapshots.add(snapshot);
     return snapshot;

@@ -2502,15 +2502,17 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
     }
     const tag = lowerer.armTag(expr.type.unionId, narrowed);
     if (tag < 0) {
-      // A proven-present optional base class can narrow further to a
-      // subclass. The payload is still stored under the base class tag;
-      // unwrap it before applying the ordinary class downcast.
+      // A base-class arm can narrow to a subclass after instanceof. The
+      // payload retains its base-class tag even when the union also has
+      // records or other classes. Require one unambiguous containing arm.
       const arms = lowerer.unions.get(expr.type.unionId)?.arms ?? [];
-      const valueTag = arms.findIndex((arm) => !isUnitType(arm));
+      const valueTag = narrowed.kind === "object"
+        ? arms.findIndex((arm) => arm.kind === "object" && lowerer.isSubclassOf(narrowed.className, arm.className))
+        : -1;
       const valueType = arms[valueTag];
       if (
         narrowed.kind === "object" && valueType?.kind === "object" &&
-        arms.every((arm, i) => i === valueTag || isUnitType(arm)) &&
+        arms.every((arm, i) => i === valueTag || arm.kind !== "object" || !lowerer.isSubclassOf(narrowed.className, arm.className)) &&
         lowerer.isSubclassOf(narrowed.className, valueType.className)
       ) {
         return {
@@ -7986,6 +7988,42 @@ export function lowerBinary(lowerer: Lowerer, expr: ts.BinaryExpression): IrExpr
         expr,
         `'instanceof ${target.def.name.replace(/^%/, "")}' on 'unknown' values (only the Error classes answer — test 'instanceof Error' and read '.name')`,
       );
+    }
+    if (left.type.kind === "union") {
+      const unionId = left.type.unionId;
+      const arms = lowerer.unions.get(unionId)?.arms;
+      // Ordinary records and scalar values do not carry a class prototype.
+      // Dynamic/opaque runtime objects keep their existing instanceof fences.
+      if (arms?.every((arm) => arm.kind === "object" || arm.kind === "record" ||
+        arm.kind === "f64" || arm.kind === "string" || arm.kind === "bool" ||
+        arm.kind === "bigint" || arm.kind === "symbol" || isUnitType(arm))) {
+        const key = `instanceof.union:${unionId}:${target.def.name}`;
+        let helper = lowerer.widthHelpers.get(key);
+        if (!helper) {
+          helper = `%instanceof.union.${lowerer.widthHelpers.size}`;
+          lowerer.widthHelpers.set(key, helper);
+          const value: IrExpr = { kind: "varRef", localId: "value.0", type: left.type, loc };
+          const body: IrStmt[] = [];
+          arms.forEach((arm, tag) => {
+            if (arm.kind !== "object") return;
+            const lhsInfo = lowerer.classes.get(arm.className);
+            if (!lhsInfo) throw new InternalCompilerError(`lowerer bug: unknown class ${arm.className}`);
+            const result: IrExpr = lowerer.inHierarchy(lhsInfo) && lowerer.inHierarchy(target)
+              ? { kind: "instanceOf", value: { kind: "unionNarrow", unionId, tag, value, type: arm, loc }, className: target.def.name, type: BOOL, loc }
+              : { kind: "boolLit", value: arm.className === target.def.name || lowerer.isSubclassOf(arm.className, target.def.name), type: BOOL, loc };
+            body.push({
+              kind: "if", cond: { kind: "unionIsTag", unionId, tag, negated: false, value, type: BOOL, loc },
+              then: [{ kind: "return", value: result, loc }], else_: null, loc,
+            });
+          });
+          body.push({ kind: "return", value: { kind: "boolLit", value: false, type: BOOL, loc }, loc });
+          lowerer.liftedFns.push({
+            name: helper, params: [{ localId: "value.0", name: "value", type: left.type }], returnType: BOOL,
+            locals: [{ id: "value.0", name: "value", type: left.type, mutable: false }], body, loc,
+          });
+        }
+        return { kind: "call", callee: helper, args: [left], type: BOOL, loc };
+      }
     }
     if (left.type.kind !== "object") {
       lowerer.unsupported(
