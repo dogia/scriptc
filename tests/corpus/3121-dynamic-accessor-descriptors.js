@@ -45,6 +45,12 @@ function customToJSON() { return { ready: 5 }; }
 function getToJSON() { toJSONReads++; return customToJSON; }
 Object.defineProperty(customJSON, 'toJSON', { get: getToJSON });
 console.log(JSON.stringify(customJSON, identityReplacer), toJSONReads);
+const badLength = JSON.parse('{}');
+Object.defineProperty(badLength, 'length', { get: explode });
+try { new Uint8Array(badLength); } catch (error) { console.log(error.name, error.message); }
+const badIndex = JSON.parse('{"length":1}');
+Object.defineProperty(badIndex, '0', { get: explode });
+try { Uint8Array.from(badIndex); } catch (error) { console.log(error.name, error.message); }
 const source = JSON.parse('{}');
 Object.defineProperty(source, 'shared', { get: getStored, enumerable: true });
 const destination = JSON.parse('{}');

@@ -301,6 +301,7 @@ static bool scr_bytes_source_length(const ScrDyn *value, double *length) {
   case SCR_DYN_STR: *length = scr_str_utf16_len(value->v.str); return true;
   case SCR_DYN_OBJ: {
     ScrDyn *v = scr_dyn_obj_read(value, "length", 6);
+    if (!v) return false;
     double n;
     bool ok = scr_dyn_number_coerce_js(v, &n);
     scr_dyn_release(v);
@@ -336,6 +337,7 @@ static ScrDyn *scr_bytes_source_at(const ScrDyn *value, size_t i) {
 static bool scr_bytes_copy_array_like(ScrBytes *dst, const ScrDyn *src, size_t offset, size_t count) {
   for (size_t i = 0; i < count; i++) {
     ScrDyn *value = scr_bytes_source_at(src, i);
+    if (!value) return false;
     double number;
     bool ok = scr_dyn_number_coerce_js(value, &number);
     scr_dyn_release(value);
