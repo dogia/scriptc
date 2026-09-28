@@ -752,7 +752,7 @@ static ScrNtick *scr_nt_tail = NULL;
  * enqueue ticks that must never run (Node) yet must not leak. */
 
 #ifndef SCR_RC_AUDIT
-#define SCR_NT_FREELIST_MAX 256
+#define SCR_NT_FREELIST_MAX 128
 static SCR_TL ScrNtick *scr_nt_freelist = NULL;
 static SCR_TL size_t scr_nt_freelist_count = 0;
 #endif
@@ -823,7 +823,7 @@ void scr_nticks_teardown(void) {
     ScrNtick *t = scr_nt_head;
     scr_nt_head = t->next;
     if (t->cb) scr_closure_release(t->cb);
-    scr_ntick_free(t);
+    free(t);
   }
   scr_nt_tail = NULL;
 #ifndef SCR_RC_AUDIT
